@@ -11,7 +11,7 @@ from sqlalchemy import or_, select
 
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
-from ..models import AgentMemory, ChatMessage, CompanyProfile, Feedback, FunnelCard, Investor, MeetingBrief
+from ..models import AgentMemory, ChatMessage, CompanyProfile, Feedback, FunnelCard, GmailAccount, Investor, MeetingBrief
 from ..services import agent, ai
 from ..services.entitlements import rate_limit
 from ..services.fit import fit
@@ -27,7 +27,10 @@ def m_out(m: ChatMessage) -> dict:
 def history(c: Ctx = Depends(ctx)):
     rows = c.db.scalars(select(ChatMessage).where(ChatMessage.workspace_id == c.ws_id, ChatMessage.user_id == c.user.id)
                         .order_by(ChatMessage.created_at.desc()).limit(60)).all()[::-1]
+    from ..services.calendar import connected
+
     return {"items": [m_out(m) for m in rows], "ai": ai.model_for(c.db, c.workspace, "chat") is not None,
+            "calendar": connected(c.db.get(GmailAccount, c.user.id)),
             "agent_name": c.workspace.agent_name}
 
 
@@ -38,7 +41,7 @@ class ChatIn(BaseModel):
 @router.post("/chat")
 def send(body: ChatIn, c: Ctx = Depends(ctx)):
     rate_limit(c.db, f"chat:{c.user.id}", 20, 60)
-    return m_out(agent.chat(c.db, c.workspace, c.user, body.text))
+    return m_out(agent.chat(c, body.text))
 
 
 @router.post("/chat/{mid}/actions/{aid}")
@@ -47,7 +50,7 @@ def apply(mid: str, aid: str, c: Ctx = Depends(ctx)):
     m = c.db.get(ChatMessage, uuid.UUID(mid))
     if m is None or m.workspace_id != c.ws_id or m.user_id != c.user.id:
         raise not_found("Message")
-    r = agent.apply_action(c.db, c.workspace, c.user, m, aid)
+    r = agent.apply_action(c, m, aid)
     if not r["ok"]:
         raise ApiError(409, "EF-AGT-001", "That action was already handled")
     return {**r, "message": m_out(m)}

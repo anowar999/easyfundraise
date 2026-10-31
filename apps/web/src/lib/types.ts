@@ -7,7 +7,9 @@ export type InvestorCard = {
   firm: string;
   listed_company: string;
   location: string;
+  country: string;
   photo_url: string;
+  firm_domain: string;
   industries: string[];
   investor_type: string;
   investor_type_label: string;
@@ -20,6 +22,7 @@ export type InvestorCard = {
   check_size: string;
   has_email: boolean;
   in_funnel: boolean;
+  in_shortlist: boolean;
   fit?: Fit;
 };
 

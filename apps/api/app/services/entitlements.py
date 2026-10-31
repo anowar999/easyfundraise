@@ -4,41 +4,72 @@ and fixed-window rate limits stored in Postgres (ASP-02)."""
 from datetime import UTC, datetime
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
+from ..config import get_settings
 from ..errors import ApiError
 from ..models import Tier, Workspace
 
 # Seed values from spec §6.2 — admin can change them in Admin → Packages.
 DEFAULT_TIERS = [
     dict(code="trial", name="Free Trial", price_monthly=0, price_annual=0, sort=0,
-         limits=dict(searches_total=3, result_cap=10, reveals_month=0, emails_day=0, sample_drafts=3,
-                     workspaces=1, seats=1, trial_days=14),
+         limits=dict(searches_total=10, result_cap=25, reveals_month=0, emails_day=0, sample_drafts=3,
+                     workspaces=1, seats=1, trial_days=14, research_month=3, ai_tokens_month=300_000),
          features=dict(contacts_visible=False, send=False, ai_engine="template", agent="read-only")),
     dict(code="starter", name="Starter", price_monthly=3900, price_annual=39000, sort=1,
          limits=dict(searches_month=300, reveals_month=150, emails_day=20, workspaces=1, seats=1,
-                     ai_tokens_month=400_000),
+                     ai_tokens_month=400_000, research_month=30),
          features=dict(contacts_visible=True, send=True, ai_engine="template+small", agent="basic")),
     dict(code="pro", name="Pro", price_monthly=9900, price_annual=99000, sort=2,
          limits=dict(searches_month=5000, reveals_month=600, emails_day=20, workspaces=3, seats=3,
-                     ai_tokens_month=4_000_000),
+                     ai_tokens_month=4_000_000, research_month=200),
          features=dict(contacts_visible=True, send=True, ai_engine="frontier", agent="full", automations=True)),
     dict(code="top", name="Investor Relations", price_monthly=24900, price_annual=249000, sort=3,
          limits=dict(searches_month=5000, reveals_month=1500, emails_day=20, workspaces=10, seats=10,
-                     ai_tokens_month=12_000_000),
+                     ai_tokens_month=12_000_000, research_month=500),
          features=dict(contacts_visible=True, send=True, ai_engine="frontier+research", agent="full+ir",
                        automations=True, newsletter=True)),
 ]
 
 
+# Earlier seed values, so `seed` can move untouched tiers to the new defaults without overwriting admin edits.
+PREVIOUS_LIMITS = {
+    "trial": dict(searches_total=3, result_cap=10, reveals_month=0, emails_day=0, sample_drafts=3, workspaces=1, seats=1,
+                  trial_days=14),
+    "starter": dict(searches_month=300, reveals_month=150, emails_day=20, workspaces=1, seats=1, ai_tokens_month=400_000),
+    "pro": dict(searches_month=5000, reveals_month=600, emails_day=20, workspaces=3, seats=3, ai_tokens_month=4_000_000),
+    "top": dict(searches_month=5000, reveals_month=1500, emails_day=20, workspaces=10, seats=10,
+                ai_tokens_month=12_000_000),
+}
+
+
+def admin_unlocked(db: Session, ws: Workspace) -> bool:
+    """Outside production, workspaces with an admin member get the highest plan so every feature can be tried."""
+    if get_settings().is_prod:
+        return False
+    hit = ws.__dict__.get("_ef_admin")
+    if hit is None:
+        hit = bool(db.execute(text("""select 1 from workspace_members m join users u on u.id = m.user_id
+                                       where m.workspace_id = :w and u.is_admin limit 1"""), {"w": ws.id}).first())
+        ws.__dict__["_ef_admin"] = hit
+    return hit
+
+
+def effective_tier_code(db: Session, ws: Workspace) -> str:
+    return "top" if admin_unlocked(db, ws) else ws.tier_code
+
+
 def tier(db: Session, ws: Workspace) -> Tier:
-    t = db.get(Tier, ws.tier_code)
+    t = db.get(Tier, effective_tier_code(db, ws))
     if t is None:
         raise ApiError(500, "EF-TIER-001", "Workspace tier is misconfigured")
     return t
 
 
 def trial_expired(ws: Workspace) -> bool:
+    db = object_session(ws)
+    if db is not None and admin_unlocked(db, ws):
+        return False
     return ws.tier_code == "trial" and ws.trial_ends_at is not None and ws.trial_ends_at < datetime.now(UTC)
 
 

@@ -5,7 +5,7 @@ import { LogoMark } from "@/components/landing/LogoMark";
 const POINTS = [
   "14,900+ angels and VCs, ranked by fit for your round",
   "Personal cold emails sent from your own Gmail",
-  "A funnel that tracks every investor until the money lands",
+  "An investor tracker that follows every investor until the money lands",
 ];
 
 /** Full-page split layout for sign-in and onboarding: brand story on the left, the form on the right. */

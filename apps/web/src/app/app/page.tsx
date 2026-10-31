@@ -1,10 +1,12 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { CalendarClock, ChevronRight, Flame, Snowflake, Sparkles, Upload } from "lucide-react";
+import { ArrowRight, CalendarClock, CalendarDays, ChevronRight, FileText, Flame, Snowflake, Sparkles, Upload } from "lucide-react";
 import Link from "next/link";
 import { PageHeader, useMe } from "@/components/AppShell";
-import { ErrorState, ListSkeleton } from "@/components/ui";
+import { CountryTag, ShortlistButton } from "@/components/InvestorRow";
+import { Avatar, ErrorState, FitScore, ListSkeleton } from "@/components/ui";
+import type { InvestorCard } from "@/lib/types";
 import { api, fmtDate } from "@/lib/api";
 
 type Brief = { id: string; name: string; firm: string; stage_label: string; next_contact_date: string | null; call_at: string | null; last_contacted_at: string | null; status: string };
@@ -17,7 +19,65 @@ type Home = {
   going_cold: Brief[];
   calls: Brief[];
   actions: { title: string; link: string }[];
+  profile_complete: boolean;
+  data_room_pct: number;
+  calendar_connected: boolean;
+  meetings: { title: string; start: string; link?: string; tracker_card: { card_id: string; name: string; firm: string } | null }[];
 };
+
+/** Best matches for the company profile, as cards. Shown once the profile (or deck) is in. */
+function Matches() {
+  const q = useQuery<{ items: InvestorCard[]; needs_profile: boolean }>({ queryKey: ["recommended"], queryFn: () => api("/investors/recommended") });
+  if (q.isLoading) return <ListSkeleton rows={2} />;
+  const items = q.data?.items.slice(0, 6) ?? [];
+  if (!items.length) return null;
+  return (
+    <div className="card p-4 md:p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold text-[17px]">Your best investor matches</h2>
+        <Link href="/app/investors" className="text-sm font-medium text-brand inline-flex items-center gap-1">
+          See all <ArrowRight size={14} />
+        </Link>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+        {items.map((i) => (
+          <div key={i.id} className="rounded-2xl border border-line bg-card p-4 flex flex-col hover:border-brand/60 hover:shadow-md transition">
+            <div className="flex items-start justify-between gap-2">
+              <Avatar name={i.name} src={i.photo_url} logoDomain={i.firm_domain} size={44} />
+              <ShortlistButton inv={i} />
+            </div>
+            <Link href={`/app/investors/${i.id}`} className="mt-3 flex-1 min-w-0">
+              <div className="font-semibold truncate">{i.name}</div>
+              <div className="text-sm text-muted truncate">{i.firm || i.title}</div>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <CountryTag country={i.country} location={i.location} />
+                {i.fit && <FitScore score={i.fit.score} />}
+              </div>
+              {i.fit?.reasons?.[0] && <p className="mt-2 text-xs text-muted line-clamp-2">{i.fit.reasons[0]}</p>}
+            </Link>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SetupCard() {
+  return (
+    <Link href="/onboarding" className="card p-5 md:p-6 flex flex-col sm:flex-row sm:items-center gap-4 bg-gradient-to-br from-brand/10 via-card to-card border-brand/30 hover:shadow-md transition">
+      <span className="grid place-items-center w-12 h-12 rounded-2xl bg-brand text-white shrink-0">
+        <Sparkles size={22} />
+      </span>
+      <div className="flex-1">
+        <div className="font-semibold text-[17px]">See which investors match you</div>
+        <p className="text-sm text-muted mt-0.5">Upload your deck or answer a few questions. We rank 14,000+ investors for you and personalise every email.</p>
+      </div>
+      <span className="btn-primary shrink-0">
+        Set up my profile <ArrowRight size={16} />
+      </span>
+    </Link>
+  );
+}
 
 function Row({ b, right }: { b: Brief; right: string }) {
   return (
@@ -48,6 +108,7 @@ export default function HomePage() {
       {q.data && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <section className="lg:col-span-2 space-y-4">
+            {q.data.profile_complete ? <Matches /> : <SetupCard />}
             <div className="card p-4 border-brand/30 bg-brand/[0.03]">
               <div className="flex items-center gap-2 text-sm font-medium text-brand">
                 <Sparkles size={16} /> {q.data.agent_name} suggests
@@ -76,7 +137,7 @@ export default function HomePage() {
                 </Link>
               </div>
               {q.data.due.length === 0 ? (
-                <p className="text-sm text-muted py-3">Nothing due. Set next-contact dates on your funnel cards to get reminders.</p>
+                <p className="text-sm text-muted py-3">Nothing due. Set next-contact dates in your investor tracker to get reminders.</p>
               ) : (
                 q.data.due.map((b) => <Row key={b.id} b={b} right={fmtDate(b.next_contact_date)} />)
               )}
@@ -99,9 +160,41 @@ export default function HomePage() {
           </section>
 
           <aside className="space-y-4">
+            <Link href="/app/data-room" className="card p-4 flex items-center gap-3 hover:border-brand/60">
+              <FileText className="text-brand shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm">Data room {q.data.data_room_pct}% complete</div>
+                <div className="mt-1.5 h-1.5 rounded-full bg-surface overflow-hidden">
+                  <div className={`h-full ${q.data.data_room_pct >= 80 ? "bg-emerald-500" : q.data.data_room_pct >= 50 ? "bg-brand" : "bg-amber-500"}`} style={{ width: `${q.data.data_room_pct}%` }} />
+                </div>
+              </div>
+              <ChevronRight size={16} className="text-muted" />
+            </Link>
+            <div className="card p-4">
+              <h2 className="font-semibold flex items-center gap-2">
+                <CalendarDays size={18} className="text-brand" /> Investor meetings
+              </h2>
+              {!q.data.calendar_connected ? (
+                <a href="/api/gmail/connect?calendar=1&next=/app" className="mt-2 block text-sm text-brand font-medium">
+                  Connect Google Calendar to see them here →
+                </a>
+              ) : q.data.meetings.length === 0 ? (
+                <p className="text-sm text-muted py-2">No investor meetings in the next 7 days.</p>
+              ) : (
+                q.data.meetings.map((m) => (
+                  <Link key={m.title + m.start} href={m.tracker_card ? `/app/funnel/${m.tracker_card.card_id}` : "/app/funnel"} className="flex items-center gap-3 py-2.5 border-b border-line last:border-0">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{m.title}</div>
+                      <div className="text-xs text-muted">{fmtDate(m.start, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
+                    </div>
+                    <ChevronRight size={16} className="text-muted" />
+                  </Link>
+                ))
+              )}
+            </div>
             <div className="card p-4">
               <div className="flex items-baseline justify-between">
-                <h2 className="font-semibold">Funnel</h2>
+                <h2 className="font-semibold">Investor tracker</h2>
                 <span className="text-sm text-muted">{q.data.total} investors</span>
               </div>
               <div className="mt-3 space-y-1.5">

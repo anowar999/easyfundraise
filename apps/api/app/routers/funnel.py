@@ -193,7 +193,7 @@ def create_card(body: CardIn, c: Ctx = Depends(ctx)):
     c.db.add(card)
     c.db.flush()
     apply(c, card, body)
-    _event(c, card, "created", "Added to funnel", source=card.source)
+    _event(c, card, "created", "Added to investor tracker", source=card.source)
     c.db.commit()
     return out(card)
 
@@ -449,7 +449,7 @@ async def import_commit(file: UploadFile, sheet: str, mapping: str, update_exist
         if card.investor_id:
             by_inv[card.investor_id] = card
     c.db.add(Notification(workspace_id=c.ws_id, user_id=c.user.id, kind="import_done",
-                          title=f"Imported {created + updated} investors into your funnel",
+                          title=f"Imported {created + updated} investors into your investor tracker",
                           body=f"{created} new, {updated} updated, {linked} matched to the database.", link="/app/funnel"))
     c.audit("funnel.import", name, after={"created": created, "updated": updated, "linked": linked})
     c.db.commit()

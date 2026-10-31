@@ -1,12 +1,13 @@
 """§8 Investor discovery. Contact fields never appear in list payloads (ASP-01); they are returned only
 by POST /investors/{id}/reveal, which checks entitlement, spends a credit once and logs the access."""
 
+import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, func, literal_column, or_, select, text
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -18,9 +19,12 @@ from ..models import (
     Exclusion,
     FunnelCard,
     Investor,
+    InvestorResearch,
     RemovalRequest,
     Reveal,
+    ShortlistItem,
 )
+from ..services import ai, search_parse
 from ..services.entitlements import can, consume, limit, rate_limit, trial_expired, usage
 from ..services.fit import SIMILAR_SQL, fit
 
@@ -32,12 +36,18 @@ TYPE_LABEL = {"angel": "Angel", "vc": "VC", "pe": "PE / Buyout", "growth": "Grow
               "syndicate": "Angel syndicate", "other": "Other"}
 
 
-def card(inv: Investor, f: dict | None = None, in_funnel: bool = False) -> dict:
+def domain(url: str) -> str:
+    d = (url or "").strip().lower().removeprefix("https://").removeprefix("http://").removeprefix("www.")
+    return d.split("/")[0] if "." in d else ""
+
+
+def card(inv: Investor, f: dict | None = None, in_funnel: bool = False, in_shortlist: bool = False) -> dict:
     """List-safe representation: no email / LinkedIn / X (ASP-01)."""
     return {
         "id": str(inv.id), "name": inv.name, "title": inv.role_at_firm or inv.title,
         "firm": inv.current_firm or inv.company, "listed_company": inv.company,
-        "location": inv.location, "photo_url": inv.photo_url, "industries": inv.industries[:6],
+        "location": inv.location, "country": inv.country, "photo_url": inv.photo_url,
+        "firm_domain": domain(inv.firm_website), "industries": inv.industries[:6],
         "investor_type": inv.investor_type, "investor_type_label": TYPE_LABEL.get(inv.investor_type, "Other"),
         "seed_fit": inv.seed_fit, "is_decision_maker": inv.is_decision_maker, "enriched": inv.enriched,
         "identity_confidence": inv.identity_confidence or None,
@@ -45,7 +55,7 @@ def card(inv: Investor, f: dict | None = None, in_funnel: bool = False) -> dict:
         "verified_recent_deal": inv.active_last_12mo == "yes",
         "thesis_summary": (inv.investment_thesis or "")[:240],
         "check_size": inv.typical_check_size if inv.enriched else "",
-        "has_email": bool(inv.email), "in_funnel": in_funnel,
+        "has_email": bool(inv.email), "in_funnel": in_funnel, "in_shortlist": in_shortlist,
         **({"fit": f} if f else {}),
     }
 
@@ -63,11 +73,21 @@ class SearchParams(BaseModel):
     has_email: bool = False
     enriched: bool = False
     not_in_funnel: bool = False
+    country: str = ""
+    check_min: int | None = None
+    check_max: int | None = None
     page: int = 1
 
     def has_criteria(self) -> bool:
         return bool(self.q or self.sector or self.stage or self.geo or self.investor_type or self.decision_maker
-                    or self.active or self.seed_fit or self.leads or self.has_email or self.enriched)
+                    or self.active or self.seed_fit or self.leads or self.has_email or self.enriched or self.country
+                    or self.check_min or self.check_max)
+
+
+# Directory cheque size ("$150K", "$1.6M") as dollars, null when it isn't a single clean figure.
+CHECK_USD = literal_column("""(case when check_size_src ~* '^\\$?[0-9]+(\\.[0-9]+)?\\s*[km]$'
+    then regexp_replace(check_size_src, '[^0-9.]', '', 'g')::numeric
+         * (case when check_size_src ~* 'm\\s*$' then 1000000 else 1000 end) end)""")
 
 
 def _base_filters(c: Ctx, p: SearchParams):
@@ -98,10 +118,20 @@ def _base_filters(c: Ctx, p: SearchParams):
         conds.append(Investor.email != "")
     if p.enriched:
         conds.append(Investor.enriched.is_(True))
+    if p.country:
+        conds.append(func.lower(Investor.country) == p.country.lower()[:80])
+    if p.check_min:
+        conds.append(CHECK_USD >= p.check_min)
+    if p.check_max:
+        conds.append(CHECK_USD <= p.check_max)
     if p.not_in_funnel:
         conds.append(~Investor.id.in_(select(FunnelCard.investor_id).where(
             FunnelCard.workspace_id == c.ws_id, FunnelCard.investor_id.is_not(None), FunnelCard.deleted_at.is_(None))))
     return conds
+
+
+def _shortlist_ids(c: Ctx) -> set:
+    return set(c.db.scalars(select(ShortlistItem.investor_id).where(ShortlistItem.workspace_id == c.ws_id)))
 
 
 def _funnel_ids(c: Ctx) -> set:
@@ -114,11 +144,13 @@ def search(
     q: str = "", sector: list[str] = Query(default=[]), stage: str = "", geo: str = "",
     investor_type: list[str] = Query(default=[]), decision_maker: bool = False, active: bool = False,
     seed_fit: bool = False, leads: bool = False, has_email: bool = False, enriched: bool = False,
-    not_in_funnel: bool = False, page: int = Query(1, ge=1, le=400), c: Ctx = Depends(ctx),
+    not_in_funnel: bool = False, country: str = "", check_min: int | None = None, check_max: int | None = None,
+    page: int = Query(1, ge=1, le=400), c: Ctx = Depends(ctx),
 ):
     p = SearchParams(q=q, sector=sector, stage=stage, geo=geo, investor_type=investor_type,
                      decision_maker=decision_maker, active=active, seed_fit=seed_fit, leads=leads,
-                     has_email=has_email, enriched=enriched, not_in_funnel=not_in_funnel, page=page)
+                     has_email=has_email, enriched=enriched, not_in_funnel=not_in_funnel, country=country,
+                     check_min=check_min, check_max=check_max, page=page)
     rate_limit(c.db, f"search:m:{c.user.id}", 60, 60)  # ASP-02
     rate_limit(c.db, f"search:h:{c.user.id}", 600, 3600)
     if trial_expired(c.workspace):
@@ -142,25 +174,66 @@ def search(
     n = min(page_size, cap) if cap else page_size
     rows = c.db.scalars(select(Investor).where(*conds).order_by(*order).offset((page - 1) * n).limit(n)).all()
     prof = c.db.get(CompanyProfile, c.ws_id)
-    fids = _funnel_ids(c)
+    fids, sids = _funnel_ids(c), _shortlist_ids(c)
     c.access("search", None, params=p.model_dump(exclude_defaults=True), results=len(rows))
     c.db.commit()
     return {
         "total": total if cap is None else min(total, cap), "page": page, "page_size": n,
-        "items": [card(i, fit(i, prof), i.id in fids) for i in rows],
+        "items": [card(i, fit(i, prof), i.id in fids, i.id in sids) for i in rows],
         "searches_used": usage(c.db, c.workspace, "searches", "all" if cap else "month"),
         "searches_limit": limit(c.db, c.workspace, "searches_total") or limit(c.db, c.workspace, "searches_month"),
         "contacts_locked": not can(c.db, c.workspace, "contacts_visible"),
     }
 
 
+STAGE_FACETS = [("pre-seed", "Pre-seed"), ("seed", "Seed"), ("series a", "Series A"), ("series b", "Series B")]
+
+
+def _facets(db: Session) -> dict:
+    sectors = db.execute(text("""select ind, count(*) from investors, unnest(industries) ind
+                                 where not suppressed group by ind order by count(*) desc limit 80""")).all()
+    types = dict(db.execute(select(Investor.investor_type, func.count()).where(~Investor.suppressed)
+                            .group_by(Investor.investor_type)).all())
+    stages = []
+    for v, label in STAGE_FACETS:
+        n = db.scalar(select(func.count()).select_from(Investor).where(~Investor.suppressed, or_(
+            Investor.focus_stages.ilike(f"%{v}%"), and_(Investor.focus_stages == "", Investor.stages_src.ilike(f"%{v}%")))))
+        if n:
+            stages.append({"value": v, "label": label, "count": n})
+    countries = db.execute(select(Investor.country, func.count()).where(~Investor.suppressed, Investor.country != "")
+                           .group_by(Investor.country).order_by(func.count().desc()).limit(60)).all()
+    return {"sectors": [{"value": r[0], "count": r[1]} for r in sectors],
+            "investor_types": [{"value": k, "label": v, "count": types[k]} for k, v in TYPE_LABEL.items() if types.get(k)],
+            "stages": stages, "countries": [{"value": r[0], "count": r[1]} for r in countries]}
+
+
+_facet_cache: dict = {}
+
+
 @router.get("/facets")
 def facets(c: Ctx = Depends(ctx)):
-    rows = c.db.execute(text("""select ind, count(*) from investors, unnest(industries) ind
-                                where not suppressed group by ind order by count(*) desc limit 80""")).all()
-    return {"sectors": [{"value": r[0], "count": r[1]} for r in rows],
-            "investor_types": [{"value": k, "label": v} for k, v in TYPE_LABEL.items()],
-            "stages": ["pre-seed", "seed", "series a", "series b"]}
+    """Only options that have investors behind them (no empty "Series B"). Cached for 10 minutes."""
+    hit = _facet_cache.get("v")
+    if hit and hit[0] > time.time():
+        return hit[1]
+    out = _facets(c.db)
+    _facet_cache["v"] = (time.time() + 600, out)
+    return out
+
+
+class AiSearchIn(BaseModel):
+    q: str = Field(min_length=2, max_length=300)
+
+
+@router.post("/ai-search")
+def ai_search(body: AiSearchIn, c: Ctx = Depends(ctx)):
+    """Plain-language search -> filters. The client then runs the normal search with them, so limits still apply."""
+    rate_limit(c.db, f"aisearch:{c.user.id}", 30, 60)
+    f = facets(c)
+    out = search_parse.parse(c.db, c.workspace, body.q, [s["value"] for s in f["sectors"]],
+                             [x["value"] for x in f["countries"]])
+    c.db.commit()
+    return out
 
 
 @router.get("/recommended")
@@ -177,9 +250,9 @@ def recommended(c: Ctx = Depends(ctx)):
     excl = _exclusions(c)
     scored = [(fit(i, prof), i) for i in cand if not is_excluded(i, excl)]
     scored.sort(key=lambda x: -x[0]["score"])
-    fids = _funnel_ids(c)
+    fids, sids = _funnel_ids(c), _shortlist_ids(c)
     cap = limit(c.db, c.workspace, "result_cap") or 25
-    return {"items": [card(i, f, i.id in fids) for f, i in scored[:cap]], "needs_profile": False}
+    return {"items": [card(i, f, i.id in fids, i.id in sids) for f, i in scored[:cap]], "needs_profile": False}
 
 
 def _exclusions(c: Ctx) -> list[tuple[str, str]]:
@@ -226,7 +299,7 @@ def profile(iid: str, c: Ctx = Depends(ctx)):
     c.access("profile", inv.id)
     c.db.commit()
     return {
-        **card(inv, fit(inv, prof), funnel is not None),
+        **card(inv, fit(inv, prof), funnel is not None, c.db.get(ShortlistItem, (c.ws_id, inv.id)) is not None),
         "funnel_card_id": str(funnel.id) if funnel else None,
         "excluded": is_excluded(inv, _exclusions(c)),
         "about": inv.about, "investment_thesis": inv.investment_thesis, "focus_sectors": inv.focus_sectors,
@@ -281,6 +354,50 @@ def similar(iid: str, c: Ctx = Depends(ctx)):
     invs = {i.id: i for i in c.db.scalars(select(Investor).where(Investor.id.in_(ids)))}
     prof = c.db.get(CompanyProfile, c.ws_id)
     return {"items": [card(invs[i], fit(invs[i], prof)) for i in ids if i in invs]}
+
+
+RESEARCH_TTL = timedelta(days=30)
+
+
+def research_out(r: InvestorResearch | None) -> dict | None:
+    return {**r.data, "researched_at": r.created_at.isoformat()} if r else None
+
+
+@router.get("/{iid}/research")
+def get_research(iid: str, c: Ctx = Depends(ctx)):
+    inv = _get(c, iid)
+    return {"research": research_out(c.db.get(InvestorResearch, inv.id)), "available": ai.available()}
+
+
+@router.post("/{iid}/research")
+def run_research(iid: str, c: Ctx = Depends(ctx)):
+    """Live web research on this investor's firm, thesis, portfolio, partners and news. Cached for 30 days and
+    shared across workspaces (public information only); each fresh run uses one research credit."""
+    rate_limit(c.db, f"research:{c.user.id}", 5, 60)
+    inv = _get(c, iid)
+    cached = c.db.get(InvestorResearch, inv.id)
+    if cached and cached.created_at > datetime.now(UTC) - RESEARCH_TTL:
+        return {"research": research_out(cached), "charged": False}
+    if not ai.available():
+        raise ApiError(503, "EF-AI-010", "Research needs an Anthropic API key",
+                       "Add ANTHROPIC_API_KEY to apps/api/.env to turn on live research.")
+    consume(c.db, c.workspace, "research", datetime.now(UTC).strftime("%Y-%m"), limit(c.db, c.workspace, "research_month"))
+    firm = inv.current_firm or inv.company
+    who = (f"Investor: {inv.name}, {inv.role_at_firm or inv.title} at {firm}." + (f" Firm website: {inv.firm_website}."
+           if inv.firm_website else "") + (f" Based in {inv.location}." if inv.location else "")
+           + " Research the firm's thesis, portfolio, partners and the last 12 months of news.")
+    data, model = ai.research(c.db, c.workspace, who)
+    if not data:
+        c.db.commit()
+        raise ApiError(502, "EF-AI-011", "Research didn't come back", "Please try again in a minute.")
+    if cached:
+        cached.data, cached.model, cached.created_at = data, model, datetime.now(UTC)
+    else:
+        cached = InvestorResearch(investor_id=inv.id, data=data, model=model, created_at=datetime.now(UTC))
+        c.db.add(cached)
+    c.access("research", inv.id)
+    c.db.commit()
+    return {"research": research_out(cached), "charged": True}
 
 
 @router.get("/lookup/company")

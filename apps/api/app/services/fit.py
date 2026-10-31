@@ -4,7 +4,9 @@ import re
 
 from ..models import CompanyProfile, Investor
 
-WEIGHTS = dict(sector=30, stage=20, geo=10, check=5, decision_maker=10, active=10, seed_fit=15)
+WEIGHTS = dict(sector=30, stage=20, geo=10, check=5, decision_maker=10, active=10, seed_fit=15, type=10)
+TYPE_NAMES = {"angel": "Angel", "syndicate": "Angel syndicate", "vc": "VC", "cvc": "Corporate VC",
+              "family_office": "Family office", "accelerator": "Accelerator"}
 
 STAGE_WORDS = {
     "pre-seed": ("pre-seed", "preseed", "pre seed", "angel", "idea"),
@@ -56,6 +58,13 @@ def fit(inv: Investor, p: CompanyProfile | None) -> dict:
         if any(k in hay for k in REGIONS.get(g, (g,))) or "global" in hay:
             score += WEIGHTS["geo"]
             reasons.append(f"Covers {p.geography}")
+    if p and p.investor_types:
+        wanted = set(p.investor_types) | ({"syndicate"} if "angel" in p.investor_types else set())
+        if inv.investor_type in wanted:
+            score += WEIGHTS["type"]
+            reasons.append(f"{TYPE_NAMES.get(inv.investor_type, 'Investor type')}, as you wanted")
+        else:
+            score -= WEIGHTS["type"]
     if inv.typical_check_size and "unknown" not in inv.typical_check_size.lower():
         score += WEIGHTS["check"]
     if inv.is_decision_maker:

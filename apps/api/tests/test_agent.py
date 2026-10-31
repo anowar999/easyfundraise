@@ -128,3 +128,76 @@ def test_meeting_brief_template(client):
     assert "General Partner" in b["content"]["who"]
     assert any("Medibot" in x for x in b["content"]["recent"])
     assert client.get(f"/agent/briefs/{card['id']}").json()["brief"]["id"] == b["id"]
+
+
+def _tool(name, args, tid="t1"):
+    return NS(content=[NS(type="tool_use", id=tid, name=name, input=args)], stop_reason="tool_use",
+              model="claude-haiku-5-5", usage=NS(input_tokens=10, output_tokens=5))
+
+
+def _say(text):
+    return NS(content=[NS(type="text", text=text)], stop_reason="end_turn", model="claude-haiku-5-5",
+              usage=NS(input_tokens=10, output_tokens=5))
+
+
+def test_raise_agent_works_on_trial_and_changes_settings(client, stub):
+    s = stub([_tool("update_profile", {"looking_for": "Angels with clinical networks", "round_size": "$1M"}),
+              _tool("update_settings", {"signature": "Sam\nDocAI", "timezone": "Europe/London"}, "t2"),
+              _tool("update_data_room_section", {"section": "why_now", "body": "NHS mandates digital triage by 2027."},
+                    "t3"),
+              _say("Done: profile, signature and your data room's Why now are updated.")])
+    m = client.post("/agent/chat", json={"text": "Update my settings: raising $1M from angels with clinical "
+                                                 "networks, signature Sam / DocAI, London time, and add why now"}).json()
+    assert s.calls[0]["model"] == "claude-haiku-5-5"  # trial plan still gets the agent
+    assert {a["type"] for a in m["actions"]} == {"profile", "settings", "data_room"}
+    assert all(a["state"] == "applied" for a in m["actions"])
+    prof = client.get("/workspace/profile").json()
+    assert prof["round_size"] == "$1M" and "clinical" in prof["looking_for"]
+    me = client.get("/auth/me").json()
+    assert me.get("signature", "Sam\nDocAI") == "Sam\nDocAI"
+    secs = {x["id"]: x for x in client.get("/data-room").json()["content"]["sections"]}
+    assert secs["why_now"]["body"].startswith("NHS")
+
+
+def test_agent_email_asks_which_contact_and_never_sends(client, stub, monkeypatch):
+    set_tier(client, "pro")
+    ada = _ada(client)
+    client.post("/funnel", json={"name": "Ada Seed", "investor_id": ada["id"]})
+    client.post("/funnel", json={"name": "Ada Lovelace", "firm": "Engines"})
+    stub([_tool("find_contact", {"name": "Ada"}), _say("Two Adas: Ada Seed (SeedFund) and Ada Lovelace. Which one?")])
+    m = client.post("/agent/chat", json={"text": "Send an email to Ada"}).json()
+    assert "Which" in m["text"] and m["actions"] == []
+    stub([_tool("propose_email", {"investor_id": ada["id"]}), _say("Tap to draft; you'll confirm before sending.")])
+    m = client.post("/agent/chat", json={"text": "Ada Seed"}).json()
+    act = m["actions"][0]
+    assert act["type"] == "sequence" and act["state"] == "pending"
+    monkeypatch.setattr(ai, "available", lambda: False)  # template drafts
+    r = client.post(f"/agent/chat/{m['id']}/actions/{act['id']}").json()
+    seq = client.get(f"/sequences/{r['sequence_id']}").json()
+    assert seq["status"] == "draft" and all(e["status"] == "draft" for e in seq["emails"])
+
+
+def test_agent_without_ai_answers_common_asks(client):
+    m = client.post("/agent/chat", json={"text": "Is my data room complete?"}).json()
+    assert "% complete" in m["text"] and any(a["type"] == "link" for a in m["actions"])
+    client.post("/funnel", json={"name": "Zed One", "firm": "A"})
+    client.post("/funnel", json={"name": "Zed Two", "firm": "B"})
+    m = client.post("/agent/chat", json={"text": "send an email to zed"}).json()
+    assert m["text"].startswith("Which one?") and "Zed Two" in m["text"]
+
+
+def test_agent_reads_calendar_meetings(client, stub):
+    from datetime import UTC, datetime, timedelta
+
+    card = client.post("/funnel", json={"name": "Jane Doe", "firm": "Acme VC"}).json()
+    client.patch(f"/funnel/{card['id']}", json={"call_at": (datetime.now(UTC) + timedelta(days=2)).isoformat()})
+    s = stub([_tool("calendar_events", {"raise_only": True}), _say("ok")])
+    client.post("/agent/chat", json={"text": "Any investor meetings this week?"})
+    assert "isn't connected" in s.calls[1]["messages"][-2]["content"][0]["content"]
+    client.get("/gmail/connect", params={"calendar": True}, follow_redirects=False)
+    assert client.get("/gmail").json()["calendar"] is True
+    s = stub([_tool("calendar_events", {"raise_only": True}), _say("You meet Jane Doe from Acme VC on ...")])
+    client.post("/agent/chat", json={"text": "Any investor meetings this week?"})
+    result = s.calls[1]["messages"][-2]["content"][0]["content"]
+    ev = json.loads(result)
+    assert ev[0]["raise_related"] and ev[0]["tracker_card"]["name"] == "Jane Doe"

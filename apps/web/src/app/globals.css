@@ -1,30 +1,31 @@
 @import "tailwindcss";
 
-/* Design tokens (spec §2.2/§2.3). Light by default, dark via prefers-color-scheme. */
+/* Design tokens (spec §2.2/§2.3). One crisp light theme everywhere, matching the landing page: navy ink, a
+   confident blue, white cards on a cool grey canvas. The OS dark setting no longer dims the app. */
 :root {
   --brand: #0f62fe;
+  --brand-strong: #0a4fd6;
+  --brand-soft: #eaf1ff;
   --brand-ink: #ffffff;
-  --accent: #16a34a;
+  --accent: #0f9f6e;
   --ink: #0b1220;
-  --muted: #5b6474;
-  --surface: #f6f8fb;
+  --muted: #4b5568;
+  --surface: #f3f5fa;
   --card: #ffffff;
-  --line: #e3e8ef;
-  --danger: #dc2626;
-  --warn: #d97706;
+  --line: #e1e6ef;
+  --danger: #d92d20;
+  --warn: #b54708;
+  --nav: #070b1a;
+  color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ink: #e6eaf2;
-    --muted: #9aa4b5;
-    --surface: #0b1220;
-    --card: #121a2b;
-    --line: #233049;
-  }
-}
+
+/* `dark:` utilities only apply under an explicit .dark class (we don't set one), never from the OS setting. */
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
   --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
   --color-accent: var(--accent);
   --color-ink: var(--ink);
   --color-muted: var(--muted);
@@ -33,43 +34,45 @@
   --color-line: var(--line);
   --color-danger: var(--danger);
   --color-warn: var(--warn);
-  --font-sans: Inter, Geist, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-nav: var(--nav);
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --radius-card: 12px;
+  --radius-card: 16px;
 }
 
 html { -webkit-text-size-adjust: 100%; }
-body { background: var(--surface); color: var(--ink); font-family: var(--font-sans); }
+body { background: var(--surface); color: var(--ink); font-family: var(--font-sans); font-feature-settings: "cv11", "ss01"; }
+h1, h2, h3 { letter-spacing: -0.015em; }
 * { -webkit-tap-highlight-color: transparent; }
 :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
 @utility card {
-  @apply rounded-[12px] border border-line bg-card; 
+  @apply rounded-2xl border border-line bg-card shadow-[0_1px_2px_rgba(16,24,40,0.04),0_2px_8px_-2px_rgba(16,24,40,0.06)];
 }
 @utility btn {
-  @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 h-10 text-sm font-medium transition-colors duration-200 disabled:opacity-50 disabled:pointer-events-none; 
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 h-10 text-sm font-semibold transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none;
 }
 @utility btn-primary {
-  @apply btn bg-brand text-white hover:bg-[#0b55e0]; 
+  @apply btn bg-brand text-white hover:bg-brand-strong shadow-[0_8px_20px_-8px_rgba(15,98,254,0.7)] hover:shadow-[0_10px_24px_-8px_rgba(15,98,254,0.85)];
 }
 @utility btn-ghost {
-  @apply btn border border-line bg-card hover:bg-surface; 
+  @apply btn border border-line bg-card text-ink hover:border-[#c6d0e0] hover:bg-[#f8fafc];
 }
 @utility btn-sm {
-  @apply h-8 px-2.5 text-xs; 
+  @apply h-8 px-3 text-xs rounded-lg;
 }
 @utility input {
-  @apply w-full rounded-lg border border-line bg-card px-3 h-10 text-[15px] sm:text-sm outline-none focus:border-brand; 
+  @apply w-full rounded-xl border border-line bg-card px-3.5 h-11 text-[15px] sm:text-sm text-ink placeholder:text-[#8a94a8] outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15;
 }
 @utility textarea {
-  @apply w-full rounded-lg border border-line bg-card px-3 py-2 text-[15px] sm:text-sm outline-none focus:border-brand; 
+  @apply w-full rounded-xl border border-line bg-card px-3.5 py-2.5 text-[15px] sm:text-sm text-ink placeholder:text-[#8a94a8] outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15;
 }
 @utility label {
-  @apply block text-xs font-medium text-muted mb-1; 
+  @apply block text-xs font-semibold text-muted mb-1.5;
 }
 @utility chip {
-  @apply inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-xs; 
+  @apply inline-flex items-center gap-1 rounded-full border border-line bg-card px-2.5 py-0.5 text-xs font-medium text-[#334155];
 }
 @utility skeleton {
   @apply animate-pulse rounded-md bg-line/60; 
@@ -116,6 +119,13 @@ body { background: var(--surface); color: var(--ink); font-family: var(--font-sa
 @keyframes lp-fade { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
 @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; } }
 
-/* Brand text needs a lighter blue on dark backgrounds to stay readable. */
 .logo-accent { color: var(--brand); }
-@media (prefers-color-scheme: dark) { .logo-accent { color: #7cb4ff; } }
+
+/* Signed-in app: dark navy sidebar like the landing hero, light content area. */
+.app-nav {
+  background:
+    radial-gradient(120% 50% at 0% 0%, rgba(47, 107, 255, 0.28), transparent 60%),
+    radial-gradient(80% 40% at 100% 100%, rgba(124, 92, 255, 0.18), transparent 60%),
+    var(--nav);
+}
+.app-nav .logo-accent { color: #7cb4ff; }

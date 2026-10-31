@@ -16,12 +16,13 @@ def test_signup_creates_trial_workspace(client):
     me = client.get("/auth/me").json()
     assert me["workspaces"][0]["tier"] == "trial"
     ws = client.get("/workspace").json()
-    assert ws["tier"]["limits"]["searches_total"] == 3
+    assert ws["tier"]["limits"]["searches_total"] == 10
+    assert ws["admin_unlocked"] is False
     assert ws["trial_ends_at"]
 
 
-def test_trial_three_searches_then_locked(client):
-    for _ in range(3):
+def test_trial_ten_searches_then_locked(client):
+    for _ in range(10):
         r = client.get("/investors", params={"q": "health"})
         assert r.status_code == 200, r.text
         body = r.json()
@@ -80,3 +81,17 @@ def test_csrf_blocks_cross_site(client):
 
 def test_admin_requires_admin(client):
     assert client.get("/admin/overview").status_code == 403
+
+
+def test_admin_workspace_gets_top_tier_outside_prod(client):
+    from sqlalchemy import text
+
+    from app.db import SessionLocal
+
+    email = client.get("/auth/me").json()["email"]
+    with SessionLocal() as db:
+        db.execute(text("update users set is_admin = true where email = :e"), {"e": email})
+        db.commit()
+    ws = client.get("/workspace").json()
+    assert ws["tier"]["code"] == "top" and ws["admin_unlocked"] is True
+    assert client.get("/auth/me").json()["workspaces"][0]["tier"] == "trial"  # billing state is untouched

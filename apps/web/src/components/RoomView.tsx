@@ -1,30 +1,75 @@
 "use client";
 
-import { Download } from "lucide-react";
+import { Download, ExternalLink } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 export type RoomSection = {
   id: string;
-  type: "problem" | "solution" | "product" | "traction" | "market" | "team" | "use_of_funds" | "faq" | "text";
+  type: "problem" | "solution" | "product" | "traction" | "market" | "why_now" | "business_model" | "team" | "ask" | "use_of_funds" | "faq" | "text";
   title: string;
   body?: string;
   metrics?: { label: string; value: string }[];
   people?: { name: string; role: string; link?: string }[];
   items?: { label?: string; pct?: string; q?: string; a?: string }[];
+  links?: { label: string; url: string }[];
 };
-export type RoomContent = { hero: { title: string; one_liner?: string; round?: string; instrument?: string; cta_label?: string; cta_url?: string }; sections: RoomSection[] };
+export type RoomContent = { layout?: number; hero: { title: string; one_liner?: string; round?: string; instrument?: string; cta_label?: string; cta_url?: string }; sections: RoomSection[] };
 type Doc = { id: string; label: string; filename: string; size: number };
 
 const safeUrl = (u?: string) => (u && /^(https?:|mailto:)/i.test(u) ? u : undefined);
+
+/** A YouTube, Vimeo or Loom link becomes a player; anything else stays a link. */
+export function embedUrl(u: string): string | null {
+  try {
+    const url = new URL(u);
+    const host = url.hostname.replace(/^www\./, "");
+    if (host === "youtu.be") return `https://www.youtube-nocookie.com/embed/${url.pathname.slice(1)}`;
+    if (host.endsWith("youtube.com")) {
+      const id = url.searchParams.get("v") || url.pathname.match(/\/(?:embed|shorts)\/([\w-]+)/)?.[1];
+      return id ? `https://www.youtube-nocookie.com/embed/${id}` : null;
+    }
+    if (host === "vimeo.com") {
+      const id = url.pathname.match(/\/(\d+)/)?.[1];
+      return id ? `https://player.vimeo.com/video/${id}` : null;
+    }
+    if (host === "loom.com") {
+      const id = url.pathname.match(/\/(?:share|embed)\/(\w+)/)?.[1];
+      return id ? `https://www.loom.com/embed/${id}` : null;
+    }
+  } catch {}
+  return null;
+}
+
+function ProductLinks({ links }: { links: { label: string; url: string }[] }) {
+  const ok = links.filter((l) => safeUrl(l.url));
+  const video = ok.map((l) => embedUrl(l.url)).find(Boolean);
+  return (
+    <div className="mt-4 space-y-3">
+      {video && (
+        <div className="aspect-video overflow-hidden rounded-xl border border-line bg-black">
+          <iframe src={video} title="Product video" className="h-full w-full" allow="fullscreen; picture-in-picture" allowFullScreen loading="lazy" />
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {ok.map((l) => (
+          <a key={l.url} href={l.url} target="_blank" rel="noreferrer nofollow" className="btn-ghost btn-sm">
+            {l.label || "Open"} <ExternalLink size={14} />
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function Section({ s }: { s: RoomSection }) {
   return (
     <section data-section={s.id} className="py-8 border-t border-line">
       <h2 className="text-lg md:text-xl font-semibold mb-3">{s.title}</h2>
       {s.body && <p className="whitespace-pre-wrap leading-relaxed text-[15px]">{s.body}</p>}
-      {s.type === "traction" && !!s.metrics?.length && (
+      {s.type === "product" && !!s.links?.length && <ProductLinks links={s.links} />}
+      {["traction", "market", "ask"].includes(s.type) && !!s.metrics?.some((m) => m.label && m.value) && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4">
-          {s.metrics.filter((m) => m.label).map((m) => (
+          {s.metrics!.filter((m) => m.label && m.value).map((m) => (
             <div key={m.label} className="rounded-xl border border-line p-4">
               <div className="text-2xl font-bold">{m.value}</div>
               <div className="text-xs text-muted">{m.label}</div>
@@ -128,7 +173,7 @@ export function RoomView({ content, docs = [], docHref, onPing }: { content: Roo
           </a>
         )}
       </header>
-      {content.sections.filter((s) => s.body || s.metrics?.length || s.people?.length || s.items?.length).map((s) => <Section key={s.id} s={s} />)}
+      {content.sections.filter((s) => s.body || s.metrics?.some((m) => m.value) || s.people?.length || s.items?.length || s.links?.length).map((s) => <Section key={s.id} s={s} />)}
       {docs.length > 0 && (
         <section data-section="documents" className="py-8 border-t border-line">
           <h2 className="text-lg md:text-xl font-semibold mb-3">Documents</h2>

@@ -205,7 +205,7 @@ export default function SequencePage() {
       {blocker && (
         <div className="card p-4 mb-4 border-warn/40 bg-amber-500/5 text-sm space-y-2" role="alert">
           {Boolean(blocker.needs_signature) && <p>Add your email signature first. It goes at the end of every email.</p>}
-          {Boolean(blocker.needs_reveal) && <p>We need {s.investor.name}&apos;s email. Reveal it on their profile (uses one credit) or add it on the funnel card.</p>}
+          {Boolean(blocker.needs_reveal) && <p>We need {s.investor.name}&apos;s email. Reveal it on their profile (uses one credit) or add it on their investor tracker card.</p>}
           {Boolean(blocker.needs_gmail) && <p>Connect your Gmail. Emails go out from your own mailbox so replies land in your inbox.</p>}
           <div className="flex gap-2">
             {Boolean(blocker.needs_signature) && <Link className="btn-primary btn-sm" href="/app/settings#account">Add signature</Link>}

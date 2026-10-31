@@ -131,10 +131,29 @@ def home(c: Ctx = Depends(ctx)):
     if cold:
         actions.append({"title": f"{cold[0].name} is going cold. Send a short nudge?",
                         "link": f"/app/funnel/{cold[0].id}"})
+    from ..models import CompanyProfile, DataRoom
+    from ..services import calendar, room_fill
+    from .workspace import profile_complete
+
+    complete = profile_complete(c.db.get(CompanyProfile, c.ws_id))
+    room = c.db.get(DataRoom, c.ws_id)
+    room_pct = room_fill.completeness(room.content or {})["pct"] if room else 0
+    if not complete:
+        actions.insert(0, {"title": "Tell us about your company to see your best investor matches", "link": "/onboarding"})
+    if room_pct < 70:
+        actions.append({"title": f"Your data room is {room_pct}% complete. Fill the gaps before investors look",
+                        "link": "/app/data-room"})
     if not counts:
         actions.append({"title": "Import your existing investor tracker", "link": "/app/funnel/import"})
         actions.append({"title": "Find investors that fit your company", "link": "/app/investors"})
+    try:
+        evs = calendar.events(c, 7)
+    except Exception:  # Google hiccup: the home page still loads
+        evs = []
+    meetings = [e for e in (evs or []) if e["raise_related"]][:5]
     return {
+        "profile_complete": complete, "data_room_pct": room_pct,
+        "calendar_connected": evs is not None, "meetings": meetings,
         "agent_name": c.workspace.agent_name,
         "stage_counts": [{"stage": i + 1, "label": s, "count": counts.get(i + 1, 0)} for i, s in enumerate(STAGES)],
         "total": sum(counts.values()), "committed": committed,

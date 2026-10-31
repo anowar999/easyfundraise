@@ -1,13 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Laptop, Mail, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, Copy, Laptop, Mail, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useMe } from "@/components/AppShell";
 import { Field, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api, fmtDate, setWorkspace } from "@/lib/api";
 
-type Gmail = { connected: boolean; status?: string; email?: string; mode?: string; sent_today?: number; daily_cap?: number; fake_available: boolean };
+type Gmail = { connected: boolean; status?: string; email?: string; mode?: string; sent_today?: number; daily_cap?: number; fake_available: boolean; calendar?: boolean };
 
 /** GML-01: progressive consent. We only ask for Gmail when the founder wants to send. */
 export function GmailSection() {
@@ -41,6 +41,20 @@ export function GmailSection() {
       <p className="text-muted">
         Sent today: {g.sent_today} of {g.daily_cap}. New mailboxes warm up over 10 days, and we send at most 3 a day to any one firm.
       </p>
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line p-3">
+        <CalendarDays size={16} className="text-brand" />
+        <span className="flex-1 min-w-48">
+          <b>Google Calendar</b>
+          <span className="block text-muted">Read-only. Your Raise Agent spots investor meetings and preps you for them.</span>
+        </span>
+        {g.calendar ? (
+          <span className="chip bg-green-500/10 text-green-700 border-green-600/30">Connected</span>
+        ) : (
+          <a className="btn-ghost btn-sm" href="/api/gmail/connect?calendar=1&next=/app/settings">
+            Connect calendar
+          </a>
+        )}
+      </div>
       <button className="btn-ghost btn-sm text-danger" onClick={() => confirm("Disconnect Gmail? Scheduled emails will wait until you reconnect.") && off.mutate()}>
         Disconnect
       </button>

@@ -4,7 +4,6 @@ meeting briefs (AGT-04), chat with previewed tools (AGT-05), memory (AGT-07), da
 """
 
 import json
-import uuid
 from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import func, select
@@ -23,7 +22,6 @@ from ..models import (
     MeetingBrief,
     Notification,
     Reminder,
-    Sequence,
     User,
     Workspace,
 )
@@ -172,9 +170,12 @@ def draft_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile 
 PROFILE_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": ["company_name", "one_liner", "sectors", "stage", "geography", "round_size", "instrument", "traction",
-                 "business_model", "confidence", "gaps"],
+                 "business_model", "investor_types", "looking_for", "confidence", "gaps"],
     "properties": {
         "company_name": {"type": "string"}, "one_liner": {"type": "string"},
+        "investor_types": {"type": "array", "items": {"type": "string", "enum": [
+            "angel", "syndicate", "vc", "cvc", "family_office", "accelerator"]}},
+        "looking_for": {"type": "string"},
         "sectors": {"type": "array", "items": {"type": "string"}},
         "stage": {"type": "string", "enum": ["", "pre-seed", "seed", "series-a", "series-b"]},
         "geography": {"type": "string"}, "round_size": {"type": "string"},
@@ -189,11 +190,14 @@ PROFILE_SCHEMA = {
 def ai_profile(db: Session, ws: Workspace, deck_text: str, sector_vocab: list[str]) -> dict | None:
     system = ("Extract a structured company profile from a startup pitch deck's text. Use only what the deck says; "
               "leave a field empty when the deck doesn't state it. 'sectors' should use the closest labels from the "
-              "provided vocabulary. 'gaps' lists what seed investors usually ask for that the deck is missing.")
-    out, _ = ai.json_call(db, ws, "profile", system,
-                          json.dumps({"sector_vocabulary": sector_vocab[:80], "deck_text": deck_text[:60000]}),
-                          PROFILE_SCHEMA, max_tokens=3000)
-    return out
+              "provided vocabulary. 'investor_types' are the kinds of investors the round suits (angels for small "
+              "pre-seed rounds, VCs for larger ones). 'looking_for' says in one line what the founder wants from "
+              "investors (lead, sector expertise, intros), if the deck says. 'gaps' lists what seed investors usually "
+              "ask for that the deck is missing.")
+    user = json.dumps({"sector_vocabulary": sector_vocab[:80], "deck_text": deck_text[:60000]})
+    out, _ = ai.json_call(db, ws, "profile", system, user, PROFILE_SCHEMA, max_tokens=3000)
+    # Onboarding matters on every plan: plans without drafting AI still get the deck read by the small model.
+    return out or ai.small_json(db, ws, f"{ai.SAFETY}\n\n{system}", user, PROFILE_SCHEMA, max_tokens=3000)
 
 
 # ---------------- meeting brief (AGT-04) ----------------
@@ -376,117 +380,32 @@ def prepare_call_briefs(db: Session, now: datetime | None = None) -> int:
 
 # ---------------- chat (AGT-05) ----------------
 
-TOOLS = [
-    {"name": "search_investors", "description": "Search the investor database by free text (sector, thesis, location, name).",
-     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
-    {"name": "list_funnel", "description": "List the founder's funnel cards, optionally filtered by stage (1-9) or status.",
-     "input_schema": {"type": "object", "properties": {"stage": {"type": "integer"}, "status": {"type": "string"}}}},
-    {"name": "get_card", "description": "Get one funnel card with its latest notes and events. Accepts a card id or a name.",
-     "input_schema": {"type": "object", "properties": {"card": {"type": "string"}}, "required": ["card"]}},
-    {"name": "explain_fit", "description": "Explain the fit score for an investor id against the company profile.",
-     "input_schema": {"type": "object", "properties": {"investor_id": {"type": "string"}}, "required": ["investor_id"]}},
-    {"name": "create_reminder", "description": "Create a reminder now (applied immediately). due is YYYY-MM-DD.",
-     "input_schema": {"type": "object", "properties": {"title": {"type": "string"}, "due": {"type": "string"},
-                                                       "card_id": {"type": "string"}}, "required": ["title", "due"]}},
-    {"name": "remember", "description": "Save a durable fact about the company, the raise or what works (agent memory).",
-     "input_schema": {"type": "object", "properties": {"text": {"type": "string"},
-                                                       "kind": {"type": "string", "enum": ["fact", "preference", "worked", "raise"]}},
-                      "required": ["text"]}},
-    {"name": "propose_move", "description": "Propose moving a funnel card to a stage (1-9). The founder must click to apply.",
-     "input_schema": {"type": "object", "properties": {"card_id": {"type": "string"}, "stage": {"type": "integer"}},
-                      "required": ["card_id", "stage"]}},
-    {"name": "propose_note", "description": "Propose adding a note to a funnel card. The founder must click to apply.",
-     "input_schema": {"type": "object", "properties": {"card_id": {"type": "string"}, "text": {"type": "string"}},
-                      "required": ["card_id", "text"]}},
-    {"name": "propose_sequence", "description": "Propose drafting a 3-email outreach sequence for an investor id.",
-     "input_schema": {"type": "object", "properties": {"investor_id": {"type": "string"}}, "required": ["investor_id"]}},
-]
+SYSTEM = """You are {name}, the founder's Raise Agent inside EasyFundraise: their assistant for the whole fundraise
+and the whole site. You can search and research investors, manage the shortlist and investor tracker, set reminders,
+update their company profile, settings, instructions and data room, read their calendar, and draft investor emails.
+Today is {today}; the founder's timezone is {tz}.
+
+How to work:
+- Act, don't explain how to use the site. Use tools to look things up before answering and to make changes the
+  founder asks for. Profile, settings, shortlist, tracker, reminders and data room text change at once.
+- Emails are never sent from chat. propose_email drafts them for review; propose_send opens the confirm screen.
+  When the founder says "email X", use find_contact first. One match: propose. Several: list them (name, firm,
+  stage) and ask which. None: say so and offer to search the database.
+- Moving or noting tracker cards and publishing the data room are proposals the founder taps; say so in one line.
+- Answer in a few short sentences or a short list. Name investors with their firm. Offer one clear next step,
+  using open_page for a button when it helps.
+
+Founder instructions (highest priority after safety):
+{instructions}
+Company profile: {profile}
+Memory:
+{memory}"""
 
 
-def _uuid(s: str) -> uuid.UUID | None:
-    try:
-        return uuid.UUID(str(s))
-    except ValueError:
-        return None
+def chat(c, text: str) -> ChatMessage:
+    from . import agent_tools, calendar
 
-
-def _find_card(db: Session, ws_id, ref: str) -> FunnelCard | None:
-    cid = _uuid(ref)
-    q = select(FunnelCard).where(FunnelCard.workspace_id == ws_id, FunnelCard.deleted_at.is_(None))
-    if cid:
-        return db.scalar(q.where(FunnelCard.id == cid))
-    return db.scalar(q.where(func.lower(FunnelCard.name).contains(ref.lower().strip())).limit(1))
-
-
-def run_tool(db: Session, ws: Workspace, user: User, name: str, args: dict, actions: list) -> str:
-    if name == "search_investors":
-        rows = db.scalars(select(Investor).where(~Investor.suppressed, ~Investor.is_honeypot, Investor.search_tsv.op("@@")(
-            func.websearch_to_tsquery("english", args.get("query", "")[:200]))).order_by(Investor.enriched.desc()).limit(8)).all()
-        p = db.get(CompanyProfile, ws.id)
-        return json.dumps([{"investor_id": str(i.id), "name": i.name, "firm": i.current_firm or i.company,
-                            "type": i.investor_type, "fit": fit(i, p)["score"]} for i in rows])
-    if name == "list_funnel":
-        q = select(FunnelCard).where(FunnelCard.workspace_id == ws.id, FunnelCard.deleted_at.is_(None))
-        if args.get("stage"):
-            q = q.where(FunnelCard.stage == int(args["stage"]))
-        if args.get("status"):
-            q = q.where(FunnelCard.status == args["status"])
-        return json.dumps([{"card_id": str(c.id), "name": c.name, "firm": c.firm, "stage": STAGES[c.stage - 1],
-                            "status": c.status, "next_contact": str(c.next_contact_date or "")}
-                           for c in db.scalars(q.order_by(FunnelCard.stage.desc()).limit(40))])
-    if name == "get_card":
-        c = _find_card(db, ws.id, args.get("card", ""))
-        if not c:
-            return "No matching card."
-        evs = db.scalars(select(CardEvent).where(CardEvent.card_id == c.id).order_by(CardEvent.created_at.desc()).limit(8))
-        return json.dumps({"card_id": str(c.id), "name": c.name, "firm": c.firm, "stage": STAGES[c.stage - 1],
-                           "status": c.status, "ticket": c.ticket_size, "referrer": c.referrer,
-                           "next_contact": str(c.next_contact_date or ""), "call_at": str(c.call_at or ""),
-                           "events": [{"kind": e.kind, "body": e.body[:300], "at": str(e.created_at.date())} for e in evs]})
-    if name == "explain_fit":
-        inv = db.get(Investor, _uuid(args.get("investor_id", "")) or uuid.uuid4())
-        return json.dumps(fit(inv, db.get(CompanyProfile, ws.id))) if inv and not inv.suppressed else "Investor not found."
-    if name == "create_reminder":
-        try:
-            due = date.fromisoformat(args["due"])
-        except (KeyError, ValueError):
-            return "Invalid date; use YYYY-MM-DD."
-        card = _find_card(db, ws.id, args["card_id"]) if args.get("card_id") else None
-        db.add(Reminder(workspace_id=ws.id, user_id=user.id, card_id=card.id if card else None, title=args["title"][:300],
-                        due_at=datetime.combine(due, datetime.min.time(), UTC) + timedelta(hours=9)))
-        actions.append({"id": uuid.uuid4().hex[:8], "type": "reminder", "label": f"Reminder set: {args['title'][:80]} ({due})",
-                        "args": args, "state": "applied"})
-        return "Reminder created."
-    if name == "remember":
-        db.add(AgentMemory(workspace_id=ws.id, kind=args.get("kind", "fact"), text=args["text"][:500], source="chat"))
-        actions.append({"id": uuid.uuid4().hex[:8], "type": "memory", "label": f"Remembered: {args['text'][:80]}",
-                        "args": args, "state": "applied"})
-        return "Saved to memory."
-    if name in ("propose_move", "propose_note"):
-        c = _find_card(db, ws.id, args.get("card_id", ""))
-        if not c:
-            return "No matching card."
-        if name == "propose_move":
-            st = int(args.get("stage", 0))
-            if not 1 <= st <= 9:
-                return "Stage must be 1-9."
-            label = f"Move {c.name} to {STAGES[st - 1]}"
-        else:
-            label = f"Add note to {c.name}: {args.get('text', '')[:80]}"
-        actions.append({"id": uuid.uuid4().hex[:8], "type": name.removeprefix("propose_"), "label": label,
-                        "args": {**args, "card_id": str(c.id)}, "state": "pending"})
-        return "Proposed; the founder will confirm."
-    if name == "propose_sequence":
-        inv = db.get(Investor, _uuid(args.get("investor_id", "")) or uuid.uuid4())
-        if not inv or inv.suppressed:
-            return "Investor not found."
-        actions.append({"id": uuid.uuid4().hex[:8], "type": "sequence", "label": f"Draft emails to {inv.name}",
-                        "args": {"investor_id": str(inv.id)}, "state": "pending"})
-        return "Proposed; the founder will confirm."
-    return "Unknown tool."
-
-
-def chat(db: Session, ws: Workspace, user: User, text: str) -> ChatMessage:
+    db, ws, user = c.db, c.workspace, c.user
     db.add(ChatMessage(workspace_id=ws.id, user_id=user.id, role="user", text=text[:4000],
                        created_at=datetime.now(UTC)))  # explicit: now() is transaction time, both rows would tie
     db.flush()
@@ -495,16 +414,15 @@ def chat(db: Session, ws: Workspace, user: User, text: str) -> ChatMessage:
     messages = [{"role": m.role, "content": m.text or "(done)"} for m in history]
     actions: list = []
     p = db.get(CompanyProfile, ws.id)
-    system = (f"You are {ws.agent_name}, the founder's fundraising agent. Today is {date.today()} and the founder's "
-              f"timezone is {user.timezone}. Be brief: a few sentences or a short list. Use tools to look things up "
-              "before answering. Changes to cards and new drafts are proposals the founder confirms; say so.\n"
-              f"Founder instructions (highest priority after safety):\n{instructions(db, ws.id)[:2000]}\n"
-              f"Company: {json.dumps(shareable_profile(p), default=str)}\nMemory:\n{memory_text(db, ws.id)}")
+    system = SYSTEM.format(name=ws.agent_name, today=f"{date.today():%A %d %B %Y}", tz=user.timezone,
+                           instructions=instructions(db, ws.id)[:2000] or "(none)",
+                           profile=json.dumps(shareable_profile(p), default=str), memory=memory_text(db, ws.id) or "(none)")
+    tools = agent_tools.TOOLS + calendar.TOOLS
     reply = ""
-    for _ in range(6):
-        resp = ai.tool_turn(db, ws, system, messages, TOOLS)
+    for _ in range(8):
+        resp = ai.tool_turn(db, ws, system, messages, tools)
         if resp is None:
-            reply = fallback_chat(db, ws, user, text, actions)
+            reply = fallback_chat(c, text, actions)
             break
         if resp.stop_reason == "refusal":
             reply = "I can't help with that one."
@@ -516,10 +434,16 @@ def chat(db: Session, ws: Workspace, user: User, text: str) -> ChatMessage:
             break
         results = []
         for b in uses:
+            args = b.input if isinstance(b.input, dict) else {}
             try:
-                out = run_tool(db, ws, user, b.name, b.input if isinstance(b.input, dict) else {}, actions)
+                if b.name in calendar.TOOL_NAMES:
+                    out = calendar.run(c, b.name, args)
+                else:
+                    out = agent_tools.run(c, b.name, args, actions)
+                db.flush()
                 results.append({"type": "tool_result", "tool_use_id": b.id, "content": out})
             except Exception as e:  # report tool errors to the model instead of failing the chat
+                db.rollback()
                 results.append({"type": "tool_result", "tool_use_id": b.id, "content": f"Error: {e}", "is_error": True})
         messages.append({"role": "user", "content": results})
     msg = ChatMessage(workspace_id=ws.id, user_id=user.id, role="assistant", text=reply or "Done.", actions=actions,
@@ -529,31 +453,67 @@ def chat(db: Session, ws: Workspace, user: User, text: str) -> ChatMessage:
     return msg
 
 
-def fallback_chat(db: Session, ws: Workspace, user: User, text: str, actions: list) -> str:
-    """Without AI: handle 'remind me…' and 'remember…', otherwise summarise today's priorities."""
+def fallback_chat(c, text: str, actions: list) -> str:
+    """Without an AI key: understand the common asks directly instead of a canned summary."""
+    import re
+
+    from . import agent_tools
+
     low = text.lower().strip()
     if low.startswith("remember"):
-        run_tool(db, ws, user, "remember", {"text": text.split(" ", 1)[-1]}, actions)
+        agent_tools.run(c, "remember", {"text": text.split(" ", 1)[-1]}, actions)
         return "Saved to memory."
     d = find_date(text, date.today())
     if "remind" in low and d:
-        run_tool(db, ws, user, "create_reminder", {"title": text[:200], "due": d.isoformat()}, actions)
+        agent_tools.run(c, "create_reminder", {"title": text[:200], "due": d.isoformat()}, actions)
         return f"Done. I'll remind you on {d:%a %d %b}."
-    b = brief_data(db, ws.id, user, date.today())
-    lines = [f"{len(b['due'])} follow-ups due today, {len(b['overdue'])} overdue, {b['replies']} replies to handle."]
-    lines += [f"Next: {c.name} ({c.firm})" for c in (b["overdue"] + b["due"])[:3]]
-    lines.append("Full chat needs AI drafting on your plan. You can still ask me to 'remind me …' or 'remember …'.")
+    if "data room" in low or "dataroom" in low:
+        r = json.loads(agent_tools.run(c, "get_data_room", {}, actions))
+        comp = r["completeness"]
+        agent_tools.run(c, "open_page", {"page": "data_room", "label": "Open data room"}, actions)
+        miss = ", ".join(m["label"] for m in comp["missing"][:5])
+        state = "published" if r["published"] else "not published yet"
+        return f"Your data room is {comp['pct']}% complete and {state}." + (f" Still to add: {miss}." if miss else "")
+    m = re.match(r"(?:send |draft )?(?:an )?e-?mail(?: to)? (.+)", low)
+    if m:
+        who = m.group(1).strip(" .?!'\"")
+        found = json.loads(agent_tools.run(c, "find_contact", {"name": who}, actions))
+        hits = found["in_tracker"] or found["in_database"]
+        if not hits:
+            return f"I couldn't find {who} in your tracker or the investor database."
+        if len(hits) > 1:
+            return "Which one?\n" + "\n".join(f"- {h['name']} ({h.get('firm') or ''})" for h in hits[:8])
+        iid = hits[0].get("investor_id")
+        if iid:
+            agent_tools.run(c, "propose_email", {"investor_id": iid}, actions)
+            return f"Tap below to draft emails to {hits[0]['name']}. You'll review and confirm before anything sends."
+        return f"{hits[0]['name']} is in your tracker but not in the investor database, so I can't draft for them yet."
+    if any(w in low for w in ("find", "search", "investor", "angel", "vc", "fund")) and len(low) > 8:
+        r = json.loads(agent_tools.run(c, "search_investors", {"query": text}, actions)) if not low.startswith(
+            "who should") else None
+        if r and r["top"]:
+            agent_tools.run(c, "open_page", {"page": "investors", "label": "See all in Investors"}, actions)
+            return f"{r['total']} investors match. Top picks:\n" + "\n".join(
+                f"- {x['name']}, {x['firm']} ({x['match']} match)" for x in r["top"][:5])
+    o = agent_tools.overview(c)
+    lines = [f"{len(o['follow_ups_due'])} follow-ups due today, {len(o['overdue'])} overdue, "
+             f"{o['unread_replies']} replies to handle. Data room {o['data_room']['complete_pct']}% complete."]
+    lines += [f"Next: {n}" for n in (o["overdue"] + o["follow_ups_due"])[:3]]
+    lines.append("For full answers and changes from chat, add an Anthropic API key (ANTHROPIC_API_KEY).")
     return "\n".join(lines)
 
 
-def apply_action(db: Session, ws: Workspace, user: User, msg: ChatMessage, action_id: str) -> dict:
+def apply_action(c, msg: ChatMessage, action_id: str) -> dict:
+    db, ws, user = c.db, c.workspace, c.user
     acts = [dict(a) for a in msg.actions]
     a = next((x for x in acts if x["id"] == action_id), None)
     if a is None or a["state"] != "pending":
         return {"ok": False}
     result: dict = {"ok": True}
     if a["type"] in ("move", "note"):
-        card = _find_card(db, ws.id, a["args"]["card_id"])
+        from .agent_tools import find_card
+
+        card = find_card(c, a["args"]["card_id"])
         if card is None:
             return {"ok": False}
         if a["type"] == "move":
@@ -566,15 +526,15 @@ def apply_action(db: Session, ws: Workspace, user: User, msg: ChatMessage, actio
                              meta={"agent": True}))
         result["card_id"] = str(card.id)
     elif a["type"] == "sequence":
-        inv = db.get(Investor, uuid.UUID(a["args"]["investor_id"]))
-        p = db.get(CompanyProfile, ws.id)
-        emails, engine = draft_sequence(db, ws, inv, p, "momentum", user.signature)
-        seq = Sequence(workspace_id=ws.id, investor_id=inv.id, user_id=user.id, engine=engine)
-        db.add(seq)
-        db.flush()
-        for e in emails:
-            db.add(Email(workspace_id=ws.id, sequence_id=seq.id, user_id=user.id, **e))
-        result["sequence_id"] = str(seq.id)
+        from ..routers.sequences import DraftIn, draft
+
+        result["sequence_id"] = draft(DraftIn(investor_id=a["args"]["investor_id"]), c)["id"]
+    elif a["type"] == "publish_room":
+        from ..routers.dataroom import ensure_room, room_out
+
+        room = ensure_room(db, ws.id, ws.name)
+        room.published, room.access = True, a["args"].get("access", "public")
+        result["url"] = room_out(room)["url"]
     a["state"] = "applied"
     msg.actions = acts
     db.commit()

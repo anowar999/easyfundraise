@@ -254,7 +254,7 @@ export default function Landing() {
         id="crm"
         icon={<Target size={16} />}
         eyebrow="Fundraising CRM"
-        title="Your whole raise in one funnel, on every device"
+        title="Your whole raise in one investor tracker, on every device"
         body="Every investor moves from first email to money in the bank on a board built for fundraising. On your phone, update a stage in one tap, add a note after a call and see who replied."
         points={["Nine fundraising stages from Not started to Payment received", "Import your existing investor spreadsheet in a minute", "Notes become reminders automatically", "Works beautifully on iPhone and Android"]}
       >
@@ -326,7 +326,7 @@ export default function Landing() {
             <div className="hidden md:block absolute top-7 left-[16%] right-[16%] h-px bg-gradient-to-r from-[#0f62fe]/0 via-[#0f62fe]/40 to-[#0f62fe]/0" />
             {[
               [FileSpreadsheet, "Tell us about your raise", "Upload your deck or answer five questions. Import your existing investor list if you have one."],
-              [MousePointerClick, "Pick investors who fit", "Your agent ranks thousands of investors by fit. Add the best ones to your funnel in a click."],
+              [MousePointerClick, "Pick investors who fit", "Your agent ranks thousands of investors by fit. Add the best ones to your investor tracker in a click."],
               [Mail, "Approve and send", "Review personal emails, approve, and watch replies turn into calls."],
             ].map(([Icon, t, b], k) => {
               const I = Icon as typeof Mail;
@@ -372,7 +372,7 @@ export default function Landing() {
               ["Finding the right contact", "Guessing emails, generic inboxes", "Verified contacts, revealed when you need them"],
               ["Writing outreach", "One template for everyone", "A personal sequence per investor"],
               ["Following up", "Sticky notes and memory", "Automatic, stops when they reply"],
-              ["Tracking the round", "A spreadsheet nobody updates", "A funnel that updates itself"],
+              ["Tracking the round", "A spreadsheet nobody updates", "An investor tracker that updates itself"],
               ["Sharing your data room", "A Drive link with no insight", "See who read what, and for how long"],
             ].map(([a, b, c]) => (
               <div key={a} className="grid grid-cols-[1.1fr_1fr_1fr] border-t border-[#eef1f6] text-[14px] md:text-[16px]">
