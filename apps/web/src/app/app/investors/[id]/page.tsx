@@ -6,7 +6,7 @@ import { ArrowLeft, BadgeCheck, ChevronLeft, ChevronRight, ExternalLink, Flag, G
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { CountryTag, ShortlistButton } from "@/components/InvestorRow";
+import { CountryTag, InvestorActions, ShortlistButton } from "@/components/InvestorRow";
 import { Avatar, Badge, ErrorState, FitScore, ListSkeleton, Locked, errText, useToast } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
 import type { Fit, InvestorCard } from "@/lib/types";
@@ -176,7 +176,7 @@ function SimilarRow({ items }: { items: InvestorCard[] }) {
           <div key={i.id} className="card snap-start shrink-0 w-[240px] p-4 flex flex-col hover:border-brand/60 transition">
             <div className="flex items-start justify-between gap-2">
               <Avatar name={i.name} src={i.photo_url} logoDomain={i.firm_domain} size={48} />
-              <ShortlistButton inv={i} />
+              <InvestorActions inv={i} />
             </div>
             <Link href={`/app/investors/${i.id}`} className="mt-3 block min-w-0 flex-1">
               <div className="font-semibold truncate">{i.name}</div>

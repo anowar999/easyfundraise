@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, CalendarClock, CalendarDays, ChevronRight, FileText, Flame, Snowflake, Sparkles, Upload } from "lucide-react";
 import Link from "next/link";
 import { PageHeader, useMe } from "@/components/AppShell";
-import { CountryTag, ShortlistButton } from "@/components/InvestorRow";
+import { CountryTag, InvestorActions } from "@/components/InvestorRow";
 import { Avatar, ErrorState, FitScore, ListSkeleton } from "@/components/ui";
 import type { InvestorCard } from "@/lib/types";
 import { api, fmtDate } from "@/lib/api";
@@ -44,7 +44,7 @@ function Matches() {
           <div key={i.id} className="rounded-2xl border border-line bg-card p-4 flex flex-col hover:border-brand/60 hover:shadow-md transition">
             <div className="flex items-start justify-between gap-2">
               <Avatar name={i.name} src={i.photo_url} logoDomain={i.firm_domain} size={44} />
-              <ShortlistButton inv={i} />
+              <InvestorActions inv={i} />
             </div>
             <Link href={`/app/investors/${i.id}`} className="mt-3 flex-1 min-w-0">
               <div className="font-semibold truncate">{i.name}</div>

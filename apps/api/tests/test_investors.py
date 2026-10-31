@@ -125,3 +125,12 @@ def test_search_pages_ten_at_a_time_and_trial_stops_at_cap(client):
     assert len(r3["items"]) == 5  # trial cap is 25
     assert client.get("/investors", params={"sector": "Paging", "page": 4}).status_code == 402
     assert {x["id"] for x in r1["items"]}.isdisjoint({x["id"] for x in r3["items"]})
+
+
+def test_add_to_outreach_from_list_marks_the_row(client):
+    set_tier(client, "pro")
+    ada = next(x for x in client.get("/investors", params={"q": "Ada"}).json()["items"])
+    assert ada["in_outreach"] is False
+    assert client.post("/sequences", json={"investor_id": ada["id"]}).status_code == 200
+    again = next(x for x in client.get("/investors", params={"q": "Ada"}).json()["items"])
+    assert again["in_outreach"] is True and again["in_funnel"] is False

@@ -2,13 +2,15 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { BadgeCheck, Check, Plus } from "lucide-react";
+import { BadgeCheck, Check, Plus, Send } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { flag, SHORT } from "@/lib/countries";
 import type { InvestorCard } from "@/lib/types";
-import { Avatar, Badge, FitScore, useToast } from "./ui";
+import { Avatar, Badge, FitScore, errText, useToast } from "./ui";
+
+const iconBtn = (size: "md" | "lg") => clsx("grid place-items-center rounded-full border transition-colors shrink-0", size === "lg" ? "w-10 h-10" : "w-9 h-9");
 
 /** Plus / tick button that saves an investor to the shortlist (and removes it again). */
 export function ShortlistButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "id" | "name" | "in_shortlist">; size?: "md" | "lg" }) {
@@ -43,6 +45,61 @@ export function ShortlistButton({ inv, size = "md" }: { inv: Pick<InvestorCard, 
     >
       {on ? <Check size={18} /> : <Plus size={18} />}
     </button>
+  );
+}
+
+/** Adds the investor to outreach: drafts a personalised 3-email sequence in the background. Nothing is sent from here. */
+export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "id" | "name" | "in_outreach">; size?: "md" | "lg" }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [on, setOn] = useState(Boolean(inv.in_outreach));
+  const m = useMutation({
+    mutationFn: () => api<{ id: string }>("/sequences", { method: "POST", json: { investor_id: inv.id } }),
+    onSuccess: () => {
+      setOn(true);
+      qc.invalidateQueries({ queryKey: ["sequences"] });
+      qc.invalidateQueries({ queryKey: ["home"] });
+      toast(`Emails drafted for ${inv.name}. Review them in Outreach before anything is sent.`);
+    },
+    onError: (e) => toast(e instanceof ApiError && e.problem.upgrade ? "You've used your sample drafts. Upgrade to draft more." : errText(e), "err"),
+  });
+  if (on)
+    return (
+      <Link
+        href="/app/outreach"
+        onClick={(e) => e.stopPropagation()}
+        aria-label={`${inv.name} is in your outreach list`}
+        title="In your outreach list. Open Outreach"
+        className={clsx(iconBtn(size), "bg-emerald-600 border-emerald-600 text-white")}
+      >
+        <Check size={17} />
+      </Link>
+    );
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        m.mutate();
+      }}
+      disabled={m.isPending}
+      aria-label={`Add ${inv.name} to outreach`}
+      title="Add to outreach: drafts personalised emails for you to review. Nothing is sent."
+      className={clsx(iconBtn(size), "border-line bg-card text-ink hover:border-brand hover:text-brand hover:bg-brand/5", m.isPending && "animate-pulse")}
+    >
+      <Send size={16} />
+    </button>
+  );
+}
+
+/** Shortlist and outreach icons for investor lists. */
+export function InvestorActions({ inv, size = "md" }: { inv: Pick<InvestorCard, "id" | "name" | "in_shortlist" | "in_outreach">; size?: "md" | "lg" }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <ShortlistButton inv={inv} size={size} />
+      <OutreachButton inv={inv} size={size} />
+    </div>
   );
 }
 
@@ -99,7 +156,10 @@ export function InvestorRow({ inv }: { inv: InvestorCard }) {
           {inv.fit && inv.fit.reasons.length > 0 && <p className="mt-2 text-xs text-muted line-clamp-1">{inv.fit.reasons.join(" · ")}</p>}
         </div>
       </Link>
-      <ShortlistButton inv={inv} />
+      <div className="flex flex-col sm:flex-row items-start gap-1.5">
+        <ShortlistButton inv={inv} />
+        <OutreachButton inv={inv} />
+      </div>
     </div>
   );
 }
