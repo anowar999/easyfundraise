@@ -54,12 +54,18 @@ export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "
   const toast = useToast();
   const [on, setOn] = useState(Boolean(inv.in_outreach));
   const m = useMutation({
-    mutationFn: () => api<{ id: string }>("/sequences", { method: "POST", json: { investor_id: inv.id } }),
-    onSuccess: () => {
+    mutationFn: () => api<{ id: string; auto: { scheduled: boolean; reason: string } | null }>("/sequences", { method: "POST", json: { investor_id: inv.id } }),
+    onSuccess: (r) => {
       setOn(true);
       qc.invalidateQueries({ queryKey: ["sequences"] });
       qc.invalidateQueries({ queryKey: ["home"] });
-      toast(`Emails drafted for ${inv.name}. Review them in Outreach before anything is sent.`);
+      toast(
+        r.auto?.scheduled
+          ? `${inv.name} added to outreach. Auto-send is on, so their emails are scheduled.`
+          : r.auto
+            ? `${inv.name} added to outreach. Not sent yet: ${r.auto.reason.toLowerCase()}.`
+            : `${inv.name} added to outreach. Emails drafted for you to review before anything is sent.`,
+      );
     },
     onError: (e) => toast(e instanceof ApiError && e.problem.upgrade ? "You've used your sample drafts. Upgrade to draft more." : errText(e), "err"),
   });

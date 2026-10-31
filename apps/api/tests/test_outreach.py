@@ -82,3 +82,40 @@ def test_nudge(client):
     card = client.post("/funnel", json={"name": "Nina Nudge"}).json()
     n = client.get(f"/sequences/nudge/{card['id']}").json()
     assert n["whatsapp"].startswith("Hi Nina") and len(n["whatsapp"].split()) <= 40
+
+
+def _ready_to_send(client):
+    set_tier(client, "pro")
+    client.put("/workspace/profile", json={"company_name": "DocAI", "one_liner": "AI triage for clinics",
+                                           "sectors": ["Digital Health & HealthTech"], "stage": "seed",
+                                           "traction": "40 clinics live, 12% MoM growth"})
+    client.patch("/workspace/me", json={"signature": "Sam\nDocAI"})
+    client.get("/gmail/connect", follow_redirects=False)
+    return client.get("/investors", params={"q": "Ada"}).json()["items"][0]
+
+
+def test_send_all_reports_then_schedules_ready_drafts(client):
+    ada = _ready_to_send(client)
+    seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
+    assert seq["auto"] is None  # auto-send is off unless the founder turns it on
+    lst = client.get("/sequences").json()
+    assert lst["auto_send"] is False and lst["items"][0]["blocker"] == "Reveal this investor's email first"
+    r = client.post("/sequences/send-all").json()
+    assert r["needs_confirm"] and r["ready"] == [] and r["skipped"][0]["name"] == ada["name"]
+    client.post(f"/investors/{ada['id']}/reveal")
+    r = client.post("/sequences/send-all").json()
+    assert [x["name"] for x in r["ready"]] == [ada["name"]] and r["from"]
+    assert client.get(f"/sequences/{seq['id']}").json()["status"] == "draft"  # preview changes nothing
+    assert client.post("/sequences/send-all", json={"confirm": True}).json() == {"scheduled": 1, "skipped": []}
+    s = client.get(f"/sequences/{seq['id']}").json()
+    assert s["status"] == "approved" and all(e["status"] == "scheduled" for e in s["emails"])
+
+
+def test_auto_send_schedules_new_outreach(client):
+    ada = _ready_to_send(client)
+    client.post(f"/investors/{ada['id']}/reveal")
+    client.patch("/workspace", json={"auto_send": True})
+    assert client.get("/workspace").json()["auto_send"] is True
+    seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
+    assert seq["auto"] == {"scheduled": True, "reason": ""}
+    assert client.get(f"/sequences/{seq['id']}").json()["status"] == "approved"
