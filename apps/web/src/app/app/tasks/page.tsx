@@ -2,14 +2,14 @@
 
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import clsx from "clsx";
-import { Archive, CalendarCheck, Undo2 } from "lucide-react";
-import { useState } from "react";
+import { Archive, CalendarCheck, LayoutGrid, Rows3, Undo2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
 import { ErrorState, ListSkeleton } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { COLUMNS, useTasks, useUpdateTask, type Task, type TaskStatus } from "@/lib/tasks";
-import { QuickAdd, TaskEditor, TaskNote } from "./TaskBits";
+import { QuickAdd, TaskEditor, TaskNote, TaskTable } from "./TaskBits";
 
 function DraggableNote({ t, onOpen }: { t: Task; onOpen: () => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: t.id });
@@ -66,6 +66,19 @@ export default function TasksPage() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [tab, setTab] = useState<TaskStatus>("todo"); // phones show one column at a time
   const [archived, setArchived] = useState(false);
+  const [view, setView] = useState<"table" | "board">("table");
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("ef_tasks_view");
+      if (v === "board" || v === "table") setView(v);
+    } catch {}
+  }, []);
+  const pickView = (v: "table" | "board") => {
+    setView(v);
+    try {
+      localStorage.setItem("ef_tasks_view", v);
+    } catch {}
+  };
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
@@ -98,12 +111,22 @@ export default function TasksPage() {
   return (
     <>
       <PageHeader
-        title="Founder tasks"
-        sub="Your priorities. Drag notes between columns; P1 and urgent come first on your home page."
+        title="My tasks"
+        sub="Stay on top of your priorities. P1 and urgent tasks come first on your home page."
         actions={
+          <>
+          <div className="flex rounded-xl border border-line overflow-hidden" role="group" aria-label="View">
+            <button className={clsx("px-3 h-9 sm:h-10 flex items-center gap-1.5 text-sm", view === "table" ? "bg-brand text-white" : "bg-card text-muted")} onClick={() => pickView("table")} aria-pressed={view === "table"}>
+              <Rows3 size={15} /> <span className="hidden sm:inline">Table</span>
+            </button>
+            <button className={clsx("px-3 h-9 sm:h-10 flex items-center gap-1.5 text-sm", view === "board" ? "bg-brand text-white" : "bg-card text-muted")} onClick={() => pickView("board")} aria-pressed={view === "board"}>
+              <LayoutGrid size={15} /> <span className="hidden sm:inline">Board</span>
+            </button>
+          </div>
           <button className={clsx("btn-ghost btn-sm sm:h-10 sm:text-sm", archived && "border-brand text-brand")} onClick={() => setArchived(!archived)}>
-            <Archive size={16} /> {archived ? "Back to board" : "Archive"}
+            <Archive size={16} /> <span className="hidden sm:inline">{archived ? "Back to tasks" : "Archive"}</span>
           </button>
+          </>
         }
       />
       {archived ? (
@@ -125,6 +148,10 @@ export default function TasksPage() {
               </div>
             </div>
           )}
+          {view === "table" ? (
+            <TaskTable items={items} onOpen={setOpen} />
+          ) : (
+            <>
           {/* Phones: one column at a time */}
           <div className="md:hidden grid grid-cols-3 gap-1 rounded-xl bg-line/40 p-1 mb-3">
             {COLUMNS.map((c) => (
@@ -141,6 +168,8 @@ export default function TasksPage() {
             </div>
             <DragOverlay>{dragId ? <TaskNote t={items.find((t) => t.id === dragId)!} dragging /> : null}</DragOverlay>
           </DndContext>
+            </>
+          )}
         </>
       )}
       <TaskEditor task={open} onClose={() => setOpen(null)} />

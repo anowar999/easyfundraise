@@ -9,6 +9,7 @@ const LINKS = [
   ["/#investor-database", "Investor database"],
   ["/#cold-email", "Cold email"],
   ["/#crm", "Fundraising CRM"],
+  ["/free-task-manager", "Free tasks"],
   ["/investors", "Investor lists"],
   ["/blog", "Blog"],
 ];

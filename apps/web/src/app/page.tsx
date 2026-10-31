@@ -1,4 +1,4 @@
-import { ArrowRight, BellRing, Bot, CalendarCheck, Check, FileSpreadsheet, Globe2, LineChart, Mail, MousePointerClick, Search, ShieldCheck, Sparkles, Target, Users } from "lucide-react";
+import { ArrowRight, BellRing, Bot, CalendarCheck, Check, FileSpreadsheet, ListTodo, Globe2, LineChart, Mail, MousePointerClick, Search, ShieldCheck, Sparkles, Target, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   title: { absolute: "Investor Database & Cold Email for Founders | EasyFundraise" },
   description:
     "Search 14,900+ investors, including angels, pre-seed and seed VCs. Send personalised cold emails from your Gmail and track your raise in a fundraising CRM, with an AI agent that keeps it moving.",
-  keywords: ["investor database", "angel investor list", "seed VC database", "pre-seed investors", "cold email investors", "fundraising CRM", "startup fundraising", "find investors for startup"],
+  keywords: ["free task manager", "simple task management tool", "to-do list for founders", "investor database", "angel investor list", "seed VC database", "pre-seed investors", "cold email investors", "fundraising CRM", "startup fundraising", "find investors for startup"],
   alternates: { canonical: "/" },
   openGraph: {
     title: "EasyFundraise: the investor database and AI agent that gets founders funded",
@@ -32,6 +32,7 @@ const FAQ = [
   ["Do I need traction to raise?", "No. Pre-seed and angel investors back teams and insight before revenue. EasyFundraise shows which investors invest before traction, so you pitch the right people at the right stage."],
   ["Does it work outside the US?", "Yes. The database covers investors in 93 countries, including the UK, Germany, France, Canada, India, Israel and Singapore, and emails are sent in each investor's local time zone."],
   ["Will my emails feel personal or mass-mailed?", "Personal. Each email is written for one investor, using facts about their thesis and portfolio, and you review and approve every email before it is sent."],
+  ["Is the task manager really free?", "Yes. My tasks is free for every user, forever, even without a paid plan. Add tasks, set owners, priorities, deadlines and follow-up dates, move them from To do to Done, and get your top 3 and anything due today on your home screen."],
   ["Do I need a credit card to try it?", "No. You get a 14-day free trial when you sign in with Google. No card needed."],
 ];
 
@@ -263,6 +264,26 @@ export default function Landing() {
           <Phone src="/screens/m-card.webp" alt="Investor card on a phone" className="absolute -bottom-2 right-2 md:-right-6 w-[34%] max-w-[220px] lp-float" />
         </div>
       </Feature>
+
+      <div className="bg-[#f5f8ff]">
+        <Feature
+          id="tasks"
+          flip
+          icon={<ListTodo size={16} />}
+          eyebrow="Free task manager"
+          title="Stay on top of your tasks. Free, for everyone."
+          body="A simple task board for founders who have too much on. Write it down, set who owns it and when it's due, and see your top priorities every morning. Get reminded, keep focused and get more done."
+          points={["To do, In progress and Done, as a table or sticky notes", "Owner, priority, deadline, follow-up dates and % done", "Your top 3 and today's tasks on your home screen", "Urgent tasks stay pinned until they're done. Free forever"]}
+        >
+          <div className="relative pb-10">
+            <Browser src="/screens/d-tasks.webp" alt="Free task manager with To do, In progress and Done, owners, priorities and deadlines" />
+            <Phone src="/screens/m-tasks.webp" alt="Task list on a phone" className="absolute -bottom-2 right-2 md:-right-6 w-[34%] max-w-[220px] lp-float" />
+          </div>
+          <Link href="/free-task-manager" className="mt-6 inline-flex items-center gap-1.5 font-semibold text-[#0f62fe]">
+            See the free task manager <ArrowRight size={16} />
+          </Link>
+        </Feature>
+      </div>
 
       {/* ---------------- Agent (dark band) ---------------- */}
       <section className="lp-hero-bg text-white py-20 md:py-28 relative overflow-hidden">

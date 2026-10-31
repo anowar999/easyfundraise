@@ -1,4 +1,4 @@
-"""Founder Tasks: a simple priority board (To do / In progress / Done, Archive hidden) for the founder's own work."""
+"""My tasks: a simple priority board (To do / In progress / Done, Archive hidden) for the founder's own work."""
 
 import uuid
 from datetime import UTC, date, datetime
@@ -107,8 +107,9 @@ def create_task(body: TaskIn, c: Ctx = Depends(ctx)):
     top = c.db.scalar(select(func.min(FounderTask.position)).where(
         FounderTask.workspace_id == c.ws_id, FounderTask.status == status)) or 0
     t = FounderTask(workspace_id=c.ws_id, user_id=c.user.id, title="", description="", status="todo", priority=2,
-                    urgent=False, progress=0, follow_ups=[], owner="", depends_on="", position=top - 1)  # on top
+                    urgent=False, progress=0, follow_ups=[], owner="Me", depends_on="", position=top - 1)  # on top
     _apply(t, body)
+    t.owner = t.owner or "Me"  # the founder's own list unless they hand it to someone
     c.db.add(t)
     c.db.commit()
     return out(t)

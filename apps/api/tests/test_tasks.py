@@ -27,3 +27,19 @@ def test_founder_tasks_board(client):
     assert [t["title"] for t in client.get("/tasks", params={"archived": True}).json()["items"]] == ["Call lawyer"]
     assert client.patch(f"/tasks/{b['id']}", json={"status": "nope"}).status_code == 422
     assert client.delete(f"/tasks/{b['id']}").json()["ok"]
+
+
+def test_tasks_default_owner_and_free_on_expired_trial(client):
+    from datetime import UTC, datetime, timedelta
+
+    from app.db import SessionLocal
+    from app.models import Workspace
+
+    ws_id = client.get("/workspace").json()["id"]
+    with SessionLocal() as db:
+        ws = db.get(Workspace, ws_id)
+        ws.tier_code, ws.trial_ends_at = "trial", datetime.now(UTC) - timedelta(days=30)
+        db.commit()
+    t = client.post("/tasks", json={"title": "Plan the week"})
+    assert t.status_code == 200 and t.json()["owner"] == "Me"  # free for everyone, even after the trial
+    assert client.patch(f"/tasks/{t.json()['id']}", json={"owner": "Priya"}).json()["owner"] == "Priya"
