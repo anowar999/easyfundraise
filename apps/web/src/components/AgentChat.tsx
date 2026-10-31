@@ -53,7 +53,7 @@ export function AgentChat() {
       qc.invalidateQueries({ queryKey: ["room"] });
       if (r.sequence_id) {
         setOpen(false);
-        router.push(`/app/sequences/${r.sequence_id}`);
+        router.push(`/app/sequences/${r.sequence_id}?new=1`);
       } else toast("Done");
     },
     onError: (e) => toast(errText(e), "err"),

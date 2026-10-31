@@ -155,9 +155,9 @@ def search(
     rate_limit(c.db, f"search:h:{c.user.id}", 600, 3600)
     if trial_expired(c.workspace):
         raise ApiError(402, "EF-TIER-010", "Your trial has ended", "Upgrade to keep searching.", {"upgrade": True})
-    page_size = 25  # ASP-03
+    page_size = 10  # ASP-03: ten per page, numbered pages
     cap = limit(c.db, c.workspace, "result_cap")
-    if cap is not None and page > 1:
+    if cap is not None and (page - 1) * page_size >= cap:
         raise ApiError(402, "EF-LIMIT-002", "Upgrade to see more results", "", {"upgrade": True})
     counted = page == 1 and p.has_criteria()
     if counted:
@@ -171,14 +171,14 @@ def search(
     order = [Investor.enriched.desc(), Investor.seed_fit.desc().nulls_last(), Investor.name]
     if p.q.strip():
         order.insert(0, func.ts_rank(Investor.search_tsv, func.websearch_to_tsquery("english", p.q[:200])).desc())
-    n = min(page_size, cap) if cap else page_size
-    rows = c.db.scalars(select(Investor).where(*conds).order_by(*order).offset((page - 1) * n).limit(n)).all()
+    n = min(page_size, cap - (page - 1) * page_size) if cap else page_size  # the last capped page may be short
+    rows = c.db.scalars(select(Investor).where(*conds).order_by(*order).offset((page - 1) * page_size).limit(n)).all()
     prof = c.db.get(CompanyProfile, c.ws_id)
     fids, sids = _funnel_ids(c), _shortlist_ids(c)
     c.access("search", None, params=p.model_dump(exclude_defaults=True), results=len(rows))
     c.db.commit()
     return {
-        "total": total if cap is None else min(total, cap), "page": page, "page_size": n,
+        "total": total if cap is None else min(total, cap), "all_total": total, "page": page, "page_size": page_size,
         "items": [card(i, fit(i, prof), i.id in fids, i.id in sids) for i in rows],
         "searches_used": usage(c.db, c.workspace, "searches", "all" if cap else "month"),
         "searches_limit": limit(c.db, c.workspace, "searches_total") or limit(c.db, c.workspace, "searches_month"),
@@ -251,7 +251,7 @@ def recommended(c: Ctx = Depends(ctx)):
     scored = [(fit(i, prof), i) for i in cand if not is_excluded(i, excl)]
     scored.sort(key=lambda x: -x[0]["score"])
     fids, sids = _funnel_ids(c), _shortlist_ids(c)
-    cap = limit(c.db, c.workspace, "result_cap") or 25
+    cap = limit(c.db, c.workspace, "result_cap") or 100  # paged ten at a time in the app
     return {"items": [card(i, f, i.id in fids, i.id in sids) for f, i in scored[:cap]], "needs_profile": False}
 
 

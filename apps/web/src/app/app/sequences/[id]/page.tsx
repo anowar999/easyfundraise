@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, CalendarCheck, Eye, Info, Mail, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarCheck, CheckCircle2, Eye, Info, Mail, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -171,12 +171,22 @@ export default function SequencePage() {
   if (q.isLoading) return <ListSkeleton rows={3} />;
   if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
   const s = q.data!;
+  const fresh = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("new");
   const locked = s.status !== "draft";
   return (
     <div className="max-w-3xl">
       <Link href={`/app/investors/${s.investor_id}`} className="text-sm text-muted flex items-center gap-1 mb-3">
         <ArrowLeft size={16} /> {s.investor.name}
       </Link>
+      {fresh && s.status === "draft" && (
+        <div role="status" className="mb-4 flex gap-3 rounded-2xl border border-emerald-600/25 bg-emerald-50 p-4 text-sm text-emerald-900">
+          <CheckCircle2 size={20} className="shrink-0 text-emerald-600" />
+          <div>
+            <div className="font-semibold">3 emails drafted for {s.investor.name}</div>
+            Nothing has been sent. Read them, edit anything you like, then press <b>Approve &amp; schedule</b> to confirm the sender, recipient and send times.
+          </div>
+        </div>
+      )}
       <h1 className="text-xl font-semibold">Sequence for {s.investor.name}</h1>
       <p className="text-sm text-muted mb-3">
         {s.investor.firm} · status: <b>{s.status}</b> · written by {s.engine === "template" ? "the template engine" : "Claude"}

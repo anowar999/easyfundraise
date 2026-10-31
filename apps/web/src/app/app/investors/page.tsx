@@ -1,8 +1,8 @@
 "use client";
 
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowRight, Building2, ChevronDown, ListPlus, Lock, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { ArrowRight, Building2, ChevronDown, ChevronLeft, ChevronRight, ListPlus, Lock, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
@@ -13,7 +13,7 @@ import { api, qs } from "@/lib/api";
 import { flag } from "@/lib/countries";
 import type { InvestorCard } from "@/lib/types";
 
-type Result = { total: number; page: number; page_size: number; items: InvestorCard[]; searches_used: number; searches_limit: number | null; contacts_locked: boolean };
+type Result = { total: number; all_total?: number; page: number; page_size: number; items: InvestorCard[]; searches_used: number; searches_limit: number | null; contacts_locked: boolean };
 type Opt = { value: string; label?: string; count: number };
 type Facets = { sectors: Opt[]; investor_types: Opt[]; stages: Opt[]; countries: Opt[] };
 type Parsed = Partial<Filters> & { summary?: string; engine?: string };
@@ -83,11 +83,11 @@ function SearchInner() {
   }, [f, tab, router]);
 
   const facets = useQuery<Facets>({ queryKey: ["facets"], queryFn: () => api("/investors/facets"), staleTime: 600_000 });
-  const res = useInfiniteQuery<Result>({
-    queryKey: ["investors", f],
-    queryFn: ({ pageParam }) => api(`/investors${qs({ ...f, page: pageParam })}`),
-    initialPageParam: 1,
-    getNextPageParam: (last) => (last.page * last.page_size < last.total && last.page_size >= 25 ? last.page + 1 : undefined),
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [f, tab]);
+  const res = useQuery<Result>({
+    queryKey: ["investors", f, page],
+    queryFn: () => api(`/investors${qs({ ...f, page })}`),
     placeholderData: keepPreviousData,
     enabled: tab === "search",
     retry: false,
@@ -117,9 +117,14 @@ function SearchInner() {
     },
   });
 
-  const first = res.data?.pages[0];
-  const searchItems = res.data?.pages.flatMap((p) => p.items) ?? [];
-  const items = tab === "search" ? searchItems : rec.data?.items ?? [];
+  const first = res.data;
+  const recAll = rec.data?.items ?? [];
+  const items = tab === "search" ? first?.items ?? [] : recAll.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+  const pageCount = tab === "search" ? (first ? Math.ceil(first.total / first.page_size) : 0) : Math.ceil(recAll.length / PER_PAGE);
+  const go = (n: number) => {
+    setPage(n);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
   const loading = tab === "search" ? res.isLoading : rec.isLoading;
   const error = tab === "search" ? res.error : rec.error;
   const chequeIdx = CHEQUES.findIndex((c) => (c.min ?? null) === f.check_min && (c.max ?? null) === f.check_max);
@@ -327,23 +332,14 @@ function SearchInner() {
           {items.map((inv) => (
             <InvestorRow key={inv.id} inv={inv} />
           ))}
-          {tab === "search" && first && (
-            <div className="pt-3 text-center">
-              {res.hasNextPage ? (
-                <button className="btn-ghost px-6" onClick={() => res.fetchNextPage()} disabled={res.isFetchingNextPage}>
-                  {res.isFetchingNextPage ? "Loading…" : `Load more · showing ${searchItems.length.toLocaleString()} of ${first.total.toLocaleString()}`}
-                </button>
-              ) : (
-                first.total > searchItems.length && (
-                  <p className="text-sm text-muted">
-                    Showing the top {searchItems.length} of {first.total.toLocaleString()}.{" "}
-                    <Link href="/app/settings#plan" className="text-brand font-medium">
-                      Upgrade to see every investor
-                    </Link>
-                  </p>
-                )
-              )}
-            </div>
+          {pageCount > 1 && <Pager page={page} count={pageCount} onGo={go} />}
+          {tab === "search" && first && first.all_total !== undefined && first.all_total > first.total && page === pageCount && (
+            <p className="pt-2 text-center text-sm text-muted">
+              Showing the top {first.total} of {first.all_total.toLocaleString()} matches.{" "}
+              <Link href="/app/settings#plan" className="text-brand font-medium">
+                Upgrade to see every investor
+              </Link>
+            </p>
           )}
         </div>
         <aside className="hidden lg:block">
@@ -357,6 +353,41 @@ function SearchInner() {
         </button>
       </Sheet>
     </>
+  );
+}
+
+const PER_PAGE = 10;
+
+/** Numbered pages: 1 … 4 5 6 … 20, with previous / next. */
+function Pager({ page, count, onGo }: { page: number; count: number; onGo: (n: number) => void }) {
+  const nums: (number | "…")[] = [];
+  for (let n = 1; n <= count; n++) {
+    if (n === 1 || n === count || Math.abs(n - page) <= 1) nums.push(n);
+    else if (nums[nums.length - 1] !== "…") nums.push("…");
+  }
+  return (
+    <nav className="flex items-center justify-center gap-1 pt-4" aria-label="Pages">
+      <button className="btn-ghost btn-sm" disabled={page <= 1} onClick={() => onGo(page - 1)} aria-label="Previous page">
+        <ChevronLeft size={15} /> <span className="hidden sm:inline">Previous</span>
+      </button>
+      {nums.map((n, i) =>
+        n === "…" ? (
+          <span key={`gap${i}`} className="px-1.5 text-muted">…</span>
+        ) : (
+          <button
+            key={n}
+            onClick={() => onGo(n)}
+            aria-current={n === page ? "page" : undefined}
+            className={clsx("h-8 min-w-8 rounded-lg px-2 text-sm font-semibold", n === page ? "bg-brand text-white" : "text-ink hover:bg-card hover:shadow-sm")}
+          >
+            {n}
+          </button>
+        ),
+      )}
+      <button className="btn-ghost btn-sm" disabled={page >= count} onClick={() => onGo(page + 1)} aria-label="Next page">
+        <span className="hidden sm:inline">Next</span> <ChevronRight size={15} />
+      </button>
+    </nav>
   );
 }
 
