@@ -502,6 +502,33 @@ def card_mail(cid: str, c: Ctx = Depends(ctx)):
             "subject": ra["subject"]}
 
 
+_synced: dict[str, datetime] = {}  # card id -> last Gmail check, so opening a card doesn't hit Gmail every time
+
+
+@router.post("/{cid}/mail/sync")
+def card_mail_sync(cid: str, force: bool = True, c: Ctx = Depends(ctx)):
+    """Checks Gmail for messages with this investor and logs any new ones on the card's timeline."""
+    from ..models import GmailAccount
+    from ..services import card_mail
+    from ..services.gmail import GmailRevoked
+
+    card = _get(c, cid)
+    to = card_mail.address(c.db, c.ws_id, card)
+    acc = c.db.get(GmailAccount, c.user.id)
+    if not to or acc is None or acc.status != "connected":
+        return {"new": 0, "connected": bool(acc and acc.status == "connected"), "has_email": bool(to)}
+    now = datetime.now(UTC)
+    if not force and (last := _synced.get(cid)) and now - last < timedelta(minutes=10):
+        return {"new": 0, "connected": True, "has_email": True, "skipped": True}
+    _synced[cid] = now
+    try:
+        n = card_mail.sync(c.db, card, acc, to)
+    except GmailRevoked:
+        raise ApiError(409, "EF-SEQ-007", "Reconnect Gmail", "Gmail access was revoked.", {"needs_gmail": True}) from None
+    c.db.commit()
+    return {"new": n, "connected": True, "has_email": True}
+
+
 class MailDraftIn(BaseModel):
     ask: str = Field("", max_length=500)
 

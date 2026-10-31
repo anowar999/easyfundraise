@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowLeft, Bell, Check, Copy, ExternalLink, Mail, MessageCircle, Pencil, Phone, Sparkles, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, Bell, Check, Copy, ExternalLink, Mail, MessageCircle, Pencil, Phone, RefreshCw, Sparkles, Star, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -66,6 +66,22 @@ export default function CardPage() {
       refresh();
     },
   });
+  // Check Gmail for messages with this investor and log new ones on the timeline (quietly on open, at most every 10 min)
+  const sync = useMutation({
+    mutationFn: (force: boolean) => api<{ new: number; connected: boolean; has_email: boolean; skipped?: boolean }>(`/funnel/${id}/mail/sync?force=${force}`, { method: "POST" }),
+    onSuccess: (r, force) => {
+      if (r.new) refresh();
+      if (!force) return;
+      if (!r.connected) toast("Connect Gmail in Settings to check email", "err");
+      else if (!r.has_email) toast("Add this investor's email first", "err");
+      else toast(r.new ? `${r.new} new email${r.new > 1 ? "s" : ""} added to the timeline` : "Up to date. No new emails.");
+    },
+    onError: (e, force) => force && toast(errText(e), "err"),
+  });
+  useEffect(() => {
+    sync.mutate(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
   const del = useMutation({
     mutationFn: () => api(`/funnel/${id}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -136,6 +152,9 @@ export default function CardPage() {
             <div className="flex flex-wrap gap-2">
               <button className="btn-primary btn-sm" onClick={() => setMailOpen(true)}>
                 <Mail size={15} /> Email
+              </button>
+              <button className="btn-ghost btn-sm" disabled={sync.isPending} onClick={() => sync.mutate(true)} title="Check Gmail for new emails with this investor">
+                <RefreshCw size={15} className={clsx("text-brand", sync.isPending && "animate-spin")} /> {sync.isPending ? "Checking…" : "Check email"}
               </button>
               <button className="btn-ghost btn-sm" onClick={() => contacted.mutate(c.contact_method || "Email")}>
                 <Check size={15} className="text-brand" /> Mark contacted

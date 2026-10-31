@@ -9,7 +9,7 @@ from email.utils import getaddresses
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import CardEvent, CompanyProfile, FunnelCard, GmailAccount, Investor, Reveal, Workspace
+from ..models import CardEvent, CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Workspace
 from . import ai, outreach
 from .agent import instructions, shareable_profile
 from .gmail import FullMessage, client_for
@@ -60,6 +60,37 @@ def reply_all(thread: list[FullMessage], me: str, investor: str) -> dict:
     out_to.sort(key=lambda a: a.lower() != investor.lower())
     subject = re.sub(r"^\s*((re|fwd?)\s*:\s*)+", "", last.subject or thread[0].subject, flags=re.I).strip()
     return {"to": out_to, "cc": out_cc, "subject": f"Re: {subject}" if subject else ""}
+
+
+def sync(db: Session, card: FunnelCard, acc: GmailAccount, addr: str) -> int:
+    """Logs on the card any Gmail message to or from the investor that isn't on its timeline yet: their emails as
+    replies, the founder's (sent from Gmail directly) as emails. Returns how many were added."""
+    msgs = client_for(db, acc).messages_with(addr)
+    if not msgs:
+        return 0
+    known = {str((e.meta or {}).get("gmail_id")) for e in db.scalars(
+        select(CardEvent).where(CardEvent.card_id == card.id, CardEvent.kind.in_(["reply", "email"])))}
+    known |= set(db.scalars(select(Email.gmail_message_id).where(  # sent from the app: already logged by the mailer
+        Email.workspace_id == card.workspace_id, Email.gmail_message_id.in_([m.id for m in msgs]))))
+    me, added = acc.email.lower(), 0
+    for m in msgs:
+        if m.id in known:
+            continue
+        mine = bool(me) and me in m.sender.lower()
+        text = m.text.strip()[:1500]
+        if mine:
+            body, kind = f"Email sent: {m.subject}\n\n{text}", "email"
+            if m.at and (not card.last_contacted_at or m.at > card.last_contacted_at):
+                card.last_contacted_at = m.at
+        else:
+            body, kind = text[:500] or m.subject, "reply"
+        ev = CardEvent(workspace_id=card.workspace_id, card_id=card.id, kind=kind, body=body,
+                       meta={"gmail_id": m.id, "from": m.sender, "subject": m.subject, "synced": True})
+        if m.at:
+            ev.created_at = m.at  # the timeline shows it when it happened, not when it was found
+        db.add(ev)
+        added += 1
+    return added
 
 
 def msg_out(m: FullMessage, me: str) -> dict:

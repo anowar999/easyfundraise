@@ -304,7 +304,7 @@ def handle_reply(db: Session, em: Email, msg, now: datetime) -> None:
     if card:
         card.last_contacted_at = now
         db.add(CardEvent(workspace_id=ws.id, card_id=card.id, kind="reply", body=msg.snippet[:500],
-                         meta={"kind": kind, "signals": res.get("signals", [])}))
+                         meta={"kind": kind, "signals": res.get("signals", []), "gmail_id": msg.id}))
     if kind == "opt_out":  # MAIL-07
         if not excluded(db, ws.id, primary(em.to_email)):
             db.add(Exclusion(workspace_id=ws.id, kind="email", value=primary(em.to_email).lower(), reason="opt_out"))
