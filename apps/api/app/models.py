@@ -61,6 +61,9 @@ class User(Base):
     # Optional password sign-in (scrypt, salted), alongside Google and email links
     password_hash: Mapped[str] = mapped_column(Text, default="")
     password_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    login_code_hash: Mapped[str] = mapped_column(Text, default="")  # one-time code after a correct password
+    login_code_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    login_code_tries: Mapped[int] = mapped_column(Integer, default=0)
     last_brief_on: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = created()
     updated_at: Mapped[datetime] = updated()

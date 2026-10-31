@@ -51,6 +51,28 @@ def send_sign_in_link(to: str, link: str) -> None:
 <p style="margin:24px 0"><a href="{link}" style="background:#0f62fe;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:600;display:inline-block">Sign in to EasyFundraise</a></p>
 <p style="font-size:13px;color:#5b6478">If you didn't ask for this, you can ignore this email.</p></div>""",
         subtype="html")
+    _send(msg)
+
+
+def send_login_code(to: str, code: str, minutes: int) -> None:
+    """Second step of password sign-in: a one-time code to the account's own email."""
+    s = get_settings()
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = s.smtp_from, to, f"{code} is your EasyFundraise sign-in code"
+    msg.set_content(f"Your EasyFundraise sign-in code is {code}\n\nIt works once, for {minutes} minutes. "
+                    "If you didn't just try to sign in, change your password in Settings.")
+    msg.add_alternative(
+        f"""<div style="font-family:Inter,Arial,sans-serif;max-width:460px;margin:0 auto;padding:24px;color:#0b1220">
+<p style="font-size:20px;font-weight:700;margin:0 0 16px">Easy<span style="color:#0f62fe">Fundraise</span></p>
+<p style="font-size:16px;line-height:1.5">Enter this code to finish signing in. It works once, for {minutes} minutes.</p>
+<p style="font-size:34px;font-weight:700;letter-spacing:8px;margin:24px 0;font-family:Menlo,Consolas,monospace">{code}</p>
+<p style="font-size:13px;color:#5b6478">If you didn't just try to sign in, someone may know your password. Change it in Settings.</p></div>""",
+        subtype="html")
+    _send(msg)
+
+
+def _send(msg: EmailMessage) -> None:
+    s = get_settings()
     with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as smtp:
         smtp.starttls()
         if s.smtp_user:

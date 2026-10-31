@@ -18,7 +18,7 @@ from ..db import get_db
 from ..deps import COOKIE, _hash, client_ip, create_session, current_user, destroy_session
 from ..errors import ApiError
 from ..models import AuditLog, AuthSession, GmailAccount, User, Workspace, WorkspaceMember
-from ..services.account_mail import read_sign_in_token, send_sign_in_link, sign_in_token, smtp_ready
+from ..services.account_mail import read_sign_in_token, send_login_code, send_sign_in_link, sign_in_token, smtp_ready
 from ..services.crypto import decrypt, encrypt, password_hash, password_ok, totp_ok, totp_secret
 from ..services.entitlements import limit, rate_limit
 from ..services.gmail import SCOPES, store_tokens
@@ -246,6 +246,64 @@ def password_login(body: PasswordLogin, request: Request, response: Response, db
                        "Signed up with Google? Use Continue with Google, or set a password in Settings first.")
     if user.suspended_at:
         raise ApiError(403, "EF-AUTH-003", "Account suspended")
+    s = get_settings()
+    if not s.password_otp:
+        create_session(db, response, user, request.headers.get("user-agent", ""), client_ip(request))
+        return {"ok": True, "next": after_sign_in(db, user, False, safe_next(body.next))}
+    # Step two: a one-time code to the account's own inbox, so a leaked password alone is not enough.
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    user.login_code_hash = password_hash(code)
+    user.login_code_expires_at = datetime.now(UTC) + timedelta(seconds=CODE_TTL)
+    user.login_code_tries = 0
+    db.commit()
+    out = {"ok": True, "code_required": True, "email": mask_email(user.email), "expires_in": CODE_TTL}
+    if smtp_ready():
+        try:
+            send_login_code(user.email, code, CODE_TTL // 60)
+        except OSError as e:
+            raise ApiError(502, "EF-AUTH-051", "We couldn't send the email", "Please try again in a minute.") from e
+    elif s.is_prod:
+        raise ApiError(503, "EF-AUTH-050", "Email sign-in codes are not configured")
+    else:
+        out["dev_code"] = code  # development only: no SMTP, so show it on screen
+    return out
+
+
+CODE_TTL = 10 * 60  # standard short life for an emailed one-time code
+CODE_TRIES = 5
+
+
+def mask_email(email: str) -> str:
+    name, _, domain = email.partition("@")
+    return f"{name[:2]}{'•' * max(1, len(name) - 2)}@{domain}"
+
+
+class CodeVerify(BaseModel):
+    email: EmailStr
+    code: str = Field(max_length=12)
+    next: str = "/app"
+
+
+@router.post("/password/verify")
+def password_verify(body: CodeVerify, request: Request, response: Response, db: Session = Depends(get_db)):
+    """Finish password sign-in with the emailed code. Five wrong tries burn the code."""
+    rate_limit(db, f"code-ip:{client_ip(request)}", 30, 600)
+    user = db.scalar(select(User).where(User.email == body.email.lower()))
+    bad = ApiError(401, "EF-AUTH-063", "That code is wrong or has expired", "Sign in again to get a new code.")
+    if not user or not user.login_code_hash or not user.login_code_expires_at:
+        raise bad
+    if user.login_code_expires_at < datetime.now(UTC) or user.login_code_tries >= CODE_TRIES:
+        user.login_code_hash, user.login_code_expires_at = "", None
+        db.commit()
+        raise bad
+    if not password_ok(body.code.strip().replace(" ", ""), user.login_code_hash):
+        user.login_code_tries += 1
+        db.commit()
+        raise bad
+    if user.suspended_at:
+        raise ApiError(403, "EF-AUTH-003", "Account suspended")
+    user.login_code_hash, user.login_code_expires_at, user.login_code_tries = "", None, 0  # one use only
+    db.add(AuditLog(actor_id=user.id, action="auth.password_login", target=user.email, ip=client_ip(request)))
     create_session(db, response, user, request.headers.get("user-agent", ""), client_ip(request))
     return {"ok": True, "next": after_sign_in(db, user, False, safe_next(body.next))}
 

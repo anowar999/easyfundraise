@@ -122,6 +122,10 @@ sensitive scope and only needs verification. Dev sign-in is always off when `EF_
 "Continue with email" sends a 15-minute magic link. Set `EF_SMTP_HOST`, `EF_SMTP_PORT`, `EF_SMTP_USER`,
 `EF_SMTP_PASSWORD` and `EF_SMTP_FROM` (any SMTP provider: Postmark, Resend, SES, or Gmail with an app password).
 Without SMTP, development shows the link on screen and production hides email sign-in.
+
+Users can also add a password in Settings → Sign-in & password (Google and Gmail stay connected). After a correct
+password we email a 6-digit one-time code that works once, for 10 minutes; five wrong tries burn it. This needs SMTP
+in production. `EF_PASSWORD_OTP=false` turns the code step off (not recommended).
 ## Tests
 
 ```bash
