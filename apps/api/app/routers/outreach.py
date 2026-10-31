@@ -20,7 +20,7 @@ from ..models import Email, EmailEvent, FunnelCard, GmailAccount, Sequence
 from ..services.entitlements import usage
 from ..services.gmail import SCOPES, client_for, store_tokens
 from ..services.mailer import daily_cap, sent_metric, user_day
-from .auth import GOOGLE_AUTH, GOOGLE_TOKEN, safe_next
+from .auth import GOOGLE_AUTH, GOOGLE_TOKEN, google_reason, safe_next
 
 router = APIRouter(tags=["outreach"])
 public = APIRouter(tags=["tracking"])
@@ -76,7 +76,7 @@ def gmail_callback(request: Request, code: str = "", state: str = "", error: str
                                            grant_type="authorization_code", redirect_uri=f"{s.web_origin}/api/gmail/callback"),
                    timeout=15)
     if r.status_code != 200:
-        raise ApiError(400, "EF-MAIL-003", "Gmail connection failed", "Google rejected the code.")
+        raise ApiError(400, "EF-MAIL-003", "Gmail connection failed", f"Google rejected the code: {google_reason(r)}")
     j = r.json()
     granted = j.get("scope", "")
     if "gmail.send" not in granted:

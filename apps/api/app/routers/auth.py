@@ -55,6 +55,15 @@ def upsert_user(db: Session, email: str, name: str, picture: str = "", sub: str 
     return user
 
 
+def google_reason(r: httpx.Response) -> str:
+    """Google's own error (e.g. invalid_client = wrong client secret), safe to show: it never contains secrets."""
+    try:
+        j = r.json()
+    except ValueError:
+        return f"HTTP {r.status_code}"
+    return " - ".join(x for x in (j.get("error", ""), j.get("error_description", "")) if x) or f"HTTP {r.status_code}"
+
+
 def safe_next(path: str, default: str = "/app") -> str:
     """Only same-site paths, so a crafted link can't bounce a signed-in user to another site."""
     return path if path.startswith("/") and not path.startswith("//") and "\\" not in path else default
@@ -110,7 +119,7 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
                                              client_secret=s.google_client_secret, grant_type="authorization_code",
                                              redirect_uri=f"{s.web_origin}/api/auth/google/callback"))
         if tok.status_code != 200:
-            raise ApiError(400, "EF-AUTH-042", "Sign-in failed", "Google rejected the sign-in code.")
+            raise ApiError(400, "EF-AUTH-042", "Sign-in failed", f"Google rejected the sign-in code: {google_reason(tok)}")
         info = c.get(GOOGLE_USERINFO, headers={"Authorization": f"Bearer {tok.json()['access_token']}"}).json()
     if not info.get("email_verified"):
         raise ApiError(403, "EF-AUTH-043", "Google email is not verified")
