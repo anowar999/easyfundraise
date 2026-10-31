@@ -1,8 +1,8 @@
-# EasyFundraise Terms & Conditions (DRAFT — review by counsel required before publication)
+# Terms and Conditions
 
-_Last updated: [DATE] · Version: 1.0_
+_Last updated: 31 October 2026 · Effective: 31 October 2026 · Version 1.0_
 
-These Terms govern your use of easyfundraise.com and the EasyFundraise application (the "Service") provided by EasyFundraise [legal entity] ("we"). By creating an account you agree to these Terms and our Privacy Policy.
+These Terms govern your use of easyfundraise.com and the EasyFundraise application (the "Service") provided by EasyFundraise ("we", "us"). By creating an account you agree to these Terms and our Privacy Policy.
 
 ## 1. The Service
 EasyFundraise is a software platform that helps founders discover investors from a directory compiled from publicly available professional information, draft and send personalised outreach from their own email account, track engagement, manage an investor pipeline, and use AI-powered assistance. We do not introduce you to investors, guarantee responses or investment, provide investment, legal or tax advice, or act as a broker-dealer, placement agent or finder.
@@ -44,7 +44,7 @@ To the maximum extent permitted by law, we are not liable for indirect, conseque
 You will indemnify us against claims arising from your content, your outreach, or your breach of these Terms or applicable law.
 
 ## 14. Investors' rights
-Investors listed in the directory may request correction or removal at easyfundraise.com/investors/your-profile. We process requests within 72 hours. Users must cease contacting any investor who has opted out.
+Investors listed in the directory may request correction or removal using the form at [easyfundraise.com/investor-request](/investor-request). We process requests within 72 hours. Users must cease contacting any investor who has opted out.
 
 ## 15. Changes, law, disputes
-We may update these Terms with notice; continued use is acceptance. Governing law and venue: [jurisdiction, configurable]. Informal resolution first; then [arbitration/courts as chosen]. Contact: legal@easyfundraise.com.
+We may update these Terms with notice; continued use is acceptance. These Terms and any dispute or claim arising out of or in connection with them are governed by the laws of England and Wales. We will first try to resolve any dispute informally; if that fails, the courts of England and Wales have exclusive jurisdiction, except that if you are a consumer you may also bring proceedings in the courts where you live. Contact: legal@easyfundraise.com.

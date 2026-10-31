@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-/** Minimal Markdown renderer for our own legal drafts (headings, paragraphs, lists, bold, links). */
+/** Minimal Markdown renderer for our own legal pages and blog posts (headings, paragraphs, lists, bold, links). */
 function inline(text: string): ReactNode[] {
   const out: ReactNode[] = [];
   const re = /\*\*(.+?)\*\*|\[(.+?)\]\((.+?)\)/g;
@@ -34,6 +34,12 @@ export function Markdown({ source }: { source: string }) {
             <ul key={i} className="list-disc pl-6 space-y-1 mt-3">
               {t.split("\n").map((l, j) => <li key={j}>{inline(l.replace(/^[-*]\s+/, ""))}</li>)}
             </ul>
+          );
+        if (/^\d+\.\s/.test(t))
+          return (
+            <ol key={i} className="list-decimal pl-6 space-y-1 mt-3">
+              {t.split("\n").map((l, j) => <li key={j}>{inline(l.replace(/^\d+\.\s+/, ""))}</li>)}
+            </ol>
           );
         return <p key={i} className="mt-3 leading-relaxed">{inline(t.replace(/\n/g, " "))}</p>;
       })}

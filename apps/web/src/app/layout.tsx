@@ -8,7 +8,7 @@ export const metadata: Metadata = {
     "Everything founders need to find investors, contact them with personalised emails, manage the pipeline and raise capital, powered by AI.",
   manifest: "/manifest.webmanifest",
   icons: { icon: "/icon.svg", apple: "/apple-touch-icon.png" },
-  openGraph: { type: "website", siteName: "EasyFundraise", images: ["/logo.svg"] },
+  openGraph: { type: "website", siteName: "EasyFundraise", images: ["/og.png"] },
   appleWebApp: { capable: true, title: "EasyFundraise", statusBarStyle: "default" },
 };
 

@@ -112,7 +112,7 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icon.svg" alt="" className="w-8 h-8" />
           <span className="font-bold tracking-tight">
-            Easy<span className="text-brand">Fundraise</span>
+            Easy<span className="logo-accent">Fundraise</span>
           </span>
         </Link>
         <nav className="flex flex-col gap-1" aria-label="Main">
@@ -165,7 +165,7 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icon.svg" alt="" className="w-7 h-7" />
           <span className="font-bold tracking-tight">
-            Easy<span className="text-brand">Fundraise</span>
+            Easy<span className="logo-accent">Fundraise</span>
           </span>
         </Link>
         <div className="flex items-center gap-1">

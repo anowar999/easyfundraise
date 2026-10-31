@@ -15,3 +15,7 @@
 - https://easyfundraise.com/legal/terms : terms
 - https://easyfundraise.com/legal/data-sources : data sources and investor rights
 - https://easyfundraise.com/investor-request : investors can update or remove their profile
+- https://easyfundraise.com/investors : investor lists by country (angel, pre-seed, seed, VC) and by sector
+- https://easyfundraise.com/blog : fundraising guides (finding investors, cold email templates, pre-seed vs seed)
+- https://easyfundraise.com/glossary : fundraising glossary
+- https://easyfundraise.com/legal/cookies : cookie policy

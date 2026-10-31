@@ -33,7 +33,7 @@ function LoginInner() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icon.svg" alt="" className="w-9 h-9" />
           <span className="text-lg font-bold">
-            Easy<span className="text-brand">Fundraise</span>
+            Easy<span className="logo-accent">Fundraise</span>
           </span>
         </div>
         <h1 className="text-xl font-semibold">Sign in</h1>
