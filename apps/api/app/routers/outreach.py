@@ -17,6 +17,8 @@ from ..db import get_db
 from ..deps import Ctx, ctx
 from ..errors import ApiError
 from ..models import Email, EmailEvent, FunnelCard, GmailAccount, Sequence
+from ..services.calendar import SCOPE as CAL_SCOPE
+from ..services.calendar import connected as calendar_connected
 from ..services.entitlements import usage
 from ..services.gmail import SCOPES, client_for, store_tokens
 from ..services.mailer import daily_cap, sent_metric, user_day
@@ -29,12 +31,12 @@ GIF = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
 
 def gmail_out(acc: GmailAccount | None, db: Session, c: Ctx) -> dict:
     if acc is None:
-        return {"connected": False, "fake_available": get_settings().gmail_fake}
+        return {"connected": False, "fake_available": get_settings().gmail_fake, "calendar": False}
     now = datetime.now(UTC)
     cap = daily_cap(db, c.workspace, acc, now)
     return {"connected": acc.status == "connected", "status": acc.status, "email": acc.email, "mode": acc.mode,
             "connected_at": acc.connected_at, "sent_today": usage(db, c.workspace, sent_metric(c.user.id), user_day(c.user, now)),
-            "daily_cap": cap, "fake_available": get_settings().gmail_fake}
+            "daily_cap": cap, "fake_available": get_settings().gmail_fake, "calendar": calendar_connected(acc)}
 
 
 @router.get("/gmail")
@@ -43,20 +45,25 @@ def gmail_status(c: Ctx = Depends(ctx)):
 
 
 @router.get("/gmail/connect")
-def gmail_connect(request: Request, next: str = "/app/settings?gmail=connected", c: Ctx = Depends(ctx)):
-    """AUTH-02: Gmail scopes are requested at sign-up or later, when the user first wants to send."""
+def gmail_connect(request: Request, next: str = "/app/settings?gmail=connected", calendar: bool = False,
+                  c: Ctx = Depends(ctx)):
+    """AUTH-02: Gmail scopes are requested at sign-up or later, when the user first wants to send.
+    calendar=1 adds read-only Google Calendar so the Raise Agent can see investor meetings."""
     s = get_settings()
     next = safe_next(next, "/app/settings?gmail=connected")
     if s.gmail_fake:
         acc = c.db.get(GmailAccount, c.user.id) or GmailAccount(user_id=c.user.id, email=c.user.email)
         acc.mode, acc.status, acc.email = "fake", "connected", c.user.email
+        if calendar and "calendar" not in (acc.scopes or ""):
+            acc.scopes = f"{acc.scopes or ''} {CAL_SCOPE}".strip()
         c.db.merge(acc)
         c.db.commit()
         return RedirectResponse(f"{s.web_origin}{next}")
     if not s.google_client_id:
         raise ApiError(503, "EF-MAIL-001", "Gmail connection is not configured")
     state = secrets.token_urlsafe(24)
-    params = dict(client_id=s.google_client_id, response_type="code", scope=SCOPES, access_type="offline",
+    params = dict(client_id=s.google_client_id, response_type="code",
+                  scope=f"{SCOPES} {CAL_SCOPE}" if calendar else SCOPES, access_type="offline",
                   include_granted_scopes="true", prompt="consent", login_hint=c.user.email, state=state,
                   redirect_uri=f"{s.web_origin}/api/gmail/callback")
     resp = RedirectResponse(f"{GOOGLE_AUTH}?{urlencode(params)}")

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Copy, ExternalLink, FileUp, Link2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, ExternalLink, FileUp, Globe, Link2, Lock, Plus, Sparkles, Trash2, Wand2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
 import { ErrorState, Field, ListSkeleton, errText, useToast } from "@/components/ui";
@@ -13,12 +13,14 @@ type Room = {
   versions: { at: string }[];
   docs: { id: string; label: string; filename: string; size: number; gated: boolean }[];
   links: { id: string; label: string; card_id: string | null; url: string; expires_at: string | null; revoked: boolean }[];
+  completeness: { pct: number; missing: { id: string; label: string }[]; has_docs: boolean };
 };
 type Views = { items: { id: string; viewer: string; card_id: string | null; seconds: number; sections: Record<string, number>; downloads: { doc: string }[]; started_at: string }[] };
 
 const TYPES: [RoomSection["type"], string][] = [
-  ["problem", "Problem"], ["solution", "Solution"], ["product", "Product"], ["traction", "Traction"], ["market", "Market"],
-  ["team", "Team"], ["use_of_funds", "Use of funds"], ["faq", "FAQ"], ["text", "Free text"],
+  ["problem", "Problem"], ["solution", "Solution"], ["product", "Product"], ["traction", "Traction"],
+  ["market", "Market opportunity"], ["why_now", "Why now"], ["business_model", "Business model"], ["team", "Team"],
+  ["ask", "The ask"], ["use_of_funds", "Use of funds"], ["faq", "FAQ"], ["text", "Free text"],
 ];
 
 function SectionEditor({ s, onChange }: { s: RoomSection; onChange: (s: RoomSection) => void }) {
@@ -31,7 +33,7 @@ function SectionEditor({ s, onChange }: { s: RoomSection; onChange: (s: RoomSect
     },
     onError: (e) => toast(errText(e), "err"),
   });
-  const rows = <K extends "metrics" | "people" | "items">(key: K, blank: Record<string, string>, fields: [string, string][]) => {
+  const rows = <K extends "metrics" | "people" | "items" | "links">(key: K, blank: Record<string, string>, fields: [string, string][]) => {
     const list = ((s[key] as Record<string, string>[] | undefined) ?? []);
     const upd = (i: number, f: string, v: string) => onChange({ ...s, [key]: list.map((x, j) => (j === i ? { ...x, [f]: v } : x)) });
     return (
@@ -65,7 +67,15 @@ function SectionEditor({ s, onChange }: { s: RoomSection; onChange: (s: RoomSect
           )}
         </>
       )}
+      {s.type === "product" && (
+        <>
+          <p className="text-xs text-muted">Add a demo video (YouTube, Vimeo or Loom plays on the page), a live demo or app store link.</p>
+          {rows("links", { label: "", url: "" }, [["label", "Watch the demo"], ["url", "https://youtu.be/…"]])}
+        </>
+      )}
       {s.type === "traction" && rows("metrics", { label: "", value: "" }, [["label", "MRR"], ["value", "$42K"]])}
+      {s.type === "market" && rows("metrics", { label: "", value: "" }, [["label", "TAM"], ["value", "$12B"]])}
+      {s.type === "ask" && rows("metrics", { label: "", value: "" }, [["label", "Raising"], ["value", "$1.5M"]])}
       {s.type === "team" && rows("people", { name: "", role: "", link: "" }, [["name", "Name"], ["role", "CEO, ex-Babylon"], ["link", "LinkedIn URL"]])}
       {s.type === "use_of_funds" && rows("items", { label: "", pct: "" }, [["label", "Engineering"], ["pct", "%"]])}
       {s.type === "faq" && rows("items", { q: "", a: "" }, [["q", "Question"], ["a", "Answer"]])}
@@ -145,7 +155,7 @@ function Links({ room }: { room: Room }) {
           </button>
         </div>
       ))}
-      <p className="text-xs text-muted">Each funnel card can also copy its own personal link, so you see exactly who viewed what.</p>
+      <p className="text-xs text-muted">Each investor tracker card can also copy its own personal link, so you see exactly who viewed what.</p>
     </div>
   );
 }
@@ -172,6 +182,102 @@ function ViewsList() {
         );
       })}
     </ul>
+  );
+}
+
+function Completeness({ r }: { r: Room }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const file = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const { pct, missing } = r.completeness;
+  const fromDeck = async (f: File) => {
+    const fd = new FormData();
+    fd.append("file", f);
+    setBusy(true);
+    try {
+      const res = await api<{ data_room: { filled: string[] } }>("/workspace/deck", { method: "POST", body: fd });
+      const n = res.data_room.filled.length;
+      toast(n ? `Drafted ${n} section${n > 1 ? "s" : ""} from your deck. Check them over.` : "Your sections already have text, so nothing was replaced.");
+      qc.invalidateQueries({ queryKey: ["room"] });
+      qc.invalidateQueries({ queryKey: ["profile"] });
+    } catch (e) {
+      toast(errText(e), "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const tone = pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-brand" : "bg-amber-500";
+  return (
+    <div className="card p-5">
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="relative grid place-items-center w-16 h-16 shrink-0">
+          <svg viewBox="0 0 36 36" className="w-16 h-16 -rotate-90">
+            <circle cx="18" cy="18" r="15.5" fill="none" strokeWidth="4" className="stroke-line" />
+            <circle cx="18" cy="18" r="15.5" fill="none" strokeWidth="4" strokeLinecap="round" className={pct >= 80 ? "stroke-emerald-500" : pct >= 50 ? "stroke-brand" : "stroke-amber-500"} strokeDasharray={`${(pct / 100) * 97.4} 97.4`} />
+          </svg>
+          <span className="absolute text-sm font-bold">{pct}%</span>
+        </div>
+        <div className="flex-1 min-w-52">
+          <h2 className="font-semibold text-[17px]">{pct >= 100 ? "Your data room is investor-ready" : `Your data room is ${pct}% complete`}</h2>
+          <p className="text-sm text-muted mt-0.5">
+            {pct >= 100 ? "Share the link in your emails so investors can dig in." : "Investors who open a complete data room are far more likely to take a call. Fill the gaps below."}
+          </p>
+        </div>
+        <button className="btn-ghost" disabled={busy} onClick={() => file.current?.click()}>
+          <Wand2 size={15} /> {busy ? "Reading your deck…" : "Draft from my deck"}
+        </button>
+        <input ref={file} type="file" accept="application/pdf" className="hidden" onChange={(e) => e.target.files?.[0] && fromDeck(e.target.files[0])} />
+      </div>
+      <div className="mt-4 h-2 rounded-full bg-surface overflow-hidden">
+        <div className={`h-full ${tone} transition-all`} style={{ width: `${pct}%` }} />
+      </div>
+      {missing.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {missing.map((m) => (
+            <a key={m.id} href={`#sec-${m.id}`} className="chip px-2.5 py-1 hover:border-brand">
+              <Plus size={12} /> {m.label}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PublicLink({ r, put }: { r: Room; put: (b: Record<string, unknown>) => void }) {
+  const toast = useToast();
+  const isPublic = r.published && r.access === "public";
+  return (
+    <div className="card p-4 space-y-3 text-sm">
+      <h2 className="font-semibold flex items-center gap-2">
+        <Globe size={16} className="text-brand" /> Public link
+      </h2>
+      {isPublic ? (
+        <>
+          <div className="flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2">
+            <span className="flex-1 truncate font-medium">{r.url.replace(/^https?:\/\//, "")}</span>
+            <button className="text-brand" aria-label="Copy public link" onClick={() => navigator.clipboard.writeText(r.url).then(() => toast("Link copied"))}>
+              <Copy size={15} />
+            </button>
+            <a href={r.url} target="_blank" rel="noreferrer" className="text-muted" aria-label="Open public page">
+              <ExternalLink size={15} />
+            </a>
+          </div>
+          <p className="text-xs text-muted">Anyone with this link can view your data room. Documents still need an email to download.</p>
+          <button className="btn-ghost btn-sm" onClick={() => put({ access: "magic" })}>
+            <Lock size={14} /> Make private again
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="text-muted">One link you can paste into emails, LinkedIn or your deck. Turn it off any time.</p>
+          <button className="btn-primary w-full" onClick={() => put({ published: true, access: "public" })}>
+            <Globe size={15} /> Create public link
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -223,6 +329,7 @@ export default function DataRoomPage() {
       />
       <div className="grid lg:grid-cols-[1fr_360px] gap-4 pb-24">
         <div className="space-y-4">
+          <Completeness r={r} />
           <div className="card p-4 space-y-3">
             <h2 className="font-semibold">Top of the page</h2>
             <div className="grid sm:grid-cols-2 gap-3">
@@ -246,7 +353,7 @@ export default function DataRoomPage() {
             </div>
           </div>
           {content.sections.map((s, i) => (
-            <div key={s.id} className="card p-4">
+            <div key={s.id} id={`sec-${s.id}`} className="card p-4 scroll-mt-20">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs uppercase tracking-wide text-muted">{TYPES.find((t) => t[0] === s.type)?.[1]}</span>
                 <div className="flex gap-1 text-muted">
@@ -273,6 +380,7 @@ export default function DataRoomPage() {
           </div>
         </div>
         <div className="space-y-4">
+          <PublicLink r={r} put={(b) => put.mutate(b)} />
           <div className="card p-4 space-y-3 text-sm">
             <h2 className="font-semibold">Who can see it</h2>
             <select className="input" value={r.access} onChange={(e) => (e.target.value !== "password" || r.has_password) && put.mutate({ access: e.target.value })} aria-label="Access">

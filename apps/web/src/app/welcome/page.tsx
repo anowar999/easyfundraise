@@ -9,7 +9,7 @@ import { AuthShell, GmailIcon } from "@/components/AuthShell";
 const WHY = [
   { icon: Inbox, t: "Sent from you, replies land in your inbox", d: "Investors see a personal email from your address, not a mailing tool." },
   { icon: Check, t: "You approve every email first", d: "Nothing goes out until you review it and confirm." },
-  { icon: ShieldCheck, t: "Follow-ups stop the moment they reply", d: "We read replies to investor threads only, to stop follow-ups and update your funnel." },
+  { icon: ShieldCheck, t: "Follow-ups stop the moment they reply", d: "We read replies to investor threads only, to stop follow-ups and update your investor tracker." },
 ];
 
 function WelcomeInner() {
@@ -24,7 +24,7 @@ function WelcomeInner() {
 
   return (
     <AuthShell>
-      <p className="text-sm font-semibold uppercase tracking-wider text-[#0f62fe]">Step 2 of 2</p>
+      <p className="text-sm font-semibold uppercase tracking-wider text-[#0f62fe]">Step 2 of 3</p>
       <h1 className="mt-2 text-3xl md:text-[34px] font-bold tracking-tight text-[#0b1220]">
         You&apos;re in. Now connect your Gmail
       </h1>

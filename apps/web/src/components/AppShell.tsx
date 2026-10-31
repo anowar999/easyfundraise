@@ -2,7 +2,7 @@
 
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bell, BarChart3, Globe, Home, KanbanSquare, LogOut, Megaphone, Menu, Search, Settings, Shield, Sparkles } from "lucide-react";
+import { Bell, BarChart3, Globe, Home, KanbanSquare, ListPlus, LogOut, Megaphone, Menu, Search, Settings, Shield, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
@@ -13,7 +13,8 @@ import { Sheet, ToastProvider } from "./ui";
 const NAV = [
   { href: "/app", label: "Home", icon: Home, exact: true },
   { href: "/app/investors", label: "Investors", icon: Search },
-  { href: "/app/funnel", label: "Funnel", icon: KanbanSquare },
+  { href: "/app/shortlist", label: "Shortlist", icon: ListPlus },
+  { href: "/app/funnel", label: "Investor tracker", short: "Tracker", icon: KanbanSquare },
   { href: "/app/outreach", label: "Outreach", icon: BarChart3 },
   { href: "/app/updates", label: "Updates", icon: Megaphone },
   { href: "/app/data-room", label: "Data room", icon: Globe },
@@ -107,11 +108,11 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
   return (
     <div className="min-h-dvh">
       {/* Desktop sidebar */}
-      <aside className="hidden md:flex fixed inset-y-0 left-0 w-60 flex-col border-r border-line bg-card px-3 py-4">
-        <Link href="/app" className="flex items-center gap-2 px-2 mb-6">
+      <aside className="app-nav hidden md:flex fixed inset-y-0 left-0 w-64 flex-col px-3 py-5 text-white">
+        <Link href="/app" className="flex items-center gap-2.5 px-2.5 mb-7">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/icon.svg" alt="" className="w-8 h-8" />
-          <span className="font-bold tracking-tight">
+          <img src="/icon.svg" alt="" className="w-9 h-9 rounded-[10px] shadow-[0_0_24px_rgba(76,141,255,0.45)]" />
+          <span className="text-[17px] font-bold tracking-tight">
             Easy<span className="logo-accent">Fundraise</span>
           </span>
         </Link>
@@ -121,19 +122,19 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
               key={href}
               href={href}
               className={clsx(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm",
-                active(href, exact) ? "bg-brand/10 text-brand font-medium" : "text-muted hover:bg-surface hover:text-ink",
+                "flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14px] font-medium transition",
+                active(href, exact) ? "bg-white/[0.12] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-white/65 hover:bg-white/[0.06] hover:text-white",
               )}
             >
-              <Icon size={18} />
+              <Icon size={18} className={active(href, exact) ? "text-[#8ab8ff]" : ""} />
               {label}
-              {label === "Alerts" && count > 0 && <span className="ml-auto text-xs rounded-full bg-brand text-white px-1.5">{count}</span>}
+              {label === "Alerts" && count > 0 && <span className="ml-auto text-xs font-semibold rounded-full bg-brand text-white px-1.5">{count}</span>}
             </Link>
           ))}
           {me.data?.is_admin && (
             <Link
               href="/admin"
-              className={clsx("flex items-center gap-3 rounded-lg px-3 py-2 text-sm", path.startsWith("/admin") ? "bg-brand/10 text-brand" : "text-muted hover:bg-surface")}
+              className={clsx("flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14px] font-medium", path.startsWith("/admin") ? "bg-white/[0.12] text-white" : "text-white/65 hover:bg-white/[0.06] hover:text-white")}
             >
               <Shield size={18} /> Admin
             </Link>
@@ -141,18 +142,18 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
         </nav>
         <div className="mt-auto space-y-3">
           {me.data && <WorkspaceSwitcher me={me.data} />}
-          <div className="rounded-lg bg-brand/5 border border-brand/20 p-3 text-xs">
-            <div className="flex items-center gap-1.5 font-medium text-brand">
-              <Sparkles size={14} /> Your agent
+          <div className="rounded-2xl bg-white/[0.06] ring-1 ring-white/10 p-3.5 text-xs">
+            <div className="flex items-center gap-1.5 font-semibold text-white">
+              <Sparkles size={14} className="text-[#8ab8ff]" /> Your Raise Agent
             </div>
-            <p className="text-muted mt-1">Checks follow-ups, reminders and investors going cold every morning.</p>
+            <p className="text-white/60 mt-1 leading-relaxed">Ask it anything, or tell it what to do. It watches follow-ups, replies and meetings for you.</p>
           </div>
-          <div className="flex items-center gap-2 px-2">
+          <div className="flex items-center gap-2 px-2 pt-3 border-t border-white/10">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium truncate">{me.data?.name}</div>
-              <div className="text-xs text-muted truncate">{me.data?.email}</div>
+              <div className="text-sm font-semibold truncate">{me.data?.name}</div>
+              <div className="text-xs text-white/55 truncate">{me.data?.email}</div>
             </div>
-            <button onClick={logout} className="p-2 text-muted hover:text-ink" aria-label="Sign out">
+            <button onClick={logout} className="p-2 text-white/55 hover:text-white" aria-label="Sign out">
               <LogOut size={16} />
             </button>
           </div>
@@ -180,8 +181,9 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
         </div>
       </header>
 
-      <main className="md:pl-60 pb-24 md:pb-10">
-        <div className="mx-auto max-w-6xl px-4 py-4 md:py-8">{children}</div>
+      <main className="md:pl-64 pb-24 md:pb-10">
+        {/* The tracker board uses the whole width; other pages keep a readable column */}
+        <div className={clsx("mx-auto px-4 py-4 md:py-8", path.startsWith("/app/funnel") && !/\/app\/funnel\/./.test(path) ? "max-w-none md:px-6" : "max-w-6xl")}>{children}</div>
       </main>
 
       {!admin && <AgentChat />}
@@ -189,14 +191,14 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
       {/* Mobile bottom tab bar */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-card/95 backdrop-blur border-t border-line safe-bottom" aria-label="Main">
         <div className="grid grid-cols-5">
-          {NAV.filter((n) => TABS.includes(n.href)).map(({ href, label, icon: Icon, exact }) => (
+          {NAV.filter((n) => TABS.includes(n.href)).map(({ href, label, short, icon: Icon, exact }) => (
             <Link
               key={href}
               href={href}
               className={clsx("relative flex flex-col items-center gap-0.5 py-2 text-[11px]", active(href, exact) ? "text-brand" : "text-muted")}
             >
               <Icon size={22} />
-              {label}
+              {short ?? label}
               {label === "Alerts" && count > 0 && (
                 <span className="absolute top-1 right-[calc(50%_-_18px)] min-w-4 h-4 text-[10px] rounded-full bg-danger text-white px-1 grid place-items-center">
                   {count > 9 ? "9+" : count}
@@ -241,8 +243,8 @@ export function PageHeader({ title, sub, actions }: { title: string; sub?: React
   return (
     <div className="flex flex-wrap items-end justify-between gap-3 mb-4 md:mb-6">
       <div className="min-w-0">
-        <h1 className="text-xl md:text-2xl font-semibold tracking-tight">{title}</h1>
-        {sub && <div className="text-sm text-muted mt-0.5">{sub}</div>}
+        <h1 className="text-2xl md:text-[28px] font-bold tracking-tight text-ink">{title}</h1>
+        {sub && <div className="text-[15px] text-muted mt-1">{sub}</div>}
       </div>
       {actions && <div className="flex gap-2">{actions}</div>}
     </div>

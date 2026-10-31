@@ -2,11 +2,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowLeft, BadgeCheck, ExternalLink, Flag, KanbanSquare, Lock, Mail, MapPin, Sparkles, Unlock } from "lucide-react";
+import { ArrowLeft, BadgeCheck, ChevronLeft, ChevronRight, ExternalLink, Flag, Globe, KanbanSquare, Lock, Mail, Newspaper, Plus, RefreshCw, Sparkles, Unlock, Users } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
-import { InvestorRow } from "@/components/InvestorRow";
+import { useRef, useState } from "react";
+import { CountryTag, ShortlistButton } from "@/components/InvestorRow";
 import { Avatar, Badge, ErrorState, FitScore, ListSkeleton, Locked, errText, useToast } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
 import type { Fit, InvestorCard } from "@/lib/types";
@@ -47,7 +47,149 @@ type Profile = InvestorCard & {
   contacts_locked: boolean;
 };
 
-const TABS = ["Fit", "Thesis & portfolio", "News", "How to pitch", "Similar"] as const;
+const TABS = ["Fit", "AI research", "Thesis & portfolio", "News", "How to pitch"] as const;
+
+type Research = {
+  summary?: string;
+  thesis?: string;
+  portfolio?: { company: string; note?: string }[];
+  partners?: { name: string; role?: string }[];
+  recent_news?: { title: string; date?: string; url?: string }[];
+  pitch_angle?: string;
+  sources?: string[];
+  researched_at?: string;
+};
+
+/** Live web research on the firm: thesis, portfolio, partners, recent news. Cached for 30 days. */
+function ResearchPanel({ id, name }: { id: string; name: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery<{ research: Research | null; available: boolean }>({ queryKey: ["research", id], queryFn: () => api(`/investors/${id}/research`) });
+  const run = useMutation({
+    mutationFn: () => api<{ research: Research }>(`/investors/${id}/research`, { method: "POST" }),
+    onSuccess: (r) => qc.setQueryData(["research", id], { research: r.research, available: true }),
+    onError: (e) => toast(errText(e), "err"),
+  });
+  if (q.isLoading) return <ListSkeleton rows={3} />;
+  const r = q.data?.research;
+  if (!r)
+    return (
+      <div className="card p-6 text-center">
+        <div className="mx-auto grid place-items-center w-12 h-12 rounded-2xl bg-brand/10 text-brand">
+          <Sparkles size={22} />
+        </div>
+        <h2 className="mt-3 font-semibold text-lg">Research {name} on the web</h2>
+        <p className="mt-1 text-sm text-muted max-w-md mx-auto">
+          Your Raise Agent reads their firm&apos;s website, portfolio page and recent news, then sums up their thesis, partners and the best angle for your pitch.
+        </p>
+        <button className="btn-primary mt-4" disabled={run.isPending || q.data?.available === false} onClick={() => run.mutate()}>
+          <Globe size={16} /> {run.isPending ? "Researching… (about a minute)" : "Research with AI"}
+        </button>
+        {q.data?.available === false && <p className="mt-2 text-xs text-muted">Needs an Anthropic API key on the server.</p>}
+      </div>
+    );
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="card p-4 space-y-3 md:col-span-2">
+        <div className="flex items-start gap-3">
+          <Sparkles size={18} className="text-brand mt-0.5 shrink-0" />
+          <p className="text-[15px] leading-relaxed flex-1">{r.summary}</p>
+          <button className="btn-ghost btn-sm shrink-0" disabled={run.isPending} onClick={() => run.mutate()} title="Research again">
+            <RefreshCw size={14} className={run.isPending ? "animate-spin" : ""} />
+          </button>
+        </div>
+        {r.pitch_angle && (
+          <p className="rounded-xl bg-brand/10 px-3 py-2 text-sm">
+            <b>Pitch angle:</b> {r.pitch_angle}
+          </p>
+        )}
+      </div>
+      {r.thesis && (
+        <div className="card p-4">
+          <h3 className="font-semibold mb-1">Thesis</h3>
+          <p className="text-sm">{r.thesis}</p>
+        </div>
+      )}
+      {!!r.partners?.length && (
+        <div className="card p-4">
+          <h3 className="font-semibold mb-2 flex items-center gap-2"><Users size={15} /> Partners and team</h3>
+          <ul className="space-y-1 text-sm">
+            {r.partners.map((x) => (
+              <li key={x.name}><span className="font-medium">{x.name}</span>{x.role && <span className="text-muted"> · {x.role}</span>}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {!!r.portfolio?.length && (
+        <div className="card p-4">
+          <h3 className="font-semibold mb-2">Portfolio</h3>
+          <ul className="space-y-1 text-sm">
+            {r.portfolio.slice(0, 12).map((x) => (
+              <li key={x.company}><span className="font-medium">{x.company}</span>{x.note && <span className="text-muted"> · {x.note}</span>}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {!!r.recent_news?.length && (
+        <div className="card p-4">
+          <h3 className="font-semibold mb-2 flex items-center gap-2"><Newspaper size={15} /> Recent news</h3>
+          <ul className="space-y-2 text-sm">
+            {r.recent_news.map((n) => (
+              <li key={n.title}>
+                {n.url ? <a href={n.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">{n.title}</a> : n.title}
+                {n.date && <span className="text-muted text-xs"> · {n.date}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {!!r.sources?.length && (
+        <div className="card p-4 md:col-span-2">
+          <div className="text-xs text-muted mb-1">Sources{r.researched_at ? ` · researched ${new Date(r.researched_at).toLocaleDateString()}` : ""}</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            {r.sources.slice(0, 12).map((u) => (
+              <a key={u} href={u} target="_blank" rel="noreferrer" className="text-xs text-brand truncate max-w-64">{u.replace(/^https?:\/\/(www\.)?/, "")}</a>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One row of similar investors, scrolled sideways. */
+function SimilarRow({ items }: { items: InvestorCard[] }) {
+  const row = useRef<HTMLDivElement>(null);
+  const scroll = (d: number) => row.current?.scrollBy({ left: d * (row.current.clientWidth * 0.8), behavior: "smooth" });
+  if (!items.length) return null;
+  return (
+    <section className="mt-8">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-lg font-semibold">Similar investors</h2>
+        <div className="hidden md:flex gap-1">
+          <button className="btn-ghost btn-sm" aria-label="Scroll left" onClick={() => scroll(-1)}><ChevronLeft size={16} /></button>
+          <button className="btn-ghost btn-sm" aria-label="Scroll right" onClick={() => scroll(1)}><ChevronRight size={16} /></button>
+        </div>
+      </div>
+      <div ref={row} className="flex gap-3 overflow-x-auto snap-x snap-mandatory scrollbar-none pb-2 -mx-4 px-4 md:mx-0 md:px-0">
+        {items.map((i) => (
+          <div key={i.id} className="card snap-start shrink-0 w-[240px] p-4 flex flex-col hover:border-brand/60 transition">
+            <div className="flex items-start justify-between gap-2">
+              <Avatar name={i.name} src={i.photo_url} logoDomain={i.firm_domain} size={48} />
+              <ShortlistButton inv={i} />
+            </div>
+            <Link href={`/app/investors/${i.id}`} className="mt-3 block min-w-0 flex-1">
+              <div className="font-semibold truncate">{i.name}</div>
+              <div className="text-sm text-muted truncate">{i.firm || i.title}</div>
+              <div className="mt-2"><CountryTag country={i.country} location={i.location} /></div>
+            </Link>
+            {i.fit && <div className="mt-3"><FitScore score={i.fit.score} /></div>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 function KV({ k, v }: { k: string; v?: string | null }) {
   if (!v || v === "unknown") return null;
@@ -66,7 +208,7 @@ export default function InvestorProfile() {
   const toast = useToast();
   const [tab, setTab] = useState<(typeof TABS)[number]>("Fit");
   const q = useQuery<Profile>({ queryKey: ["investor", id], queryFn: () => api(`/investors/${id}`) });
-  const similar = useQuery<{ items: InvestorCard[] }>({ queryKey: ["similar", id], queryFn: () => api(`/investors/${id}/similar`), enabled: tab === "Similar" });
+  const similar = useQuery<{ items: InvestorCard[] }>({ queryKey: ["similar", id], queryFn: () => api(`/investors/${id}/similar`) });
 
   const reveal = useMutation({
     mutationFn: () => api(`/investors/${id}/reveal`, { method: "POST" }),
@@ -76,7 +218,7 @@ export default function InvestorProfile() {
   const addToFunnel = useMutation({
     mutationFn: () => api<{ id: string }>("/funnel", { method: "POST", json: { investor_id: id } }),
     onSuccess: (c) => {
-      toast("Added to your funnel");
+      toast("Added to your investor tracker");
       qc.invalidateQueries({ queryKey: ["investor", id] });
       qc.invalidateQueries({ queryKey: ["funnel"] });
       router.push(`/app/funnel/${c.id}`);
@@ -104,7 +246,7 @@ export default function InvestorProfile() {
       </button>
       <div className="card p-4 md:p-6">
         <div className="flex gap-4">
-          <Avatar name={p.name} src={p.photo_url} size={64} />
+          <Avatar name={p.name} src={p.photo_url} logoDomain={p.firm_domain} size={72} />
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -115,7 +257,10 @@ export default function InvestorProfile() {
                 </div>
                 {p.listed_company && p.firm && p.listed_company !== p.firm && <div className="text-xs text-muted">Listed as {p.listed_company}</div>}
               </div>
-              <FitScore score={p.fit.score} />
+              <div className="flex items-center gap-2 shrink-0">
+                <FitScore score={p.fit.score} />
+                <ShortlistButton inv={p} size="lg" />
+              </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5">
               <Badge tone={p.seed_fit === false ? "red" : p.seed_fit ? "green" : "default"}>{p.investor_type_label}{p.seed_fit === false && " · not early-stage"}</Badge>
@@ -124,14 +269,10 @@ export default function InvestorProfile() {
                   <BadgeCheck size={12} /> Activity: verified recent deal
                 </Badge>
               )}
-              {p.identity_confidence && p.identity_confidence !== "high" && <Badge tone="amber">Needs verification</Badge>}
+              {p.identity_confidence && p.identity_confidence !== "high" && <Badge tone="amber" title="We couldn't fully confirm this person's current role. Check LinkedIn before you email.">Unverified role</Badge>}
               {!p.enriched && <Badge>Directory profile</Badge>}
               {p.excluded && <Badge tone="red">Excluded</Badge>}
-              {p.location && (
-                <span className="chip text-muted">
-                  <MapPin size={11} /> {p.location}
-                </span>
-              )}
+              <CountryTag country={p.country} location={p.location} />
             </div>
           </div>
         </div>
@@ -168,11 +309,11 @@ export default function InvestorProfile() {
         <div className="hidden md:flex gap-2 mt-4">
           {p.funnel_card_id ? (
             <Link href={`/app/funnel/${p.funnel_card_id}`} className="btn-ghost">
-              <KanbanSquare size={16} /> Open in funnel
+              <KanbanSquare size={16} /> Open in tracker
             </Link>
           ) : (
             <button className="btn-ghost" onClick={() => addToFunnel.mutate()} disabled={addToFunnel.isPending}>
-              <KanbanSquare size={16} /> Add to funnel
+              <Plus size={16} /> Add to investor tracker
             </button>
           )}
           <button className="btn-primary" onClick={() => draft.mutate()} disabled={draft.isPending || p.excluded}>
@@ -327,26 +468,20 @@ export default function InvestorProfile() {
             </div>
           </div>
         )}
-        {tab === "Similar" && (
-          <div className="space-y-2">
-            {similar.isLoading && <ListSkeleton rows={3} />}
-            {similar.data?.items.map((i) => (
-              <InvestorRow key={i.id} inv={i} />
-            ))}
-            {similar.data?.items.length === 0 && <p className="text-sm text-muted">No similar investors found.</p>}
-          </div>
-        )}
+        {tab === "AI research" && <ResearchPanel id={id} name={p.firm || p.name} />}
       </div>
+
+      <SimilarRow items={similar.data?.items ?? []} />
 
       {/* Mobile sticky actions */}
       <div className="md:hidden fixed bottom-[calc(56px_+_env(safe-area-inset-bottom))] inset-x-0 z-20 bg-card/95 backdrop-blur border-t border-line p-3 flex gap-2">
         {p.funnel_card_id ? (
           <Link href={`/app/funnel/${p.funnel_card_id}`} className="btn-ghost flex-1">
-            <KanbanSquare size={16} /> In funnel
+            <KanbanSquare size={16} /> In tracker
           </Link>
         ) : (
           <button className="btn-ghost flex-1" onClick={() => addToFunnel.mutate()} disabled={addToFunnel.isPending}>
-            <KanbanSquare size={16} /> Add to funnel
+            <Plus size={16} /> Add to tracker
           </button>
         )}
         <button className="btn-primary flex-1" onClick={() => draft.mutate()} disabled={draft.isPending || p.excluded}>

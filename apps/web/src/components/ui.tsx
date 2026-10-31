@@ -32,12 +32,27 @@ export function Badge({ children, tone = "default", title }: { children: ReactNo
   );
 }
 
-export function Avatar({ name, src, size = 40 }: { name: string; src?: string; size?: number }) {
-  const [broken, setBroken] = useState(false);
+export function Avatar({ name, src, logoDomain, size = 40 }: { name: string; src?: string; logoDomain?: string; size?: number }) {
+  // Photo first, then the firm's logo (from its website), then initials.
+  const sources = [src, logoDomain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(logoDomain)}&sz=128` : ""].filter(Boolean) as string[];
+  const [failed, setFailed] = useState(0);
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
-  if (src && !broken)
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={src} alt="" width={size} height={size} onError={() => setBroken(true)} className="rounded-full object-cover shrink-0 bg-line" style={{ width: size, height: size }} />;
+  const current = sources[failed];
+  if (current) {
+    const isLogo = current !== src;
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={current}
+        alt=""
+        width={size}
+        height={size}
+        onError={() => setFailed((n) => n + 1)}
+        className={clsx("rounded-full shrink-0 bg-white", isLogo ? "object-contain p-1.5 border border-line" : "object-cover")}
+        style={{ width: size, height: size }}
+      />
+    );
+  }
   return (
     <div className="rounded-full bg-brand/10 text-brand grid place-items-center font-semibold shrink-0" style={{ width: size, height: size, fontSize: size / 2.6 }}>
       {initials}
@@ -48,9 +63,9 @@ export function Avatar({ name, src, size = 40 }: { name: string; src?: string; s
 export function FitScore({ score }: { score: number }) {
   const tone = score >= 60 ? "text-green-600 dark:text-green-400" : score >= 35 ? "text-brand" : "text-muted";
   return (
-    <div className={clsx("text-right leading-none", tone)} title="Fit score for your company">
-      <div className="text-lg font-semibold font-mono">{score}</div>
-      <div className="text-[10px] uppercase tracking-wide">fit</div>
+    <div className={clsx("text-right leading-none shrink-0", tone)} title="Match score: how well this investor fits your company profile (sector, stage, cheque size, location, investor type)">
+      <div className="text-lg font-semibold">{score}%</div>
+      <div className="text-[10px] uppercase tracking-wide mt-0.5">match</div>
     </div>
   );
 }
@@ -168,7 +183,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="fixed z-[60] left-1/2 -translate-x-1/2 bottom-20 sm:bottom-6 flex flex-col gap-2 w-[min(92vw,420px)]" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={clsx("rounded-lg px-4 py-3 text-sm shadow-lg text-white", t.tone === "ok" ? "bg-ink text-surface" : "bg-danger")}>
+          <div key={t.id} className={clsx("rounded-lg px-4 py-3 text-sm font-medium shadow-lg text-white ring-1 ring-white/10", t.tone === "ok" ? "bg-[#0b1220]" : "bg-danger")}>
             {t.text}
           </div>
         ))}

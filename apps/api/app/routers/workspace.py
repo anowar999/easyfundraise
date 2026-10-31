@@ -2,6 +2,7 @@
 exclusion list (SEQ-06), user settings (timezone, signature)."""
 
 import io
+import json
 import re
 from datetime import UTC, datetime
 
@@ -14,7 +15,7 @@ from ..deps import Ctx, ctx
 from ..errors import ApiError
 from ..models import AgentInstruction, CompanyProfile, Exclusion, Tier
 from ..services import ai
-from ..services.entitlements import tier, trial_expired, usage
+from ..services.entitlements import admin_unlocked, tier, trial_expired, usage
 from ..services.mailer import sent_metric, user_day
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
@@ -44,6 +45,7 @@ def get_workspace(c: Ctx = Depends(ctx)):
         "id": str(c.ws_id), "name": c.workspace.name, "agent_name": c.workspace.agent_name, "role": c.role,
         "tier": {"code": t.code, "name": t.name, "limits": t.limits, "features": t.features},
         "trial_ends_at": c.workspace.trial_ends_at, "trial_expired": trial_expired(c.workspace),
+        "admin_unlocked": admin_unlocked(c.db, c.workspace),
         "tracking_enabled": c.workspace.tracking_enabled, "consent_level": c.workspace.consent_level,
         "automations": {k: (c.workspace.automations or {}).get(k, True) for k in AUTOMATIONS},
         "ai": ai.model_for(c.db, c.workspace, "draft") is not None,
@@ -99,6 +101,8 @@ class ProfileIn(BaseModel):
     instrument: str = Field("", max_length=32)
     traction: str = Field("", max_length=500)
     business_model: str = Field("", max_length=500)
+    investor_types: list[str] = Field(default_factory=list, max_length=8)
+    looking_for: str = Field("", max_length=1000)
     shareable: dict[str, bool] = Field(default_factory=dict)
 
 
@@ -113,7 +117,13 @@ def _profile(c: Ctx) -> CompanyProfile:
 
 def _profile_out(p: CompanyProfile) -> dict:
     return {k: getattr(p, k) for k in ("company_name", "one_liner", "sectors", "stage", "geography", "round_size",
-                                       "instrument", "traction", "business_model", "shareable", "deck_filename")}
+                                       "instrument", "traction", "business_model", "investor_types", "looking_for",
+                                       "shareable", "deck_filename")} | {"complete": profile_complete(p)}
+
+
+def profile_complete(p: CompanyProfile | None) -> bool:
+    """Enough to match investors and personalise emails: what they do, their sector and the round."""
+    return bool(p and p.sectors and (p.one_liner or p.deck_text) and (p.stage or p.round_size))
 
 
 @router.get("/profile")
@@ -144,6 +154,9 @@ def extract_profile(text: str) -> dict:
             "traction": traction.group(1).strip()[:300] if traction else "", "one_liner": first[:200]}
 
 
+MAX_SLIDES = 20
+
+
 @router.post("/deck")
 async def upload_deck(file: UploadFile, c: Ctx = Depends(ctx)):
     """DECK-01 (deterministic tier): PDF text extraction -> suggested Company Profile fields for review."""
@@ -156,9 +169,15 @@ async def upload_deck(file: UploadFile, c: Ctx = Depends(ctx)):
     from pypdf import PdfReader
 
     try:
-        text = "\n".join((pg.extract_text() or "") for pg in PdfReader(io.BytesIO(data)).pages[:60])
+        pages = PdfReader(io.BytesIO(data)).pages
+        n_pages = len(pages)
+        slides = [(pg.extract_text() or "") for pg in pages[:MAX_SLIDES]]
+        text = "\n".join(slides)
     except Exception as e:
         raise ApiError(422, "EF-DECK-003", "Could not read that PDF") from e
+    if n_pages > MAX_SLIDES:
+        raise ApiError(422, "EF-DECK-004", f"Keep your deck to {MAX_SLIDES} slides or fewer",
+                       f"This PDF has {n_pages} pages. Investors read short decks; trim it and upload again.")
     p = _profile(c)
     p.deck_filename, p.deck_text = (file.filename or "deck.pdf")[:200], text[:200_000]
     c.db.commit()
@@ -168,9 +187,27 @@ async def upload_deck(file: UploadFile, c: Ctx = Depends(ctx)):
         "select ind from investors, unnest(industries) ind group by ind order by count(*) desc limit 80")).all()]
     suggested = agent.ai_profile(c.db, c.workspace, text, vocab)
     c.db.commit()
+    room = _room_from_deck(c, slides)
     if suggested:
-        return {"suggested": suggested, "engine": "ai", "pages_text_chars": len(text)}
-    return {"suggested": extract_profile(text), "engine": "template", "pages_text_chars": len(text)}
+        return {"suggested": suggested, "engine": "ai", "pages_text_chars": len(text), "slides": n_pages, "data_room": room}
+    return {"suggested": extract_profile(text), "engine": "template", "pages_text_chars": len(text), "slides": n_pages,
+            "data_room": room}
+
+
+def _room_from_deck(c: Ctx, slides: list[str]) -> dict:
+    """The deck drafts the data room: empty sections are written from it, the founder's own text is kept."""
+    from ..services import room_fill
+    from .dataroom import ensure_room
+
+    room = ensure_room(c.db, c.ws_id, c.workspace.name)
+    drafted, engine = room_fill.draft(c.db, c.workspace, slides)
+    content = json.loads(json.dumps(room.content or {}))
+    filled = room_fill.apply(content, drafted)
+    if filled:
+        room.versions = ([{"at": datetime.now(UTC).isoformat(), "content": room.content}] + (room.versions or []))[:10]
+        room.content = content
+    c.db.commit()
+    return {"filled": filled, "engine": engine, "completeness": room_fill.completeness(content)["pct"]}
 
 
 # ---------- Agent instructions ----------

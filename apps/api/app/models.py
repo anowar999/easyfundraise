@@ -80,7 +80,7 @@ class Workspace(Base):
     __tablename__ = "workspaces"
     id: Mapped[uuid.UUID] = pk()
     name: Mapped[str] = mapped_column(String(200))
-    agent_name: Mapped[str] = mapped_column(String(60), default="Raise")
+    agent_name: Mapped[str] = mapped_column(String(60), default="Raise Agent")
     tier_code: Mapped[str] = mapped_column(ForeignKey("tiers.code"), default="trial")
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     tracking_enabled: Mapped[bool] = mapped_column(Boolean, default=True)  # TRK-01 per-workspace opt-out
@@ -207,6 +207,26 @@ class Investor(Base):
     )
 
 
+class ShortlistItem(Base):
+    """Investors a workspace has saved while browsing, before adding them to the funnel."""
+
+    __tablename__ = "shortlist_items"
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True)
+    investor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("investors.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = created()
+
+
+class InvestorResearch(Base):
+    """Live web research on an investor (thesis, portfolio, partners, news). Public facts, shared by all workspaces
+    and refreshed when older than RESEARCH_TTL."""
+
+    __tablename__ = "investor_research"
+    investor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("investors.id", ondelete="CASCADE"), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    model: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class InvestorEnrichmentVersion(Base):
     __tablename__ = "investor_enrichment_versions"
     id: Mapped[uuid.UUID] = pk()
@@ -279,6 +299,8 @@ class CompanyProfile(Base):
     instrument: Mapped[str] = mapped_column(String(32), default="")
     traction: Mapped[str] = mapped_column(Text, default="")
     business_model: Mapped[str] = mapped_column(Text, default="")
+    investor_types: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)  # angel | vc | ... (who they want)
+    looking_for: Mapped[str] = mapped_column(Text, default="")  # e.g. "a lead with healthcare distribution"
     deck_filename: Mapped[str] = mapped_column(Text, default="")
     deck_text: Mapped[str] = mapped_column(Text, default="")
     shareable: Mapped[dict] = mapped_column(JSONB, default=dict)  # DECK-04 per-field toggle

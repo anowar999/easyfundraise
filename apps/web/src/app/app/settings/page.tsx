@@ -8,7 +8,7 @@ import { Field, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { AgentMemoryList, BillingPlans, Devices, GmailSection, NewWorkspace, NotificationPrefs, OutreachSettings, Positioning, Team } from "./extras";
 
-type Profile = { company_name: string; one_liner: string; sectors: string[]; stage: string; geography: string; round_size: string; instrument: string; traction: string; business_model: string; shareable: Record<string, boolean>; deck_filename: string };
+type Profile = { company_name: string; one_liner: string; sectors: string[]; stage: string; geography: string; round_size: string; instrument: string; traction: string; business_model: string; investor_types: string[]; looking_for: string; shareable: Record<string, boolean>; deck_filename: string };
 type WS = { name: string; agent_name: string; tier: { code: string; name: string; limits: Record<string, number> }; trial_ends_at: string | null; trial_expired: boolean; usage: Record<string, number> };
 
 function Section({ id, title, sub, children }: { id: string; title: string; sub?: string; children: React.ReactNode }) {
@@ -90,6 +90,7 @@ function CompanyProfile() {
             <option value="pre-seed">Pre-seed</option>
             <option value="seed">Seed</option>
             <option value="series-a">Series A</option>
+            <option value="series-b">Series B</option>
           </select>
         </Field>
       </div>
@@ -132,6 +133,25 @@ function CompanyProfile() {
       <Field label="Traction (one line)">
         <input className="input" value={p.traction} onChange={(e) => setP({ ...p, traction: e.target.value })} placeholder="40 clinics live, 12% MoM growth" />
         <ShareToggle k="traction" />
+      </Field>
+      <Field label="Business model">
+        <input className="input" value={p.business_model} onChange={(e) => setP({ ...p, business_model: e.target.value })} placeholder="B2B SaaS, per-clinic subscription" />
+      </Field>
+      <Field label="Raising from">
+        <div className="flex flex-wrap gap-1.5">
+          {[["angel", "Angels"], ["vc", "VC funds"], ["syndicate", "Syndicates"], ["family_office", "Family offices"], ["cvc", "Corporate VCs"], ["accelerator", "Accelerators"]].map(([v, l]) => {
+            const types = p.investor_types ?? [];
+            const on = types.includes(v);
+            return (
+              <button type="button" key={v} onClick={() => setP({ ...p, investor_types: on ? types.filter((x) => x !== v) : [...types, v] })} className={`chip px-2.5 py-1 ${on ? "bg-brand text-white border-brand" : ""}`}>
+                {l}
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+      <Field label="What you're looking for in an investor">
+        <textarea className="textarea min-h-20" value={p.looking_for ?? ""} onChange={(e) => setP({ ...p, looking_for: e.target.value })} placeholder="A lead angel with clinical networks, $100K–$500K cheques" />
       </Field>
       <button className="btn-primary" disabled={save.isPending}>Save company profile</button>
     </form>
@@ -311,7 +331,7 @@ export default function Settings() {
         <Section id="team" title="Team" sub="Invite a cofounder or advisor to this workspace.">
           <Team />
         </Section>
-        <Section id="workspaces" title="Another company or raise" sub="Each workspace has its own funnel, data room and emails.">
+        <Section id="workspaces" title="Another company or raise" sub="Each workspace has its own investor tracker, data room and emails.">
           <NewWorkspace />
         </Section>
         <Section id="devices" title="Signed-in devices">

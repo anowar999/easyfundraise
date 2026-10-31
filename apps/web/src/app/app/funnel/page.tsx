@@ -167,7 +167,7 @@ function FunnelInner() {
   return (
     <>
       <PageHeader
-        title="Funnel"
+        title="Investor tracker"
         sub={`${cards.length} investors`}
         actions={
           <>
@@ -211,7 +211,7 @@ function FunnelInner() {
       {list.error && <ErrorState error={list.error} retry={() => list.refetch()} />}
       {list.data && cards.length === 0 && !search && !status && !needsAction && (
         <Empty
-          title="Your funnel is empty"
+          title="Your investor tracker is empty"
           body="Import your existing tracker, add investors from the database, or add someone manually."
           action={
             <div className="flex flex-wrap justify-center gap-2">
@@ -396,7 +396,7 @@ function AddCard({ open, onClose, meta }: { open: boolean; onClose: () => void; 
           </select>
         </Field>
         <button className="btn-primary w-full" disabled={create.isPending}>
-          Add to funnel
+          Add to tracker
         </button>
       </form>
     </Sheet>

@@ -115,7 +115,7 @@ export default function ImportPage() {
       {result ? (
         <div className="card p-6 text-center">
           <CheckCircle2 className="mx-auto text-accent" size={40} />
-          <h2 className="text-lg font-semibold mt-3">Imported into your funnel</h2>
+          <h2 className="text-lg font-semibold mt-3">Imported into your investor tracker</h2>
           <p className="text-sm text-muted mt-1">
             {result.created} new · {result.updated} updated · {result.linked} matched to investor profiles
             {result.skipped > 0 && ` · ${result.skipped} rows without a name or firm skipped`}

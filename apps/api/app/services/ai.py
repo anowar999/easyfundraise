@@ -50,7 +50,7 @@ def model_for(db: Session, ws: Workspace, task: str) -> str | None:
     engine = str(tier(db, ws).features.get("ai_engine", "template"))
     s = get_settings()
     if engine == "template":
-        return None
+        return s.ai_model_small if task == "chat" else None  # the Raise Agent works on every plan
     if engine.startswith("frontier") and task in ("draft", "brief", "chat", "profile"):
         return s.ai_model_frontier
     return s.ai_model_small
@@ -124,3 +124,71 @@ def tool_turn(db: Session, ws: Workspace, system: str, messages: list, tools: li
         return None
     record(db, ws, resp)
     return resp
+
+
+def small_json(db: Session, ws: Workspace, system: str, user: str, schema: dict, max_tokens: int = 1200) -> dict | None:
+    """Cheap structured call on the small model for UI helpers (search parsing). Any plan, budget permitting."""
+    if not available() or not budget_left(db, ws):
+        return None
+    try:
+        resp = client().messages.create(
+            model=get_settings().ai_model_small, max_tokens=max_tokens, system=system,
+            messages=[{"role": "user", "content": user}],
+            output_config={"format": {"type": "json_schema", "schema": schema}})
+    except (anthropic.APIStatusError, anthropic.APIConnectionError) as e:
+        log.warning("ai small_json failed: %s", e)
+        return None
+    record(db, ws, resp)
+    if resp.stop_reason in ("refusal", "max_tokens"):
+        return None
+    try:
+        return json.loads(_text(resp))
+    except json.JSONDecodeError:
+        return None
+
+
+RESEARCH_SYSTEM = """You research one startup investor on the public web for a founder who wants to pitch them.
+Search their firm's website, portfolio page, recent funding news and interviews. Report only what sources say;
+leave a field empty rather than guess. No personal-life details. Return ONLY a JSON object, no prose, shaped:
+{"summary": "2-3 sentences: who they are and what they back",
+ "thesis": "their stated investment focus, stage and cheque size if published",
+ "portfolio": [{"company": "...", "note": "what it does / round, if known"}],
+ "partners": [{"name": "...", "role": "..."}],
+ "recent_news": [{"title": "...", "date": "YYYY-MM or YYYY-MM-DD if known", "url": "..."}],
+ "pitch_angle": "one line on what to lead with when emailing them",
+ "sources": ["url", ...]}"""
+
+
+def research(db: Session, ws: Workspace, who: str) -> tuple[dict | None, str]:
+    """Live web research with the server-side web search tool. Returns (data or None, model)."""
+    if not available() or not budget_left(db, ws):
+        return None, ""
+    model = get_settings().ai_model_frontier
+    messages: list = [{"role": "user", "content": who}]
+    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 6}]
+    resp = None
+    try:
+        for _ in range(4):  # a long server-tool turn can pause; send it back to continue
+            resp = client().messages.create(model=model, max_tokens=6000, system=RESEARCH_SYSTEM, tools=tools,
+                                            messages=messages, output_config={"effort": "low"})
+            record(db, ws, resp)
+            if resp.stop_reason != "pause_turn":
+                break
+            messages = [*messages, {"role": "assistant", "content": resp.content}]
+    except (anthropic.APIStatusError, anthropic.APIConnectionError) as e:
+        log.warning("ai research failed: %s", e)
+        return None, ""
+    if resp is None or resp.stop_reason in ("refusal", "max_tokens"):
+        return None, ""
+    text = _text(resp)
+    start, end = text.find("{"), text.rfind("}")
+    try:
+        data = json.loads(text[start:end + 1]) if start >= 0 else None
+    except json.JSONDecodeError:
+        data = None
+    if not isinstance(data, dict):
+        return None, ""
+    found = [getattr(r, "url", "") for b in resp.content if b.type == "web_search_tool_result"
+             for r in (b.content if isinstance(b.content, list) else [])]
+    data["sources"] = list(dict.fromkeys([*(data.get("sources") or []), *[u for u in found if u]]))[:12]
+    return data, resp.model

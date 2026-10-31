@@ -6,13 +6,14 @@
   python -m app.cli make-admin you@example.com
   python -m app.cli honeypots --count 5           # ASP-05 synthetic records
   python -m app.cli demo-investors --count 200     # synthetic investors for dev without the real dataset
+  python -m app.cli remove-demo-investors          # delete them again before loading real data
 """
 
 import argparse
 import secrets
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from .db import SessionLocal
 from .models import Investor, User
@@ -76,6 +77,7 @@ def main() -> None:
     hp.add_argument("--count", type=int, default=5)
     demo = sub.add_parser("demo-investors")
     demo.add_argument("--count", type=int, default=200)
+    sub.add_parser("remove-demo-investors")
     a = ap.parse_args()
 
     with SessionLocal() as db:
@@ -105,6 +107,11 @@ def main() -> None:
             print(f"created {a.count} honeypots")
         elif a.cmd == "demo-investors":
             print(f"created {demo_investors(db, a.count)} synthetic investors")
+        elif a.cmd == "remove-demo-investors":
+            # Tracker cards keep their name and notes (investor link is set to null); demo sequences go with them.
+            n = db.execute(delete(Investor).where(Investor.source == "demo")).rowcount
+            db.commit()
+            print(f"removed {n} demo investors")
 
 
 if __name__ == "__main__":

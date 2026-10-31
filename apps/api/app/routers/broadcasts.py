@@ -92,7 +92,7 @@ def create(body: BroadcastIn, c: Ctx = Depends(ctx)):
         raise ApiError(422, "EF-BC-002", "Check who you're naming", str(e)) from e
     if n == 0:
         c.db.rollback()
-        raise ApiError(422, "EF-BC-003", "No recipients", "Nobody in that audience has an email on their funnel card.")
+        raise ApiError(422, "EF-BC-003", "No recipients", "Nobody in that audience has an email on their investor tracker card.")
     c.db.commit()
     c.db.refresh(b)
     return b_out(b, True)

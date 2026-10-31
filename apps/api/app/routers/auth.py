@@ -70,7 +70,9 @@ def safe_next(path: str, default: str = "/app") -> str:
 
 
 def after_sign_in(db: Session, user: User, is_new: bool, next: str) -> str:
-    """New users without Gmail go to the welcome step that asks for send permission."""
+    """New users set up their company first (onboarding), via the welcome step that asks for Gmail if needed."""
+    if is_new and next in ("/app", "/app/"):
+        next = "/onboarding"
     if is_new and db.get(GmailAccount, user.id) is None:
         return f"/welcome?next={quote(next, safe='')}"
     return next

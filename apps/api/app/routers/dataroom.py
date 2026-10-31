@@ -28,13 +28,14 @@ from ..models import (
     Notification,
     WorkspaceMember,
 )
-from ..services import ai
+from ..services import ai, room_fill
 from ..services.crypto import password_hash, password_ok
 from ..services.entitlements import rate_limit
 
 router = APIRouter(prefix="/data-room", tags=["data-room"])
 public = APIRouter(prefix="/public/rooms", tags=["data-room-public"])
-SECTION_TYPES = ("problem", "solution", "product", "traction", "market", "team", "use_of_funds", "faq", "text")
+SECTION_TYPES = ("problem", "solution", "product", "traction", "market", "why_now", "business_model", "team", "ask",
+                 "use_of_funds", "faq", "text")
 MAX_DOC = 20 * 1024 * 1024
 
 
@@ -42,35 +43,75 @@ def slugify(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:60] or "room"
 
 
+def default_sections(p: CompanyProfile | None) -> list[dict]:
+    """The investor-ready order: story first, then market and model, team, then the ask."""
+    return [
+        {"id": "problem", "type": "problem", "title": "The problem", "body": ""},
+        {"id": "solution", "type": "solution", "title": "Our solution", "body": ""},
+        {"id": "product", "type": "product", "title": "Product", "body": (p.one_liner if p else ""), "links": []},
+        {"id": "traction", "type": "traction", "title": "Traction", "body": (p.traction if p else ""), "metrics": []},
+        {"id": "market", "type": "market", "title": "Market opportunity", "body": "", "metrics": []},
+        {"id": "why_now", "type": "why_now", "title": "Why now", "body": ""},
+        {"id": "business_model", "type": "business_model", "title": "Business model",
+         "body": (p.business_model if p else "")},
+        {"id": "team", "type": "team", "title": "Team", "body": "", "people": []},
+        {"id": "ask", "type": "ask", "title": "The ask", "body": "",
+         "metrics": [{"label": "Raising", "value": (p.round_size if p else "") or ""},
+                     {"label": "Instrument", "value": (p.instrument if p else "") or ""}]},
+        {"id": "use_of_funds", "type": "use_of_funds", "title": "Use of funds", "body": "", "items": []},
+        {"id": "faq", "type": "faq", "title": "FAQ", "items": []},
+    ]
+
+
+def upgrade_content(content: dict, p: CompanyProfile | None) -> bool:
+    """Rooms made before the full section set get the new sections slotted into place, once."""
+    if content.get("layout", 1) >= 2:
+        return False
+    secs = list(content.get("sections", []))
+    have = {s.get("id") for s in secs}
+    for i, d in enumerate(default_sections(p)):
+        if d["id"] in have:
+            continue
+        before = [x["id"] for x in default_sections(p)[:i]]
+        at = max((j + 1 for j, s in enumerate(secs) if s.get("id") in before), default=0)
+        secs.insert(at, d)
+    content["sections"] = secs
+    content["layout"] = 2
+    return True
+
+
 def default_content(p: CompanyProfile | None) -> dict:
     name = (p.company_name if p else "") or "Our company"
     return {
+        "layout": 2,
         "hero": {"title": name, "one_liner": (p.one_liner if p else ""), "round": (p.round_size if p else ""),
                  "instrument": (p.instrument if p else ""), "cta_label": "Book a call", "cta_url": ""},
-        "sections": [
-            {"id": "problem", "type": "problem", "title": "The problem", "body": ""},
-            {"id": "solution", "type": "solution", "title": "Our solution", "body": ""},
-            {"id": "traction", "type": "traction", "title": "Traction", "body": (p.traction if p else ""),
-             "metrics": []},
-            {"id": "team", "type": "team", "title": "Team", "body": "", "people": []},
-            {"id": "use_of_funds", "type": "use_of_funds", "title": "Use of funds", "body": "", "items": []},
-            {"id": "faq", "type": "faq", "title": "FAQ", "items": []},
-        ],
+        "sections": default_sections(p),
     }
 
 
-def _room(c: Ctx) -> DataRoom:
-    room = c.db.get(DataRoom, c.ws_id)
+def ensure_room(db, ws_id, ws_name: str) -> DataRoom:
+    """Every workspace gets a draft room the first time it is needed (opening the page or uploading a deck)."""
+    room = db.get(DataRoom, ws_id)
+    p = db.get(CompanyProfile, ws_id)
     if room is None:
-        p = c.db.get(CompanyProfile, c.ws_id)
-        base = slugify((p.company_name if p else "") or c.workspace.name)
+        base = slugify((p.company_name if p else "") or ws_name)
         slug = base
-        while c.db.scalar(select(func.count()).select_from(DataRoom).where(DataRoom.slug == slug)):
+        while db.scalar(select(func.count()).select_from(DataRoom).where(DataRoom.slug == slug)):
             slug = f"{base}-{secrets.token_hex(2)}"
-        room = DataRoom(workspace_id=c.ws_id, slug=slug, content=default_content(p), versions=[])
-        c.db.add(room)
-        c.db.commit()
+        room = DataRoom(workspace_id=ws_id, slug=slug, content=default_content(p), versions=[])
+        db.add(room)
+        db.commit()
+    elif (room.content or {}).get("layout", 1) < 2:
+        content = dict(room.content or {})
+        upgrade_content(content, p)
+        room.content = content
+        db.commit()
     return room
+
+
+def _room(c: Ctx) -> DataRoom:
+    return ensure_room(c.db, c.ws_id, c.workspace.name)
 
 
 def room_out(room: DataRoom) -> dict:
@@ -87,7 +128,8 @@ def get_room(c: Ctx = Depends(ctx)):
     links = c.db.execute(select(DataRoomLink, FunnelCard.name).outerjoin(FunnelCard, FunnelCard.id == DataRoomLink.card_id)
                          .where(DataRoomLink.workspace_id == c.ws_id).order_by(DataRoomLink.created_at.desc()).limit(200)).all()
     base = f"{get_settings().web_origin}/r/{room.slug}"
-    return {**room_out(room),
+    docs = list(docs)
+    return {**room_out(room), "completeness": room_fill.completeness(room.content or {}, len(docs)),
             "docs": [{"id": str(d.id), "label": d.label, "filename": d.filename, "size": d.size, "gated": d.gated} for d in docs],
             "links": [{"id": str(lk.id), "label": lk.label or name or "Link", "card_id": str(lk.card_id) if lk.card_id else None,
                        "url": f"{base}?k={lk.token}", "expires_at": lk.expires_at, "revoked": lk.revoked_at is not None}
@@ -116,7 +158,7 @@ def put_room(body: RoomIn, c: Ctx = Depends(ctx)):
         if not isinstance(secs, list) or len(secs) > 30 or any(s.get("type") not in SECTION_TYPES for s in secs):
             raise ApiError(422, "EF-DR-002", "Invalid sections")
         room.versions = ([{"at": datetime.now(UTC).isoformat(), "content": room.content}] + (room.versions or []))[:10]
-        room.content = body.content
+        room.content = {**body.content, "layout": 2}
     if body.password:
         room.password_hash = password_hash(body.password)
     for k in ("published", "access", "indexable"):

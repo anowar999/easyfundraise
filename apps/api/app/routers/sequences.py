@@ -147,7 +147,7 @@ def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
     to = (card.email if card and card.email else "") or (inv.email if c.db.get(Reveal, (c.ws_id, inv.id)) else "")
     if not to:
         raise ApiError(409, "EF-SEQ-005", "Reveal this investor's email first",
-                       "Reveal the contact on their profile (uses one credit) or add an email on the funnel card.",
+                       "Reveal the contact on their profile (uses one credit) or add an email on their investor tracker card.",
                        {"needs_reveal": True})
     acc = c.db.get(GmailAccount, c.user.id)
     if acc is None or acc.status != "connected":

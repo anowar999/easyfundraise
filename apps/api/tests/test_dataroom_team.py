@@ -143,3 +143,65 @@ def test_stripe_webhook_sets_tier(client, monkeypatch):
     sub["status"] = "canceled"
     post({"type": "customer.subscription.deleted", "data": {"object": sub}})
     assert client.get("/workspace").json()["tier"]["code"] == "trial"
+
+
+def _pdf(pages: list[list[str]]) -> bytes:
+    """A tiny text-only PDF, one list of lines per slide."""
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>", None, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    kids = []
+    for lines in pages:
+        ops = "BT /F1 18 Tf 40 700 Td 24 TL " + " ".join(f"({ln}) Tj T*" for ln in lines) + " ET"
+        objs.append(f"<< /Length {len(ops)} >>\nstream\n{ops}\nendstream")
+        objs.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {len(objs)} 0 R "
+                    "/Resources << /Font << /F1 3 0 R >> >> >>")
+        kids.append(f"{len(objs)} 0 R")
+    objs[1] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)} >>"
+    out, offsets = b"%PDF-1.4\n", []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n{o}\nendobj\n".encode()
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    out += "".join(f"{o:010d} 00000 n \n" for o in offsets).encode()
+    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode()
+    return out
+
+
+def test_deck_upload_drafts_the_data_room(client):
+    client.put("/workspace/profile", json={"company_name": "Deck Co", "one_liner": "Triage for clinics"})
+    room = client.get("/data-room").json()
+    assert [s["id"] for s in room["content"]["sections"]] == [
+        "problem", "solution", "product", "traction", "market", "why_now", "business_model", "team", "ask",
+        "use_of_funds", "faq"]
+    before = room["completeness"]["pct"]
+    content = room["content"]
+    content["sections"][1]["body"] = "My own solution text"
+    client.put("/data-room", json={"content": content})
+    deck = _pdf([["Problem", "Clinics lose 6 hours a day to manual triage."],
+                 ["Solution", "This text must not replace the founder's own."],
+                 ["Why now", "New NHS rules require digital triage by 2027."],
+                 ["Use of funds", "Engineering 60 percent, sales 40 percent of the round."]])
+    r = client.post("/workspace/deck", files={"file": ("deck.pdf", deck, "application/pdf")}).json()
+    assert set(r["data_room"]["filled"]) == {"problem", "why_now", "use_of_funds"}
+    secs = {s["id"]: s for s in client.get("/data-room").json()["content"]["sections"]}
+    assert "6 hours" in secs["problem"]["body"] and secs["solution"]["body"] == "My own solution text"
+    after = client.get("/data-room").json()["completeness"]
+    assert after["pct"] > before and any(m["id"] == "team" for m in after["missing"])
+
+
+def test_old_rooms_get_the_new_sections_once(client):
+    room = client.get("/data-room").json()
+    with SessionLocal() as db:
+        from app.models import DataRoom
+        r = db.scalar(select(DataRoom))
+        r.content = {"hero": r.content["hero"], "sections": [
+            {"id": "problem", "type": "problem", "title": "The problem", "body": "x"},
+            {"id": "team", "type": "team", "title": "Team", "body": "", "people": []}]}
+        db.commit()
+    ids = [s["id"] for s in client.get("/data-room").json()["content"]["sections"]]
+    assert ids[0] == "problem" and ids.index("team") > ids.index("business_model") and "product" in ids
+    content = client.get("/data-room").json()["content"]
+    content["sections"] = [s for s in content["sections"] if s["id"] != "why_now"]
+    client.put("/data-room", json={"content": content})
+    assert "why_now" not in [s["id"] for s in client.get("/data-room").json()["content"]["sections"]]
+    assert room["slug"]
