@@ -14,16 +14,26 @@ import {
 } from "@dnd-kit/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertCircle, ArrowRightLeft, Check, Download, Flame, LayoutGrid, Plus, Rows3, Search, Snowflake, Star, Upload } from "lucide-react";
+import { AlertCircle, ArrowRightLeft, Check, Download, Flame, LayoutGrid, Plus, Rows3, Search, Snowflake, Sparkles, Star, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
 import { Empty, ErrorState, Field, ListSkeleton, Sheet, StatusBadge, errText, useToast } from "@/components/ui";
 import { api, fmtDate, qs } from "@/lib/api";
 import type { Card, FunnelMeta } from "@/lib/types";
 import { QuickCard } from "./QuickCard";
 import { ActionTray, DEFAULT_STATUSES, StaleDot, StarMark, StatusMulti } from "./TrackerBits";
+import { TrackerAgent, matchesAgent, type AgentFilter } from "./TrackerAgent";
+
+const readAgent = (raw: string | null): { f: AgentFilter; label: string } | null => {
+  if (!raw) return null;
+  try {
+    return { f: JSON.parse(raw) as AgentFilter, label: "Raise Agent filter" };
+  } catch {
+    return null;
+  }
+};
 
 const SHORT = ["Not started", "Intro req.", "In contact", "First call", "Deck req.", "Deep dive", "Term sheet", "Signed", "Paid"];
 
@@ -39,6 +49,7 @@ function CardBody({ c }: { c: Card }) {
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium flex items-center gap-1.5 min-w-0">
+            {c.number > 0 && <span className="text-[11px] font-mono text-muted shrink-0">#{c.number}</span>}
             <span className="truncate">{c.name}</span>
             <StarMark c={c} />
             <StaleDot c={c} />
@@ -101,6 +112,7 @@ function FunnelInner() {
   const params = useSearchParams();
   const qc = useQueryClient();
   const toast = useToast();
+  const router = useRouter();
   const [view, setView] = useState<"board" | "table">("board");
   const [search, setSearch] = useState("");
   const [statuses, setStatuses] = useState<string[]>(DEFAULT_STATUSES); // Inactive and Rejected hidden by default
@@ -111,13 +123,21 @@ function FunnelInner() {
   const [adding, setAdding] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [agent, setAgent] = useState<{ f: AgentFilter; label: string } | null>(() => readAgent(params.get("agent")));
+  const agentParam = params.get("agent");
+  useEffect(() => {
+    if (agentParam) setAgent(readAgent(agentParam));
+  }, [agentParam]);
 
   const meta = useQuery<FunnelMeta>({ queryKey: ["funnel-meta"], queryFn: () => api("/funnel/meta"), staleTime: Infinity });
   const filters = { q: search, needs_action: needsAction };
   const list = useQuery<{ items: Card[] }>({ queryKey: ["funnel", filters], queryFn: () => api(`/funnel${qs(filters)}`) });
   const all = list.data?.items ?? [];
-  const cards = all.filter((c) => statuses.includes(c.status) && (!starredOnly || c.starred));
-  const hidden = all.filter((c) => !statuses.includes(c.status)).length;
+  // A Raise Agent filter ("only active", "overdue") replaces the status picker until it's cleared.
+  const cards = agent
+    ? all.filter((c) => matchesAgent(c, agent.f) && (!starredOnly || c.starred))
+    : all.filter((c) => statuses.includes(c.status) && (!starredOnly || c.starred));
+  const hidden = agent ? 0 : all.filter((c) => !statuses.includes(c.status)).length;
   const byStage = useMemo(() => {
     const m: Record<number, Card[]> = {};
     for (let i = 1; i <= 9; i++) m[i] = [];
@@ -192,12 +212,29 @@ function FunnelInner() {
           </>
         }
       />
+      {list.data && all.length > 0 && <TrackerAgent cards={all} onFilter={(f, label) => setAgent({ f, label })} />}
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <div className="relative flex-1 min-w-48">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input className="input pl-9" placeholder="Search name or firm" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <StatusMulti all={meta.data?.statuses ?? [...DEFAULT_STATUSES, "Inactive", "Rejection"]} value={statuses} onChange={setStatuses} />
+        {agent ? (
+          <span className="chip px-3 py-2 text-sm bg-brand/10 text-brand border-brand/30 max-w-full">
+            <Sparkles size={14} className="shrink-0" /> <span className="truncate">{agent.label}</span>
+            <button
+              className="-mr-1 ml-1 p-0.5 rounded hover:bg-brand/15"
+              onClick={() => {
+                setAgent(null);
+                if (agentParam) router.replace("/app/funnel");
+              }}
+              aria-label="Clear Raise Agent filter"
+            >
+              <X size={14} />
+            </button>
+          </span>
+        ) : (
+          <StatusMulti all={meta.data?.statuses ?? [...DEFAULT_STATUSES, "Inactive", "Rejection"]} value={statuses} onChange={setStatuses} />
+        )}
         <button className={clsx("chip px-3 py-2 text-sm", starredOnly && "bg-amber-400 text-white border-amber-400")} onClick={() => setStarredOnly((x) => !x)}>
           <Star size={14} className={starredOnly ? "fill-white" : "text-amber-500"} /> Starred
         </button>
@@ -297,7 +334,7 @@ function FunnelInner() {
           <table className="w-full text-sm">
             <thead className="text-xs text-muted text-left border-b border-line">
               <tr>
-                {["Name", "Firm", "Type", "Prio", "Status", "Stage", "Ticket", "Can lead", "Referrer", "Last contacted", "Next contact"].map((h) => (
+                {["#", "Name", "Firm", "Type", "Prio", "Status", "Stage", "Ticket", "Can lead", "Referrer", "Last contacted", "Next contact"].map((h) => (
                   <th key={h} className="px-3 py-2 font-medium whitespace-nowrap">
                     {h}
                   </th>
@@ -307,6 +344,7 @@ function FunnelInner() {
             <tbody>
               {cards.map((c) => (
                 <tr key={c.id} className="border-b border-line last:border-0 hover:bg-surface cursor-pointer" onClick={() => setOpenId(c.id)}>
+                  <td className="px-3 py-2 font-mono text-xs text-muted">{c.number || ""}</td>
                   <td className="px-3 py-2 font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5">
                       {c.name} <StarMark c={c} /> <StaleDot c={c} />

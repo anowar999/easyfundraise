@@ -17,10 +17,12 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
+    select,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from .db import Base
 
@@ -367,11 +369,25 @@ class FunnelCard(Base):
     shareable: Mapped[bool] = mapped_column(Boolean, default=False)
     starred: Mapped[bool] = mapped_column(Boolean, default=False)  # a key investor: can lead, great intros, ...
     star_reason: Mapped[str] = mapped_column(String(200), default="")
+    number: Mapped[int] = mapped_column(Integer, default=0)  # #1, #2 ... per workspace, never reused
     created_at: Mapped[datetime] = created()
     updated_at: Mapped[datetime] = updated()
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (Index("ix_cards_ws_stage", "workspace_id", "stage", "position"),)
+
+
+@event.listens_for(Session, "before_flush")
+def _number_new_cards(session, _ctx, _instances) -> None:
+    """Give each new tracker card the next number in its workspace, so founders can say "update #10"."""
+    new = [o for o in session.new if isinstance(o, FunnelCard) and not o.number]
+    nxt: dict = {}
+    for card in new:
+        ws = card.workspace_id
+        if ws not in nxt:
+            with session.no_autoflush:
+                nxt[ws] = (session.scalar(select(func.max(FunnelCard.number)).where(FunnelCard.workspace_id == ws)) or 0) + 1
+        card.number, nxt[ws] = nxt[ws], nxt[ws] + 1
 
 
 class CardEvent(Base):

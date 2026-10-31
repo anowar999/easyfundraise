@@ -37,7 +37,7 @@ def heat(card: FunnelCard, last_event: datetime | None) -> str:
 def out(card: FunnelCard, last_event: datetime | None = None, today: date | None = None) -> dict:
     today = today or date.today()
     return {
-        "id": str(card.id), "investor_id": str(card.investor_id) if card.investor_id else None,
+        "id": str(card.id), "number": card.number, "investor_id": str(card.investor_id) if card.investor_id else None,
         "name": card.name, "firm": card.firm, "investor_type": card.investor_type, "priority": card.priority,
         "status": card.status, "stage": card.stage, "stage_label": STAGES[card.stage - 1], "position": card.position,
         "can_lead": card.can_lead, "ticket_size": card.ticket_size, "agreed_size": card.agreed_size,
@@ -79,7 +79,9 @@ def list_cards(q: str = "", status: str = "", stage: int | None = None, priority
                needs_action: bool = False, tag: str = "", c: Ctx = Depends(ctx)):
     conds = [FunnelCard.workspace_id == c.ws_id, FunnelCard.deleted_at.is_(None)]
     if q:
-        conds.append(or_(FunnelCard.name.ilike(f"%{q}%"), FunnelCard.firm.ilike(f"%{q}%")))
+        num = q.strip().lstrip("#")
+        conds.append(or_(FunnelCard.name.ilike(f"%{q}%"), FunnelCard.firm.ilike(f"%{q}%"),
+                         *([FunnelCard.number == int(num)] if num.isdigit() else [])))
     if status:
         conds.append(FunnelCard.status == status)
     if stage:

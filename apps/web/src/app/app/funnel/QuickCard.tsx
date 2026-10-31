@@ -26,7 +26,10 @@ export function QuickCard({ card, meta, onClose }: { card: Card | null; meta?: F
         <div className="flex items-start gap-3">
           <Avatar name={card.name} size={48} />
           <div className="flex-1 min-w-0">
-            <div className="text-lg font-semibold leading-tight truncate">{card.name}</div>
+            <div className="text-lg font-semibold leading-tight truncate">
+              {card.number > 0 && <span className="font-mono text-sm text-muted mr-1.5">#{card.number}</span>}
+              {card.name}
+            </div>
             <div className="text-sm text-muted truncate">{card.firm || "—"}</div>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <span className="chip text-xs">{card.stage_label}</span>

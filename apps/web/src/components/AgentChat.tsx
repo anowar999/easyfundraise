@@ -29,6 +29,9 @@ export const ASK_EVENT = "raise-agent:ask";
 /** Opens Your Raise Agent with a question, from anywhere on the page. */
 export const askAgent = (text: string) => window.dispatchEvent(new CustomEvent(ASK_EVENT, { detail: text }));
 
+/** Opens the chat panel without sending anything (e.g. "Continue in chat" from the tracker's agent bar). */
+export const openAgent = () => window.dispatchEvent(new CustomEvent(ASK_EVENT, { detail: "" }));
+
 export function AgentChat() {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
@@ -46,6 +49,8 @@ export function AgentChat() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["chat"] });
       qc.invalidateQueries({ queryKey: ["home"] });
+      qc.invalidateQueries({ queryKey: ["funnel"] });
+      qc.invalidateQueries({ queryKey: ["card"] });
     },
     onError: (e) => toast(errText(e), "err"),
   });
@@ -69,9 +74,8 @@ export function AgentChat() {
   useEffect(() => {
     const onAsk = (e: Event) => {
       const t = (e as CustomEvent<string>).detail?.trim();
-      if (!t) return;
       setOpen(true);
-      send.mutate(t);
+      if (t) send.mutate(t);
     };
     window.addEventListener(ASK_EVENT, onAsk);
     return () => window.removeEventListener(ASK_EVENT, onAsk);
@@ -143,7 +147,7 @@ export function AgentChat() {
                           <span className="flex-1 text-xs">{a.label}</span>
                           {a.href ? (
                             <Link href={a.href} className="btn-ghost btn-sm" onClick={() => setOpen(false)}>
-                              {a.type === "open_sequence" ? "Review" : "Open"}
+                              {a.type === "open_sequence" ? "Review" : a.type === "tracker_filter" ? "Show" : "Open"}
                             </Link>
                           ) : a.state === "pending" ? (
                             <button className="btn-primary btn-sm" disabled={apply.isPending} onClick={() => apply.mutate({ m: m.id, a: a.id })}>

@@ -29,6 +29,7 @@ export type InvestorCard = {
 
 export type Card = {
   id: string;
+  number: number;
   investor_id: string | null;
   name: string;
   firm: string;

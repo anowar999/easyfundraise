@@ -6,8 +6,10 @@ publishing the data room, and above all sending, which always goes through the s
 """
 
 import json
+import re
 import uuid
 from datetime import UTC, date, datetime, timedelta
+from urllib.parse import quote
 
 from sqlalchemy import func, or_, select
 
@@ -15,6 +17,7 @@ from ..deps import Ctx
 from ..errors import ApiError
 from ..models import (
     STAGES,
+    STATUSES,
     AgentInstruction,
     AgentMemory,
     CardEvent,
@@ -42,7 +45,8 @@ def _t(name: str, description: str, props: dict | None = None, required: list[st
             "input_schema": {"type": "object", "properties": props or {}, "required": required or []}}
 
 
-S, INT = {"type": "string"}, {"type": "integer"}
+S, INT, B = {"type": "string"}, {"type": "integer"}, {"type": "boolean"}
+PRIOS = ["P1", "P2", "P3", "P4"]
 IDS = {"type": "array", "items": S}
 
 TOOLS = [
@@ -65,13 +69,25 @@ TOOLS = [
     _t("add_to_tracker", "Add investors to the investor tracker at stage 1, removing them from the shortlist "
        "(applied now). Use investor_ids from search, or name/firm for someone not in the database.",
        {"investor_ids": IDS, "name": S, "firm": S}),
-    _t("list_tracker", "List investor tracker cards, optionally by stage (1-9) or status.", {"stage": INT, "status": S}),
-    _t("get_card", "One tracker card with latest notes and events. Accepts a card id or a name.", {"card": S},
-       ["card"]),
-    _t("propose_move", "Propose moving a tracker card to a stage (1-9). The founder taps to apply.",
-       {"card_id": S, "stage": INT}, ["card_id", "stage"]),
-    _t("propose_note", "Propose adding a note to a tracker card. The founder taps to apply.",
-       {"card_id": S, "text": S}, ["card_id", "text"]),
+    _t("list_tracker", "List investor tracker cards with their numbers (#1, #2 ...), optionally by stage (1-9), "
+       "status (Active, Inactive, Rejection, Ghosting) or overdue follow-ups.",
+       {"stage": INT, "status": S, "overdue": B}),
+    _t("show_tracker", "Filter the founder's investor tracker view so they see only matching investors, e.g. 'show "
+       "only active investors', 'which ones are overdue', 'show P1s in deck requested'. Returns the matches and "
+       "updates the tracker on screen. Use this for every 'show me ...' about the tracker.",
+       {"statuses": {"type": "array", "items": {"type": "string", "enum": STATUSES}}, "overdue": B, "due_today": B,
+        "needs_action": B, "starred": B, "stale": B, "stage": INT, "priority": {"type": "string", "enum": PRIOS},
+        "query": S, "numbers": {"type": "array", "items": INT}}),
+    _t("get_card", "One tracker card with latest notes and events. card is its number ('#10' or '10'), name or id.",
+       {"card": S}, ["card"]),
+    _t("update_card", "Change a tracker card (applied now). card is its number ('#10'), name or id. Only pass the "
+       "fields the founder asked to change. stage is 1-9; next_contact is the follow-up date YYYY-MM-DD ('' clears it).",
+       {"card": S, "stage": INT, "status": {"type": "string", "enum": STATUSES},
+        "priority": {"type": "string", "enum": PRIOS}, "next_contact": S, "ticket_size": S, "referrer": S,
+        "can_lead": {"type": "string", "enum": ["Yes", "No", "Maybe"]}, "starred": B}, ["card"]),
+    _t("add_note", "Add a note to a tracker card (applied now), word for word as the founder gave it. card is its "
+       "number ('#10'), name or id. A date in the note also sets the follow-up date.",
+       {"card": S, "text": S}, ["card", "text"]),
     _t("create_reminder", "Create a reminder (applied now). due is YYYY-MM-DD.",
        {"title": S, "due": S, "card_id": S}, ["title", "due"]),
     _t("remember", "Save a durable fact about the company, the raise or what works.",
@@ -121,12 +137,91 @@ def _act(actions: list, kind: str, label: str, args: dict | None = None, state: 
     actions.append(a)
 
 
-def find_card(c: Ctx, ref: str) -> FunnelCard | None:
+NUM_REF = re.compile(r"^\s*(?:tracker|investor|card|no\.?|number)?\s*#?\s*(\d{1,5})\s*$", re.I)
+
+
+def find_cards(c: Ctx, ref: str) -> list[FunnelCard]:
+    """Cards matching a number (#10, 10, tracker 10), an id, or a name. An exact name wins over partial matches."""
     q = select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.deleted_at.is_(None))
-    cid = _uuid(ref)
-    if cid:
-        return c.db.scalar(q.where(FunnelCard.id == cid))
-    return c.db.scalar(q.where(func.lower(FunnelCard.name).contains(ref.lower().strip())).limit(1))
+    ref = (ref or "").strip()
+    if not ref:
+        return []
+    if cid := _uuid(ref):
+        return list(c.db.scalars(q.where(FunnelCard.id == cid)))
+    if m := NUM_REF.match(ref):
+        return list(c.db.scalars(q.where(FunnelCard.number == int(m.group(1)))))
+    low = ref.lower()
+    exact = list(c.db.scalars(q.where(func.lower(FunnelCard.name) == low)))
+    if exact:
+        return exact
+    return list(c.db.scalars(q.where(func.lower(FunnelCard.name).contains(low)).order_by(FunnelCard.number).limit(10)))
+
+
+def find_card(c: Ctx, ref: str) -> FunnelCard | None:
+    hits = find_cards(c, ref)
+    return hits[0] if hits else None
+
+
+def _which(hits: list[FunnelCard], ref: str) -> str:
+    if not hits:
+        return f"No tracker card matches '{ref}'."
+    return "Several cards match; ask which one: " + "; ".join(f"#{x.number} {x.name} ({x.firm})" for x in hits[:8])
+
+
+def card_row(x: FunnelCard, today: date | None = None) -> dict:
+    today = today or date.today()
+    return {"number": x.number, "card_id": str(x.id), "name": x.name, "firm": x.firm, "stage": STAGES[x.stage - 1],
+            "status": x.status, "priority": x.priority,
+            "next_contact": str(x.next_contact_date or ""),
+            "overdue": bool(x.next_contact_date and x.next_contact_date < today)}
+
+
+def tracker_matches(c: Ctx, f: dict) -> list[FunnelCard]:
+    """The same rules the tracker page applies for a show_tracker filter."""
+    from ..routers.funnel import STALE_DAYS
+
+    today = date.today()
+    q = select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.deleted_at.is_(None))
+    if f.get("statuses"):
+        q = q.where(FunnelCard.status.in_(f["statuses"]))
+    if f.get("overdue"):
+        q = q.where(FunnelCard.next_contact_date < today)
+    if f.get("due_today"):
+        q = q.where(FunnelCard.next_contact_date == today)
+    if f.get("needs_action"):
+        q = q.where(FunnelCard.next_contact_date <= today)
+    if f.get("starred"):
+        q = q.where(FunnelCard.starred.is_(True))
+    if f.get("stage"):
+        q = q.where(FunnelCard.stage == int(f["stage"]))
+    if f.get("priority"):
+        q = q.where(FunnelCard.priority == f["priority"])
+    if f.get("numbers"):
+        q = q.where(FunnelCard.number.in_([int(n) for n in f["numbers"]]))
+    if f.get("query"):
+        q = q.where(or_(FunnelCard.name.ilike(f"%{f['query']}%"), FunnelCard.firm.ilike(f"%{f['query']}%")))
+    rows = list(c.db.scalars(q.order_by(FunnelCard.number)))
+    if f.get("stale"):
+        cut = datetime.now(UTC) - timedelta(days=STALE_DAYS)
+        rows = [x for x in rows if x.status in ("Active", "Ghosting") and (x.updated_at or x.created_at) < cut]
+    return rows
+
+
+def filter_label(f: dict) -> str:
+    parts = list(f.get("statuses") or [])
+    for k, label in (("overdue", "Overdue"), ("due_today", "Due today"), ("needs_action", "Needs action"),
+                     ("starred", "Starred"), ("stale", "No update in 7+ days")):
+        if f.get(k):
+            parts.append(label)
+    if f.get("stage"):
+        parts.append(STAGES[int(f["stage"]) - 1][3:])
+    if f.get("priority"):
+        parts.append(f["priority"])
+    if f.get("numbers"):
+        parts.append(", ".join(f"#{n}" for n in f["numbers"][:6]))
+    if f.get("query"):
+        parts.append(f"“{f['query']}”")
+    return " · ".join(parts) or "All investors"
 
 
 def _investor(c: Ctx, iid) -> Investor | None:
@@ -241,7 +336,7 @@ def run(c: Ctx, name: str, args: dict, actions: list) -> str:  # noqa: C901 - on
                                                                            Investor.current_firm.ilike(f"%{q}%")))
                           .limit(8)).all()
         return json.dumps({
-            "in_tracker": [{"card_id": str(x.id), "name": x.name, "firm": x.firm, "stage": STAGES[x.stage - 1],
+            "in_tracker": [{"number": x.number, "card_id": str(x.id), "name": x.name, "firm": x.firm, "stage": STAGES[x.stage - 1],
                             "investor_id": str(x.investor_id) if x.investor_id else None} for x in cards],
             "in_database": [_inv_row(i, p) for i in invs]})
 
@@ -281,39 +376,86 @@ def run(c: Ctx, name: str, args: dict, actions: list) -> str:  # noqa: C901 - on
         return "Pass investor_ids or a name."
 
     if name == "list_tracker":
-        q = select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.deleted_at.is_(None))
-        if args.get("stage"):
-            q = q.where(FunnelCard.stage == int(args["stage"]))
-        if args.get("status"):
-            q = q.where(FunnelCard.status == args["status"])
-        return json.dumps([{"card_id": str(x.id), "name": x.name, "firm": x.firm, "stage": STAGES[x.stage - 1],
-                            "status": x.status, "next_contact": str(x.next_contact_date or "")}
-                           for x in db.scalars(q.order_by(FunnelCard.stage.desc()).limit(60))])
+        f = {"stage": args.get("stage"), "statuses": [args["status"]] if args.get("status") else None,
+             "overdue": args.get("overdue")}
+        return json.dumps([card_row(x) for x in tracker_matches(c, f)[:80]])
+
+    if name == "show_tracker":
+        f = {k: v for k, v in args.items() if v not in (None, "", [], False)}
+        f["statuses"] = [x for x in f.get("statuses", []) if x in STATUSES]
+        if not f["statuses"]:
+            f.pop("statuses")
+        if f.get("stage") and not 1 <= int(f["stage"]) <= 9:
+            f.pop("stage")
+        rows = tracker_matches(c, f)
+        label = filter_label(f)
+        _act(actions, "tracker_filter", f"Tracker: {label} ({len(rows)})", f,
+             href=f"{PAGES['tracker']}?agent={quote(json.dumps(f, separators=(',', ':')))}")
+        return json.dumps({"count": len(rows), "showing": label, "cards": [card_row(x) for x in rows[:60]]})
+
+    if name == "update_card":
+        from ..routers.funnel import CardIn, _event, apply
+
+        c.require_editor()
+        hits = find_cards(c, args.get("card", ""))
+        if len(hits) != 1:
+            return _which(hits, args.get("card", ""))
+        x = hits[0]
+        data: dict = {k: args[k] for k in ("stage", "status", "priority", "ticket_size", "referrer", "can_lead", "starred")
+                      if args.get(k) not in (None, "")}
+        if "next_contact" in args:
+            try:
+                data["next_contact_date"] = date.fromisoformat(args["next_contact"]) if args["next_contact"] else None
+            except ValueError:
+                return "Invalid date; use YYYY-MM-DD."
+        if not data:
+            return "Nothing to change."
+        try:
+            body = CardIn(**data)
+        except ValueError as e:
+            return f"Invalid value: {e}"
+        apply(c, x, body)
+        if "next_contact_date" in data:
+            d = data["next_contact_date"]
+            _event(c, x, "follow_up", f"Follow-up set for {d:%d %b %Y}" if d else "Follow-up date cleared", agent=True)
+        changes = []
+        for k, v in data.items():
+            if k == "next_contact_date":
+                changes.append(f"follow-up {v:%a %d %b}" if v else "follow-up cleared")
+            elif k == "stage":
+                changes.append(f"stage {STAGES[int(v) - 1][3:]}")
+            else:
+                changes.append(f"{k.replace('_', ' ')} {v}")
+        _act(actions, "card", f"#{x.number} {x.name}: {', '.join(changes)}", {"card_id": str(x.id)},
+             href=f"/app/funnel/{x.id}")
+        return f"Updated #{x.number} {x.name}: {', '.join(changes)}."
+
+    if name == "add_note":
+        from ..routers.funnel import NoteIn
+        from ..routers.funnel import add_note as add_card_note
+
+        c.require_editor()
+        hits = find_cards(c, args.get("card", ""))
+        if len(hits) != 1:
+            return _which(hits, args.get("card", ""))
+        x, text = hits[0], (args.get("text") or "").strip()
+        if not text:
+            return "The note is empty."
+        r = add_card_note(str(x.id), NoteIn(body=text[:10000]), c)
+        _act(actions, "card", f"Note on #{x.number} {x.name}: {text[:80]}", {"card_id": str(x.id)},
+             href=f"/app/funnel/{x.id}")
+        return "Note added." + (f" Follow-up set for {r['reminder_date']}." if r.get("reminder_date") else "")
 
     if name == "get_card":
-        x = find_card(c, args.get("card", ""))
-        if not x:
-            return "No matching card."
+        hits = find_cards(c, args.get("card", ""))
+        if len(hits) != 1:
+            return _which(hits, args.get("card", ""))
+        x = hits[0]
         evs = db.scalars(select(CardEvent).where(CardEvent.card_id == x.id).order_by(CardEvent.created_at.desc()).limit(8))
-        return json.dumps({"card_id": str(x.id), "name": x.name, "firm": x.firm, "stage": STAGES[x.stage - 1],
-                           "status": x.status, "ticket": x.ticket_size, "referrer": x.referrer,
+        return json.dumps({**card_row(x), "ticket": x.ticket_size, "referrer": x.referrer,
                            "investor_id": str(x.investor_id) if x.investor_id else None,
                            "next_contact": str(x.next_contact_date or ""), "call_at": str(x.call_at or ""),
                            "events": [{"kind": e.kind, "body": e.body[:300], "at": str(e.created_at.date())} for e in evs]})
-
-    if name in ("propose_move", "propose_note"):
-        x = find_card(c, args.get("card_id", ""))
-        if not x:
-            return "No matching card."
-        if name == "propose_move":
-            st = int(args.get("stage", 0))
-            if not 1 <= st <= 9:
-                return "Stage must be 1-9."
-            label = f"Move {x.name} to {STAGES[st - 1]}"
-        else:
-            label = f"Add note to {x.name}: {args.get('text', '')[:80]}"
-        _act(actions, name.removeprefix("propose_"), label, {**args, "card_id": str(x.id)}, "pending")
-        return "Proposed; the founder will tap to apply."
 
     if name == "create_reminder":
         try:
@@ -463,3 +605,112 @@ def run(c: Ctx, name: str, args: dict, actions: list) -> str:  # noqa: C901 - on
         return "Button shown."
 
     return "Unknown tool."
+
+
+# ---------- tracker commands without AI (the tracker's agent bar must work on servers with no AI key) ----------
+
+CARD_NUM = re.compile(r"(?:\b(?:tracker|investor|card|no\.?|number)\s*#?\s*|#)(\d{1,5})\b", re.I)
+QUOTED = re.compile(r"[\"“”'‘’](.+)[\"“”'‘’]", re.S)
+STATUS_WORDS = {"active": "Active", "inactive": "Inactive", "ghosting": "Ghosting", "ghosted": "Ghosting",
+                "rejected": "Rejection", "rejection": "Rejection", "passed": "Rejection"}
+
+
+def _ref_in(c: Ctx, text: str) -> tuple[list[FunnelCard], str]:
+    """Which card the founder means: a number ('#10', 'tracker 10') or a card name that appears in the text."""
+    if m := CARD_NUM.search(text):
+        return find_cards(c, m.group(1)), m.group(0)
+    low = text.lower()
+    cards = c.db.scalars(select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.deleted_at.is_(None))
+                         .limit(3000)).all()
+    named = [x for x in cards if len(x.name) > 2 and re.search(r"\b" + re.escape(x.name.lower()) + r"\b", low)]
+    if not named:
+        return [], ""
+    best = max(len(x.name) for x in named)
+    return [x for x in named if len(x.name) == best], max(named, key=lambda x: len(x.name)).name
+
+
+def _list_reply(rows: list[dict], label: str, total: int) -> str:
+    if not total:
+        return f"No investors match ({label})."
+    head = f"{total} investor{'s' if total != 1 else ''}: {label}. Your tracker now shows just these."
+    lines = [f"#{r['number']} {r['name']}" + (f" ({r['firm']})" if r["firm"] else "")
+             + (f", follow-up {date.fromisoformat(r['next_contact']):%a %d %b}" if r["next_contact"] else "") for r in rows[:12]]
+    return "\n".join([head, *lines] + ([f"…and {total - 12} more"] if total > 12 else []))
+
+
+def tracker_command(c: Ctx, text: str, actions: list) -> str | None:  # noqa: C901
+    from .notes import find_date
+
+    low = text.lower().strip()
+    hits, ref = _ref_in(c, text)
+
+    # Add a note: 'add note on Paul Bartley "Need to ask Ben ..."'
+    if re.search(r"\b(add|put|write|log|save)\b.{0,12}\bnotes?\b", low) and ref:
+        if len(hits) != 1:
+            return _which(hits, ref).replace("; ask which one", "")
+        if m := QUOTED.search(text):
+            note = m.group(1).strip()
+        elif ":" in text:
+            note = text.split(":", 1)[1].strip()
+        else:
+            note = text[text.lower().index(ref.lower()) + len(ref):].strip(" ,.-") if ref.lower() in text.lower() else ""
+        if not note:
+            return f"What should the note on #{hits[0].number} {hits[0].name} say?"
+        run(c, "add_note", {"card": str(hits[0].id), "text": note}, actions)
+        return f"Added the note to #{hits[0].number} {hits[0].name}."
+
+    # Follow-up date: "set up a follow up date 02/Nov for #10"
+    if re.search(r"follow[- ]?up|next contact|chase|remind", low) and ref:
+        d = find_date(text.replace(ref, " "), date.today())
+        if len(hits) != 1:
+            return _which(hits, ref).replace("; ask which one", "")
+        if not d:
+            return f"Which date should I set for #{hits[0].number} {hits[0].name}? For example 02/Nov."
+        run(c, "update_card", {"card": str(hits[0].id), "next_contact": d.isoformat()}, actions)
+        return f"Follow-up for #{hits[0].number} {hits[0].name} set to {d:%a %d %b}. You'll get a reminder that morning."
+
+    # Status or priority change on one card: "mark #10 as ghosting", "update tracker 10 to P1"
+    if ref and re.search(r"\b(mark|set|update|change|make|move)\b", low):
+        if len(hits) != 1:
+            return _which(hits, ref).replace("; ask which one", "")
+        args: dict = {"card": str(hits[0].id)}
+        rest = low.replace(ref.lower(), " ")
+        for w, st in STATUS_WORDS.items():
+            if re.search(r"\b" + w + r"\b", rest):
+                args["status"] = st
+        if m := re.search(r"\bp([1-4])\b", rest):
+            args["priority"] = f"P{m.group(1)}"
+        for i, st in enumerate(STAGES):
+            if st[3:].lower() in rest:
+                args["stage"] = i + 1
+        if len(args) > 1:
+            out = run(c, "update_card", args, actions)
+            return out.replace("Updated", "Done. Updated")
+        return (f"What should I change on #{hits[0].number} {hits[0].name}? You can set the status, priority, stage, "
+                "follow-up date or add a note.")
+
+    # Filtered views: "show me only active investors", "which ones are overdue"
+    if re.search(r"\b(show|which|who|list|only|filter|how many)\b", low):
+        f: dict = {}
+        sts = [st for w, st in STATUS_WORDS.items() if re.search(r"\b" + w + r"\b", low)]
+        if sts:
+            f["statuses"] = list(dict.fromkeys(sts))
+        if re.search(r"overdue|late|missed", low):
+            f["overdue"] = True
+        if re.search(r"due today|today", low):
+            f["due_today"] = True
+        if "needs action" in low or "need action" in low:
+            f["needs_action"] = True
+        if re.search(r"\bstar(red)?\b|\bkey investors?\b", low):
+            f["starred"] = True
+        if re.search(r"\bquiet\b|no update|stale|gone cold", low):
+            f["stale"] = True
+        if m := re.search(r"\bp([1-4])s?\b", low):
+            f["priority"] = f"P{m.group(1)}"
+        for i, st in enumerate(STAGES):
+            if st[3:].lower() in low:
+                f["stage"] = i + 1
+        if f:
+            r = json.loads(run(c, "show_tracker", f, actions))
+            return _list_reply(r["cards"], r["showing"], r["count"])
+    return None

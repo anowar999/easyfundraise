@@ -91,23 +91,20 @@ def test_refusal_falls_back(client, stub):
     assert client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()["engine"] == "template"
 
 
-def test_chat_tools_preview_then_apply(client, stub):
+def test_chat_tools_change_tracker_by_number(client, stub):
     set_tier(client, "pro")
     card = client.post("/funnel", json={"name": "Jane Doe", "firm": "Acme VC"}).json()
-    tool = NS(content=[NS(type="text", text="Let me check."),
-                       NS(type="tool_use", id="tu1", name="propose_move", input={"card_id": "Jane", "stage": 4})],
+    tool = NS(content=[NS(type="text", text="On it."),
+                       NS(type="tool_use", id="tu1", name="update_card",
+                          input={"card": f"#{card['number']}", "stage": 4, "next_contact": "2026-11-02"})],
               stop_reason="tool_use", model="claude-opus-5-5", usage=NS(input_tokens=10, output_tokens=5))
-    done = NS(content=[NS(type="text", text="I proposed moving Jane to first call.")], stop_reason="end_turn",
+    done = NS(content=[NS(type="text", text="Moved Jane to first call.")], stop_reason="end_turn",
               model="claude-opus-5-5", usage=NS(input_tokens=10, output_tokens=5))
     stub([tool, done])
-    m = client.post("/agent/chat", json={"text": "I have a call with Jane on Thursday"}).json()
-    assert m["text"].startswith("I proposed")
-    act = m["actions"][0]
-    assert act["state"] == "pending" and act["type"] == "move"  # no silent writes (AGT-05)
-    assert client.get(f"/funnel/{card['id']}").json()["stage"] == 1
-    r = client.post(f"/agent/chat/{m['id']}/actions/{act['id']}").json()
-    assert r["ok"] and client.get(f"/funnel/{card['id']}").json()["stage"] == 4
-    assert client.post(f"/agent/chat/{m['id']}/actions/{act['id']}").status_code == 409
+    m = client.post("/agent/chat", json={"text": f"I have a call with #{card['number']} on Thursday"}).json()
+    assert m["actions"][0]["type"] == "card" and m["actions"][0]["state"] == "applied"
+    got = client.get(f"/funnel/{card['id']}").json()
+    assert got["stage"] == 4 and str(got["next_contact_date"]) == "2026-11-02"
 
 
 def test_chat_without_ai_handles_reminders_and_memory(client):
