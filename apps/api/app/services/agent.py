@@ -487,7 +487,8 @@ def run_tool(db: Session, ws: Workspace, user: User, name: str, args: dict, acti
 
 
 def chat(db: Session, ws: Workspace, user: User, text: str) -> ChatMessage:
-    db.add(ChatMessage(workspace_id=ws.id, user_id=user.id, role="user", text=text[:4000]))
+    db.add(ChatMessage(workspace_id=ws.id, user_id=user.id, role="user", text=text[:4000],
+                       created_at=datetime.now(UTC)))  # explicit: now() is transaction time, both rows would tie
     db.flush()
     history = db.scalars(select(ChatMessage).where(ChatMessage.workspace_id == ws.id, ChatMessage.user_id == user.id)
                          .order_by(ChatMessage.created_at.desc()).limit(16)).all()[::-1]
@@ -521,7 +522,8 @@ def chat(db: Session, ws: Workspace, user: User, text: str) -> ChatMessage:
             except Exception as e:  # report tool errors to the model instead of failing the chat
                 results.append({"type": "tool_result", "tool_use_id": b.id, "content": f"Error: {e}", "is_error": True})
         messages.append({"role": "user", "content": results})
-    msg = ChatMessage(workspace_id=ws.id, user_id=user.id, role="assistant", text=reply or "Done.", actions=actions)
+    msg = ChatMessage(workspace_id=ws.id, user_id=user.id, role="assistant", text=reply or "Done.", actions=actions,
+                      created_at=datetime.now(UTC))
     db.add(msg)
     db.commit()
     return msg

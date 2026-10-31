@@ -115,6 +115,8 @@ def test_chat_without_ai_handles_reminders_and_memory(client):
     assert m["actions"][0]["type"] == "reminder"
     client.post("/agent/chat", json={"text": "remember we closed a pilot with NHS Trust"})
     assert any("NHS" in x["text"] for x in client.get("/agent/memory").json()["items"])
+    roles = [x["role"] for x in client.get("/agent/chat").json()["items"]]
+    assert roles == ["user", "assistant", "user", "assistant"]  # each question shows above its answer
 
 
 def test_meeting_brief_template(client):

@@ -79,5 +79,6 @@ body { background: var(--surface); color: var(--ink); font-family: var(--font-sa
 }
 
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-top { padding-top: env(safe-area-inset-top); }
 .scrollbar-none::-webkit-scrollbar { display: none; }
 .scrollbar-none { scrollbar-width: none; }

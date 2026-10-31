@@ -39,7 +39,7 @@ export async function api<T = any>(path: string, init: RequestInit & { json?: un
     } catch {
       p = { status: res.status, code: "EF-NET", title: res.statusText || "Request failed" };
     }
-    if (res.status === 401 && typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
+    if (res.status === 401 && !p.mfa && typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
       location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
     }
     throw new ApiError(p);

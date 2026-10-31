@@ -2,20 +2,26 @@
 
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bell, Home, KanbanSquare, LogOut, Search, Settings, Shield, Sparkles } from "lucide-react";
+import { Bell, BarChart3, Globe, Home, KanbanSquare, LogOut, Megaphone, Menu, Search, Settings, Shield, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, getWorkspace, setWorkspace } from "@/lib/api";
-import { ToastProvider } from "./ui";
+import { AgentChat } from "./AgentChat";
+import { Sheet, ToastProvider } from "./ui";
 
 const NAV = [
   { href: "/app", label: "Home", icon: Home, exact: true },
   { href: "/app/investors", label: "Investors", icon: Search },
   { href: "/app/funnel", label: "Funnel", icon: KanbanSquare },
+  { href: "/app/outreach", label: "Outreach", icon: BarChart3 },
+  { href: "/app/updates", label: "Updates", icon: Megaphone },
+  { href: "/app/data-room", label: "Data room", icon: Globe },
   { href: "/app/notifications", label: "Alerts", icon: Bell },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
+// Phones: four primary tabs + "More" (the rest live in a sheet)
+const TABS = ["/app", "/app/investors", "/app/funnel", "/app/notifications"];
 
 export type Me = {
   id: string;
@@ -26,7 +32,31 @@ export type Me = {
   is_admin: boolean;
   signature: string;
   workspaces: { id: string; name: string; role: string; tier: string }[];
+  notify_prefs: Record<string, any>;
+  mfa_enabled: boolean;
+  mfa_required: boolean;
 };
+
+function WorkspaceSwitcher({ me }: { me: Me }) {
+  if (me.workspaces.length < 2) return null;
+  return (
+    <select
+      className="input h-9 text-sm"
+      aria-label="Workspace"
+      value={getWorkspace() ?? me.workspaces[0].id}
+      onChange={(e) => {
+        setWorkspace(e.target.value);
+        location.href = "/app";
+      }}
+    >
+      {me.workspaces.map((w) => (
+        <option key={w.id} value={w.id}>
+          {w.name}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 export function Providers({ children }: { children: ReactNode }) {
   const [client] = useState(
@@ -56,6 +86,7 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
   const router = useRouter();
   const me = useMe();
   const unread = useUnread();
+  const [more, setMore] = useState(false);
 
   useEffect(() => {
     const ws = me.data?.workspaces;
@@ -109,6 +140,7 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
           )}
         </nav>
         <div className="mt-auto space-y-3">
+          {me.data && <WorkspaceSwitcher me={me.data} />}
           <div className="rounded-lg bg-brand/5 border border-brand/20 p-3 text-xs">
             <div className="flex items-center gap-1.5 font-medium text-brand">
               <Sparkles size={14} /> Your agent
@@ -152,10 +184,12 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
         <div className="mx-auto max-w-6xl px-4 py-4 md:py-8">{children}</div>
       </main>
 
+      {!admin && <AgentChat />}
+
       {/* Mobile bottom tab bar */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-card/95 backdrop-blur border-t border-line safe-bottom" aria-label="Main">
         <div className="grid grid-cols-5">
-          {NAV.map(({ href, label, icon: Icon, exact }) => (
+          {NAV.filter((n) => TABS.includes(n.href)).map(({ href, label, icon: Icon, exact }) => (
             <Link
               key={href}
               href={href}
@@ -170,8 +204,35 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
               )}
             </Link>
           ))}
+          <button
+            onClick={() => setMore(true)}
+            className={clsx("flex flex-col items-center gap-0.5 py-2 text-[11px]", NAV.some((n) => !TABS.includes(n.href) && path.startsWith(n.href)) ? "text-brand" : "text-muted")}
+          >
+            <Menu size={22} />
+            More
+          </button>
         </div>
       </nav>
+      <Sheet open={more} onClose={() => setMore(false)} title="More">
+        <div className="grid grid-cols-2 gap-2">
+          {NAV.filter((n) => !TABS.includes(n.href)).map(({ href, label, icon: Icon }) => (
+            <Link key={href} href={href} onClick={() => setMore(false)} className="card p-4 flex items-center gap-2 text-sm">
+              <Icon size={18} className="text-brand" /> {label}
+            </Link>
+          ))}
+          {me.data?.is_admin && (
+            <Link href="/admin" onClick={() => setMore(false)} className="card p-4 flex items-center gap-2 text-sm">
+              <Shield size={18} className="text-brand" /> Admin
+            </Link>
+          )}
+        </div>
+        {me.data && me.data.workspaces.length > 1 && (
+          <div className="mt-4">
+            <div className="label">Workspace</div>
+            <WorkspaceSwitcher me={me.data} />
+          </div>
+        )}
+      </Sheet>
     </div>
   );
 }

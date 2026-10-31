@@ -28,9 +28,27 @@ data/private investor datasets (git-ignored, never committed)
 | Company profile + deck PDF text extraction, agent instructions, exclusion list | DECK-01, AGT-01, SEQ-06 |
 | Admin: overview, users (suspend, tier, trial), packages, Error Center → tasks, task board, removal requests, audit log | §15, §16, §18.3 |
 | Public: landing page, legal pages, investor removal/update form, robots.txt, sitemap.xml, llms.txt | §19.5, §20.10, DATA-04 |
+| **Gmail sending** from the founder's own mailbox: progressive consent, encrypted tokens, threaded follow-ups, warm-up ramp, per-domain cap, pacing, bounce/opt-out handling | GML-01..05, SEQ-09 |
+| **Reply detection** and classification (positive, pass, opt-out, out-of-office, deck request) that stops the sequence and moves the card | GML-03, AGT-03 |
+| Open tracking (with proxy/prefetch filtering) and an Outreach page with reply rates by email, hook and approach | TRK-01..03 |
+| **Claude agent**: grounded drafting with fact ids and lint, chat that searches and proposes changes you apply with a tap, memory, meeting briefs, morning brief, positioning advice, feedback | AGT-01..08, §9.4 |
+| **Data room** at `/r/<slug>`: editor, access modes (public / email / password / personal link), gated documents, per-viewer section analytics, version history, noindex by default | §14, DR-01..05 |
+| **Round updates** (first close, lead secured, oversubscribed, closing Friday) naming only backers who agreed, and **investor updates** with engagement | §9.5, FOMO-01..03, §12 |
+| Team invites and roles, multiple workspaces, signed-in devices, admin two-factor, Stripe Checkout / portal / webhooks | AUTH-05..08, §6.3 |
 
-Not yet built (next phases): Gmail OAuth sending and reply detection, open tracking, LLM drafting and agent
-chat, learning loop, data rooms, IR newsletters, Stripe, SEO engine.
+Not built yet: transactional email (invites and digests are shared as links / shown in-app), Gmail Pub/Sub push
+(replies are polled every few minutes), Google Calendar, Postgres row-level security, live web research in
+briefs (they use stored data), S3 for documents (stored in Postgres), SEO engine.
+
+### Turning on the paid integrations
+
+| Feature | Set |
+|---|---|
+| Claude drafting, chat, briefs | `ANTHROPIC_API_KEY` (and `EF_AI_ENABLED=true`, the default). Without it everything falls back to templates. |
+| Gmail | Enable the Gmail API on the same Google OAuth client and add `<EF_WEB_ORIGIN>/api/gmail/callback` as a redirect URI. `EF_GMAIL_MODE=fake` gives a test mailbox in dev. |
+| Open tracking | `EF_TRACKING_BASE_URL` (public URL of the API) |
+| Token encryption | `EF_TOKEN_KEY` (32-byte base64). Required in prod. |
+| Stripe | `EF_STRIPE_SECRET_KEY`, `EF_STRIPE_WEBHOOK_SECRET`, then paste price ids per plan in Admin → Packages |
 
 ## Run locally
 
@@ -51,7 +69,7 @@ python -m app.cli import-investors --directory ../../data/private/ALL_investors_
                                    --enrichment ../../data/private/enriched_master.jsonl
 #   (no dataset? python -m app.cli demo-investors --count 200)
 uvicorn app.main:app --reload --port 8000
-python -m app.worker              # separate terminal: fires reminders
+python -m app.worker              # separate terminal: reminders, sending, replies, briefs
 
 # 3. Web
 cd apps/web && npm install && npm run dev   # http://localhost:3000
@@ -69,7 +87,7 @@ URI, and set `EF_GOOGLE_CLIENT_ID` / `EF_GOOGLE_CLIENT_SECRET`. Dev sign-in is a
 ## Tests
 
 ```bash
-cd apps/api && createdb easyfundraise_test && pytest     # 32 tests: tiers, gating, isolation, funnel, import, outreach
+cd apps/api && createdb easyfundraise_test && pytest     # 54 tests: tiers, isolation, funnel, import, Gmail, agent, data room, updates, billing
 cd apps/web && npx tsc --noEmit && npm run build
 ```
 

@@ -289,6 +289,16 @@ def _public_room(db: Session, slug: str) -> DataRoom:
     return room
 
 
+@public.get("/{slug}/meta")
+def room_meta(slug: str, db: Session = Depends(get_db)):
+    """For the page <head>: title and whether search engines may index (DR-05). Does not log a view."""
+    room = _public_room(db, slug)
+    hero = room.content.get("hero", {})
+    locked = room.access != "public"
+    return {"title": hero.get("title", ""), "one_liner": "" if locked else hero.get("one_liner", ""),
+            "indexable": room.indexable and not locked}
+
+
 @public.get("/{slug}")
 def view_room(slug: str, request: Request, response: Response, k: str = "", db: Session = Depends(get_db)):
     rate_limit(db, f"room:{client_ip(request)}", 120, 60)

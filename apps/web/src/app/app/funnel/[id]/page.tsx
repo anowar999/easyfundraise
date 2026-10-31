@@ -6,6 +6,7 @@ import { ArrowLeft, Bell, Check, Copy, ExternalLink, MessageCircle, Phone, Send,
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { MeetingBrief, RoomActivity } from "@/components/CardExtras";
 import { ErrorState, Field, ListSkeleton, Sheet, StatusBadge, errText, useToast } from "@/components/ui";
 import { api, fmtDate, timeAgo } from "@/lib/api";
 import type { Card, FunnelMeta } from "@/lib/types";
@@ -14,7 +15,7 @@ type Event = { id: string; kind: string; body: string; meta: Record<string, unkn
 type Detail = Card & { events: Event[]; reminders: { id: string; title: string; due_at: string }[] };
 type Suggestion = { field: string; value: string | number; reason: string };
 
-const EDITABLE = ["name", "firm", "investor_type", "priority", "status", "stage", "can_lead", "ticket_size", "agreed_size", "instrument", "contact_method", "email", "referrer", "next_contact_date", "call_at", "investor_timezone"] as const;
+const EDITABLE = ["name", "firm", "investor_type", "priority", "status", "stage", "can_lead", "ticket_size", "agreed_size", "instrument", "contact_method", "email", "referrer", "next_contact_date", "call_at", "investor_timezone", "shareable"] as const;
 
 function toLocalInput(iso: string | null) {
   if (!iso) return "";
@@ -220,6 +221,9 @@ export default function CardPage() {
             )}
           </div>
 
+          {(c.stage >= 3 || c.call_at) && <MeetingBrief cardId={c.id} />}
+          <RoomActivity cardId={c.id} />
+
           {c.reminders.length > 0 && (
             <div className="card p-4">
               <h2 className="font-semibold mb-2 flex items-center gap-2">
@@ -247,9 +251,12 @@ export default function CardPage() {
             <ol className="space-y-3">
               {c.events.map((e) => (
                 <li key={e.id} className="flex gap-3">
-                  <span className={clsx("mt-1.5 w-2 h-2 rounded-full shrink-0", e.kind === "note" ? "bg-brand" : "bg-line")} />
+                  <span className={clsx("mt-1.5 w-2 h-2 rounded-full shrink-0", e.kind === "note" ? "bg-brand" : e.kind === "reply" ? "bg-green-500" : "bg-line")} />
                   <div className="min-w-0">
-                    <div className={clsx("text-sm whitespace-pre-wrap break-words", e.kind !== "note" && "text-muted")}>{e.body}</div>
+                    <div className={clsx("text-sm whitespace-pre-wrap break-words", e.kind !== "note" && e.kind !== "reply" && "text-muted")}>
+                      {e.kind === "reply" && <b className="text-green-700 dark:text-green-400">Reply: </b>}
+                      {e.body}
+                    </div>
                     <div className="text-xs text-muted">{timeAgo(e.created_at)}</div>
                   </div>
                 </li>
@@ -330,6 +337,12 @@ export default function CardPage() {
               <input className="input" disabled value={fmtDate(c.last_contacted_at, { day: "numeric", month: "short", year: "numeric" }) || "—"} />
             </Field>
           </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-0.5 accent-[var(--brand)]" checked={Boolean(form.shareable)} onChange={(e) => setForm((f) => ({ ...f, shareable: e.target.checked }))} />
+            <span>
+              OK to name in round updates <span className="text-muted block text-xs">Only tick this once they have agreed to be named publicly.</span>
+            </span>
+          </label>
           <div className="flex gap-2 pt-1">
             <button className="btn-primary flex-1" disabled={!dirty || patch.isPending}>
               Save changes

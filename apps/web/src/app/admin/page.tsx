@@ -5,7 +5,7 @@ import clsx from "clsx";
 import { useState } from "react";
 import { PageHeader } from "@/components/AppShell";
 import { ErrorState, ListSkeleton, errText, useToast } from "@/components/ui";
-import { api, qs, timeAgo } from "@/lib/api";
+import { api, ApiError, qs, timeAgo } from "@/lib/api";
 
 const TABS = ["Overview", "Users", "Packages", "Errors", "Tasks", "Investor requests", "Audit log"] as const;
 
@@ -17,7 +17,8 @@ function Overview() {
   const tiles: [string, unknown][] = [
     ["Users", d.users], ["Signups (7d)", d.signups_7d], ["Investors", d.investors], ["Researched", d.investors_enriched],
     ["Funnel cards", d.funnel_cards], ["Searches (7d)", d.searches_7d], ["Reveals (7d)", d.reveals_7d], ["Open errors", d.open_errors],
-    ["Removal requests", d.open_removal_requests],
+    ["Removal requests", d.open_removal_requests], ["Emails sent (7d)", d.emails_sent_7d], ["Replies (7d)", d.replies_7d],
+    ["Gmail connected", d.gmail_connected], ["AI tokens (month)", d.ai_tokens_month], ["MRR", `$${((d.mrr_cents ?? 0) / 100).toFixed(0)}`],
   ];
   return (
     <div className="space-y-4">
@@ -105,7 +106,7 @@ function Packages() {
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {q.data?.items.map((t) => {
         const key = t.code;
-        const text = edit[key] ?? JSON.stringify({ name: t.name, price_monthly: t.price_monthly, price_annual: t.price_annual, limits: t.limits, features: t.features, sort: t.sort, visible: t.visible }, null, 2);
+        const text = edit[key] ?? JSON.stringify({ name: t.name, price_monthly: t.price_monthly, price_annual: t.price_annual, stripe_price_monthly: t.stripe_price_monthly ?? "", stripe_price_annual: t.stripe_price_annual ?? "", limits: t.limits, features: t.features, sort: t.sort, visible: t.visible }, null, 2);
         return (
           <div key={key} className="card p-4">
             <div className="flex items-center justify-between mb-2">
@@ -264,8 +265,51 @@ function Audit() {
   );
 }
 
+/** AUTH-08: admin pages need a fresh two-factor check. */
+function MfaGate({ onDone }: { onDone: () => void }) {
+  const toast = useToast();
+  const [setup, setSetup] = useState<{ secret: string; otpauth: string } | null>(null);
+  const [code, setCode] = useState("");
+  const start = useMutation({
+    mutationFn: () => api<{ secret: string; otpauth: string }>("/auth/mfa/setup", { method: "POST" }),
+    onSuccess: setSetup,
+    onError: (e) => toast(errText(e), "err"),
+  });
+  const verify = useMutation({
+    mutationFn: () => api("/auth/mfa/verify", { method: "POST", json: { code } }),
+    onSuccess: onDone,
+    onError: (e) => toast(errText(e), "err"),
+  });
+  return (
+    <div className="card p-6 max-w-sm space-y-3">
+      <h2 className="font-semibold">Two-factor check</h2>
+      <p className="text-sm text-muted">Enter the 6-digit code from your authenticator app. First time here? Set it up first.</p>
+      {setup && (
+        <div className="text-xs rounded-lg border border-line p-3 break-all">
+          Add this key to your authenticator app: <b className="font-mono">{setup.secret}</b>
+          <a className="block text-brand mt-1" href={setup.otpauth}>Open in authenticator</a>
+        </div>
+      )}
+      <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); verify.mutate(); }}>
+        <input className="input flex-1 font-mono tracking-widest" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} aria-label="Code" />
+        <button className="btn-primary" disabled={code.length !== 6 || verify.isPending}>Verify</button>
+      </form>
+      {!setup && <button className="btn-ghost btn-sm" onClick={() => start.mutate()}>Set up two-factor</button>}
+    </div>
+  );
+}
+
 export default function Admin() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("Overview");
+  const qc = useQueryClient();
+  const gate = useQuery<Record<string, any>>({ queryKey: ["admin", "overview"], queryFn: () => api("/admin/overview"), retry: false });
+  if (gate.error instanceof ApiError && gate.error.problem.mfa)
+    return (
+      <>
+        <PageHeader title="Admin" />
+        <MfaGate onDone={() => qc.invalidateQueries({ queryKey: ["admin"] })} />
+      </>
+    );
   return (
     <>
       <PageHeader title="Admin" sub="Configure the platform without a deploy." />

@@ -46,6 +46,13 @@ def test_data_room_magic_link_and_analytics(client):
     assert v.get(f"/public/rooms/{room['slug']}").json()["locked"] is True
     # version history
     assert len(client.get("/data-room").json()["versions"]) == 1
+    # <head> metadata: locked rooms never expose the one-liner or ask to be indexed, and don't log a view
+    n_views = len(client.get("/data-room/views").json()["items"])
+    meta = anon().get(f"/public/rooms/{room['slug']}/meta").json()
+    assert meta == {"title": "Room Co", "one_liner": "", "indexable": False}
+    client.put("/data-room", json={"access": "public", "indexable": True})
+    assert anon().get(f"/public/rooms/{room['slug']}/meta").json()["indexable"] is True
+    assert len(client.get("/data-room/views").json()["items"]) == n_views
 
 
 def test_data_room_password_and_email(client):

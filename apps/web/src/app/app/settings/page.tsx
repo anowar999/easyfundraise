@@ -6,10 +6,10 @@ import { useEffect, useRef, useState } from "react";
 import { PageHeader, useMe } from "@/components/AppShell";
 import { Field, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
+import { AgentMemoryList, BillingPlans, Devices, GmailSection, NewWorkspace, NotificationPrefs, OutreachSettings, Positioning, Team } from "./extras";
 
 type Profile = { company_name: string; one_liner: string; sectors: string[]; stage: string; geography: string; round_size: string; instrument: string; traction: string; business_model: string; shareable: Record<string, boolean>; deck_filename: string };
 type WS = { name: string; agent_name: string; tier: { code: string; name: string; limits: Record<string, number> }; trial_ends_at: string | null; trial_expired: boolean; usage: Record<string, number> };
-type Tier = { code: string; name: string; price_monthly: number; limits: Record<string, number> };
 
 function Section({ id, title, sub, children }: { id: string; title: string; sub?: string; children: React.ReactNode }) {
   return (
@@ -244,7 +244,6 @@ function Account() {
 
 function Plan() {
   const ws = useQuery<WS>({ queryKey: ["workspace"], queryFn: () => api("/workspace") });
-  const tiers = useQuery<Tier[]>({ queryKey: ["tiers"], queryFn: () => api("/workspace/tiers") });
   if (!ws.data) return <ListSkeleton rows={1} />;
   const u = ws.data.usage;
   const l = ws.data.tier.limits;
@@ -272,22 +271,7 @@ function Plan() {
           <div className="font-mono">{l.emails_day ?? 0}</div>
         </div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {tiers.data?.filter((t) => t.code !== "trial").map((t) => (
-          <div key={t.code} className="rounded-lg border border-line p-4">
-            <div className="font-semibold">{t.name}</div>
-            <div className="text-2xl font-bold mt-1">${(t.price_monthly / 100).toFixed(0)}<span className="text-sm font-normal text-muted">/mo</span></div>
-            <ul className="text-xs text-muted mt-2 space-y-0.5">
-              <li>{t.limits.reveals_month} contact reveals / month</li>
-              <li>{t.limits.emails_day} emails / day</li>
-              <li>{t.limits.workspaces} workspace{t.limits.workspaces > 1 ? "s" : ""}</li>
-            </ul>
-            <a className="btn-ghost btn-sm w-full mt-3" href={`mailto:hello@easyfundraise.com?subject=Upgrade to ${t.name}`}>
-              Request upgrade
-            </a>
-          </div>
-        ))}
-      </div>
+      <BillingPlans />
     </div>
   );
 }
@@ -308,6 +292,30 @@ export default function Settings() {
         </Section>
         <Section id="account" title="Signature & timezone">
           <Account />
+        </Section>
+        <Section id="gmail" title="Gmail" sub="Outreach sends from your own mailbox.">
+          <GmailSection />
+        </Section>
+        <Section id="outreach" title="Sending & automations">
+          <OutreachSettings />
+        </Section>
+        <Section id="positioning" title="Positioning advice" sub="What your best-matched investors look for.">
+          <Positioning />
+        </Section>
+        <Section id="memory" title="What your agent remembers" sub="Facts it uses in drafts and briefs. Remove anything that's out of date.">
+          <AgentMemoryList />
+        </Section>
+        <Section id="notifications" title="Notifications" sub="What shows up in your alerts.">
+          <NotificationPrefs />
+        </Section>
+        <Section id="team" title="Team" sub="Invite a cofounder or advisor to this workspace.">
+          <Team />
+        </Section>
+        <Section id="workspaces" title="Another company or raise" sub="Each workspace has its own funnel, data room and emails.">
+          <NewWorkspace />
+        </Section>
+        <Section id="devices" title="Signed-in devices">
+          <Devices />
         </Section>
         <Section id="plan" title="Plan & usage">
           <Plan />
