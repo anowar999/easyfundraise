@@ -1,0 +1,65 @@
+{
+  "join_key": "linkedin (fallback: normalized name + email)",
+  "directory_dataset": {
+    "file": "ALL_investors_merged.csv",
+    "grain": "one row per unique investor",
+    "fields": {
+      "name": "full name",
+      "title": "job title (from source; may be stale)",
+      "company": "listed company (often NOT the real investing vehicle; see current_firm in enrichment)",
+      "industries": "comma-separated sector tags (investor appears under several)",
+      "industry_count": "number of industries",
+      "stages": "stage tags from source (UNRELIABLE for fit; prefer enrichment focus_stages)",
+      "location": "city, region, country",
+      "email": "contact email (blank if none)",
+      "linkedin": "LinkedIn URL (join key; present on all rows)",
+      "x": "X/Twitter URL",
+      "facebook": "Facebook URL",
+      "portfolio_sample": "up to 3 sample portfolio companies (from source)",
+      "more_portfolio": "count of additional portfolio companies beyond the sample",
+      "check_size": "check size from source (UNRELIABLE; prefer enrichment typical_check_size)",
+      "photo_url": "headshot URL (blank if none/placeholder)"
+    }
+  },
+  "enrichment_dataset": {
+    "files": ["enriched_master.jsonl (authoritative, nested)", "Investor_enrichment.csv (flattened)"],
+    "grain": "one row per enriched investor; join to directory via wid->linkedin",
+    "list_fields_as_json": ["focus_sectors", "focus_stages", "notable_portfolio", "recent_investments_12mo", "recent_news", "public_content", "personalization_hooks", "sources"],
+    "fields": {
+      "wid": "stable enrichment id; maps to a directory row",
+      "name": "full name",
+      "identity_confidence": "high|medium|low — how sure the match is",
+      "current_firm": "real current investing vehicle (may differ from directory company)",
+      "firm_website": "URL",
+      "firm_type": "angel|operator-angel|angel syndicate|seed VC|VC fund|growth equity|PE/buyout|CVC|family office|accelerator|wealth manager|other",
+      "role_at_firm": "role (distinguish deal partner vs ops/finance/IR)",
+      "about": "2-4 sentence professional bio",
+      "investment_thesis": "1-3 sentences, their words where possible",
+      "focus_sectors": "researched sectors (list)",
+      "focus_stages": "researched stages (list)",
+      "geography_focus": "regions they invest in",
+      "typical_check_size": "with source basis, or unknown",
+      "fund_size_or_aum": "text or unknown",
+      "leads_rounds": "yes|no|sometimes|unknown",
+      "instrument_preference": "SAFE|priced equity|convertible note|mixed|unknown",
+      "investments_per_year_estimate": "number/range with basis, or unknown",
+      "decision_speed": "public signal or unknown",
+      "notable_portfolio": "best-known companies (list)",
+      "recent_investments_12mo": "list of {company,date,round,role,source_url}",
+      "last_known_investment_date": "YYYY-MM or ''",
+      "active_last_12mo": "yes|no|unknown (yes only with a dated deal in last 12mo; unknown != inactive)",
+      "value_add": "what they bring beyond money",
+      "recent_news": "list of {headline,date,source,url,summary}",
+      "public_content": "list of {title,type,url,key_point}",
+      "personalization_hooks": "3-5 short factual hooks for email personalization",
+      "best_email_angle": "what would most likely get a reply",
+      "sources": "URLs actually used",
+      "notes": "caveats, conflicts, and tag-mismatch flags"
+    }
+  },
+  "derived_fields_to_compute": {
+    "seed_fit": "bool — is this a genuine pre-seed/seed check-writer (from firm_type + role_at_firm)",
+    "investor_type": "normalized category from firm_type",
+    "is_decision_maker": "bool — role_at_firm is an investing partner, not ops/finance/IR"
+  }
+}

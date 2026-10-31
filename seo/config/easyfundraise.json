@@ -1,0 +1,44 @@
+{
+  "domain": "easyfundraise.com",
+  "environments": { "prod": "https://easyfundraise.com", "uat": "https://uat.easyfundraise.com", "dev": "https://dev.easyfundraise.com" },
+  "company_name": "EasyFundraise",
+  "business_description": "AI-powered fundraising platform that helps founders find investors, contact them with personalised outreach, manage their investor pipeline and raise capital.",
+  "industry": "Startup fundraising software / investor discovery",
+  "products": [
+    "Investor directory (12,000+ verified contacts)",
+    "Investor discovery and filtering",
+    "AI-personalised investor emails and 3-step follow-up sequences",
+    "Reply and engagement tracking",
+    "Investor CRM and fundraising pipeline",
+    "Personal AI fundraising agent",
+    "Data room pages",
+    "Investor relations newsletters and updates"
+  ],
+  "target_audience": "Founders raising angel, pre-seed and seed rounds; fractional CFOs and fundraising consultants",
+  "geographic_markets": ["US", "UK", "EU", "India", "Southeast Asia", "Global"],
+  "languages": ["en"],
+  "brand_voice": "Direct, confident, founder-to-founder, practical, zero fluff; operator who has raised before",
+  "primary_keywords": [
+    "find angel investors", "find pre-seed investors", "find seed investors", "investor database for startups",
+    "how to cold email investors", "investor CRM", "fundraising software", "AI fundraising platform",
+    "investor outreach software", "how to raise pre-seed funding", "how to raise seed funding"
+  ],
+  "competitors": ["roundfunded.com", "<competitor-2>", "<competitor-3>", "<competitor-4>", "<competitor-5>", "<competitor-6>"],
+  "conversion_objectives": ["registration", "trial_start", "deck_upload", "first_email_sent", "paid_subscription"],
+  "cta_preferences": [
+    "Find investors for your startup", "Explore 12,000+ investor contacts", "Generate your first investor email",
+    "Start managing your fundraising pipeline", "Automate investor follow-ups", "Discover your best-fit investors"
+  ],
+  "cms_integration": { "type": "internal", "api": "/api/seo/publish", "render": "nextjs-isr" },
+  "analytics_integrations": { "gsc": true, "ga4": true, "bing_wmt": true, "ahrefs": false, "semrush": false },
+  "publishing_permissions": {
+    "auto_publish": ["educational_article", "internal_link_update", "metadata_update"],
+    "requires_human": ["legal_or_financial_claim", "sensitive_fundraising_advice", "investor_endorsement", "unverified_statistic", "public_investor_data_change", "architecture_change", "redirect_or_indexing_change"]
+  },
+  "content_quality_rules": {
+    "no_fabricated_statistics": true, "sources_required": true, "ai_tell_linter": true,
+    "min_internal_links": 3, "max_exact_match_anchor_ratio": 0.2, "require_cta": true, "noindex_thin_pages": true
+  },
+  "technical": { "robots": true, "sitemap": true, "llms_txt": true, "schema": ["Organization", "WebSite", "SoftwareApplication", "Article", "BreadcrumbList"], "core_web_vitals_budget": { "lcp_ms": 2500, "inp_ms": 200, "cls": 0.1 } },
+  "reporting": { "weekly": true, "monthly": true, "notify_channels": ["admin_inbox", "email"] }
+}
