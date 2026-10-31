@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Card } from "@/lib/types";
 
-export const REJECTION_REASONS = ["Not our stage", "Not our sector", "Too early on traction", "Market too small", "Team concerns",
+export const REJECTION_REASONS = ["Not our stage", "Not our sector", "Geography not covered", "Too early on traction", "Market too small", "Team concerns",
   "Valuation / terms", "Fund timing", "Competitive conflict", "No reason given"];
 
 export type Change = Partial<Pick<Card, "stage" | "status" | "priority" | "starred" | "star_reason" | "next_contact_date">>;
