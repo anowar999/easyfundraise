@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { BadgeCheck, Check, Plus, Send } from "lucide-react";
+import { BadgeCheck, Check, MailPlus, Plus } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
@@ -88,7 +88,7 @@ export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "
       title="Add to outreach: drafts personalised emails for you to review. Nothing is sent."
       className={clsx(iconBtn(size), "border-line bg-card text-ink hover:border-brand hover:text-brand hover:bg-brand/5", m.isPending && "animate-pulse")}
     >
-      <Send size={16} />
+      <MailPlus size={17} />
     </button>
   );
 }
