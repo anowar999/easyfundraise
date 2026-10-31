@@ -50,7 +50,21 @@ briefs (they use stored data), S3 for documents (stored in Postgres), SEO engine
 | Token encryption | `EF_TOKEN_KEY` (32-byte base64). Required in prod. |
 | Stripe | `EF_STRIPE_SECRET_KEY`, `EF_STRIPE_WEBHOOK_SECRET`, then paste price ids per plan in Admin → Packages |
 
-## Run locally
+## Run with Docker (easiest)
+
+Needs only [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
+```bash
+cp apps/api/.env.example apps/api/.env      # add ANTHROPIC_API_KEY and EF_ADMIN_EMAILS=you@example.com
+docker compose -f infra/docker-compose.yml up -d --build
+docker compose -f infra/docker-compose.yml exec api python -m app.cli demo-investors --count 200
+open http://localhost:3000                  # use "Sign in with email (dev)"
+```
+
+This starts Postgres, the API, the worker (sending, replies, reminders, briefs) and the web app. Stop with
+`docker compose -f infra/docker-compose.yml down` (add `-v` to wipe the database).
+
+## Run locally without Docker
 
 Prereqs: Python 3.12+, Node 22, PostgreSQL 16 (or Docker).
 
@@ -74,8 +88,6 @@ python -m app.worker              # separate terminal: reminders, sending, repli
 # 3. Web
 cd apps/web && npm install && npm run dev   # http://localhost:3000
 ```
-
-Or everything in Docker: `docker compose -f infra/docker-compose.yml up --build`.
 
 The importer is idempotent: re-run it whenever the datasets grow. Removed investors stay suppressed.
 

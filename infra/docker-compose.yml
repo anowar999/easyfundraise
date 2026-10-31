@@ -1,4 +1,6 @@
-# Local stack: docker compose -f infra/docker-compose.yml up --build
+# Local stack: docker compose -f infra/docker-compose.yml up --build   ->  http://localhost:3000
+# Your settings (ANTHROPIC_API_KEY, EF_ADMIN_EMAILS, ...) go in apps/api/.env; they override .env.example.
+# Demo investors: docker compose -f infra/docker-compose.yml exec api python -m app.cli demo-investors --count 200
 # Then load investors (files in data/private/, never committed):
 #   docker compose -f infra/docker-compose.yml exec api python -m app.cli import-investors \
 #     --directory /data/ALL_investors_merged.csv --enrichment /data/enriched_master.jsonl
@@ -11,7 +13,6 @@ services:
       POSTGRES_USER: ef
       POSTGRES_PASSWORD: ef
       POSTGRES_DB: easyfundraise
-    ports: ["5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ef -d easyfundraise"]
@@ -20,7 +21,9 @@ services:
 
   api:
     build: ../apps/api
-    env_file: [../apps/api/.env.example]
+    env_file:
+      - ../apps/api/.env.example
+      - { path: ../apps/api/.env, required: false }  # your keys override the defaults
     environment:
       EF_DATABASE_URL: postgresql+psycopg://ef:ef@db:5432/easyfundraise
       EF_WEB_ORIGIN: http://localhost:3000
@@ -32,7 +35,9 @@ services:
   worker:
     build: ../apps/api
     command: ["python", "-m", "app.worker"]
-    env_file: [../apps/api/.env.example]
+    env_file:
+      - ../apps/api/.env.example
+      - { path: ../apps/api/.env, required: false }  # your keys override the defaults
     environment:
       EF_DATABASE_URL: postgresql+psycopg://ef:ef@db:5432/easyfundraise
     depends_on:
