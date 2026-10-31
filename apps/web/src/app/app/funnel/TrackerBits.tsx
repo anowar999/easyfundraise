@@ -84,17 +84,18 @@ const ICON = {
 /** "What needs you" tray at the top of the tracker. Each line opens that investor. */
 export function ActionTray({ cards, onOpen }: { cards: Card[]; onOpen: (id: string) => void }) {
   const items = todos(cards);
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState<boolean | null>(null); // null = automatic: open only when 3 or fewer
+  const expanded = open ?? items.length <= 3;
   if (!items.length)
     return (
       <div className="card px-4 py-3 mb-4 text-sm text-muted flex items-center gap-2">
         <Bell size={16} /> Nothing needs you right now.
       </div>
     );
-  const shown = open ? items.slice(0, 8) : [];
+  const shown = expanded ? items : [];
   return (
     <div className="card mb-4 overflow-hidden border-amber-300/60">
-      <button className="w-full flex items-center gap-2 px-4 py-3 text-sm bg-amber-50/70" onClick={() => setOpen((x) => !x)} aria-expanded={open}>
+      <button className="w-full flex items-center gap-2 px-4 py-3 text-sm bg-amber-50/70" onClick={() => setOpen(!expanded)} aria-expanded={expanded}>
         <Bell size={16} className="text-amber-600" />
         <b>
           {items.length} thing{items.length > 1 ? "s" : ""} need{items.length > 1 ? "" : "s"} you
@@ -102,10 +103,10 @@ export function ActionTray({ cards, onOpen }: { cards: Card[]; onOpen: (id: stri
         <span className="text-muted hidden sm:inline">
           · {["overdue", "call", "today", "stale"].map((k) => [k, items.filter((i) => i.kind === k).length] as const).filter(([, n]) => n).map(([k, n]) => `${n} ${k === "stale" ? "quiet 7+ days" : k === "call" ? "calls soon" : k === "today" ? "due today" : "overdue"}`).join(" · ")}
         </span>
-        <ChevronDown size={16} className={clsx("ml-auto text-muted transition-transform", open && "rotate-180")} />
+        <ChevronDown size={16} className={clsx("ml-auto text-muted transition-transform", expanded && "rotate-180")} />
       </button>
       {shown.length > 0 && (
-        <ul className="divide-y divide-line">
+        <ul className="divide-y divide-line max-h-72 overflow-y-auto">
           {shown.map((t) => (
             <li key={t.card.id + t.kind}>
               <button className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left hover:bg-surface" onClick={() => onOpen(t.card.id)}>
@@ -117,7 +118,6 @@ export function ActionTray({ cards, onOpen }: { cards: Card[]; onOpen: (id: stri
               </button>
             </li>
           ))}
-          {items.length > shown.length && <li className="px-4 py-2 text-xs text-muted">and {items.length - shown.length} more</li>}
         </ul>
       )}
     </div>
