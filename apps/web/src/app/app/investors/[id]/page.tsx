@@ -2,10 +2,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowLeft, BadgeCheck, ChevronLeft, ChevronRight, ExternalLink, Flag, Globe, KanbanSquare, Lock, Mail, Newspaper, Plus, RefreshCw, Sparkles, Unlock, Users } from "lucide-react";
+import { ArrowLeft, BadgeCheck, ChevronLeft, ChevronRight, ExternalLink, Flag, Globe, KanbanSquare, Lock, Mail, Newspaper, PenLine, Plus, RefreshCw, Sparkles, Unlock, Users } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
+import { EmailWriter } from "@/components/EmailWriter";
 import { CountryTag, InvestorActions, ShortlistButton } from "@/components/InvestorRow";
 import { Avatar, Badge, ErrorState, FitScore, ListSkeleton, Locked, errText, useToast } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
@@ -47,7 +48,7 @@ type Profile = InvestorCard & {
   contacts_locked: boolean;
 };
 
-const TABS = ["Fit", "AI research", "Thesis & portfolio", "News", "How to pitch"] as const;
+const TABS = ["Fit", "Write email", "AI research", "Thesis & portfolio", "News", "How to pitch"] as const;
 
 type Research = {
   summary?: string;
@@ -318,6 +319,9 @@ export default function InvestorProfile() {
               <Plus size={16} /> Add to investor tracker
             </button>
           )}
+          <button className="btn-ghost" onClick={() => setTab("Write email")}>
+            <PenLine size={16} /> Write an email
+          </button>
           <button className="btn-primary" onClick={() => draft.mutate()} disabled={draft.isPending || p.excluded}>
             <Sparkles size={16} /> Draft 3-email sequence
           </button>
@@ -471,6 +475,7 @@ export default function InvestorProfile() {
           </div>
         )}
         {tab === "AI research" && <ResearchPanel id={id} name={p.firm || p.name} />}
+        {tab === "Write email" && <EmailWriter investorId={id} name={p.name} excluded={p.excluded} />}
       </div>
 
       <SimilarRow items={similar.data?.items ?? []} />

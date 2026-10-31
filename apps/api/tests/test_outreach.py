@@ -119,3 +119,17 @@ def test_auto_send_schedules_new_outreach(client):
     seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
     assert seq["auto"] == {"scheduled": True, "reason": ""}
     assert client.get(f"/sequences/{seq['id']}").json()["status"] == "approved"
+
+
+def test_write_email_then_send_it_through_outreach(client):
+    ada = _ready_to_send(client)
+    e = client.post(f"/investors/{ada['id']}/write-email", json={"angle": "our clinic traction"}).json()
+    assert e["subject"] and e["subjects"][0] == e["subject"]
+    assert e["body"].startswith("Hi Ada,") and e["body"].endswith("Sam\nDocAI")
+    assert "reply 'no'" not in e["body"].lower()  # copy-to-Gmail version has no opt-out line
+    assert e["to"] == ""  # not revealed yet
+    seq = client.post("/sequences", json={"investor_id": ada["id"],
+                                          "first_email": {"subject": "My own subject", "body": e["body"]}}).json()
+    first = seq["emails"][0]
+    assert first["subject"] == "My own subject" and first["issues"] == []
+    assert first["body"].endswith("Sam\nDocAI") and "reply 'no'" in first["body"].lower()

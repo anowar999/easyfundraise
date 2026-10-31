@@ -29,9 +29,25 @@ def s_out(s: Sequence, inv: Investor | None = None, signature: str = "") -> dict
                         "issues": outreach.lint(e.subject, e.body, e.step, signature)} for e in s.emails]}
 
 
+class FirstEmail(BaseModel):
+    subject: str = Field(max_length=200)
+    body: str = Field(max_length=5000)
+
+
 class DraftIn(BaseModel):
     investor_id: str
+    first_email: FirstEmail | None = None  # written on the investor profile; replaces email 1
     persona: str = Field("momentum", pattern="^(momentum|warm-intro|technical-founder|humble-expert)$")
+
+
+def with_opt_out(body: str, signature: str) -> str:
+    """Emails sent through outreach carry the opt-out line, just above the signature."""
+    if "Missing opt-out line." not in outreach.lint("", body, 1):
+        return body
+    sig = signature.strip()
+    if sig and body.endswith(sig):
+        return f"{body[:-len(sig)].rstrip()}\n\n{outreach.OPT_OUT}\n\n{sig}"
+    return f"{body}\n\n{outreach.OPT_OUT}"
 
 
 @router.post("")
@@ -52,6 +68,9 @@ def draft(body: DraftIn, c: Ctx = Depends(ctx)):
                    user_id=c.user.id, engine=engine)
     c.db.add(seq)
     c.db.flush()
+    if body.first_email:
+        emails[0] = {**emails[0], "subject": body.first_email.subject.strip(),
+                     "body": with_opt_out(body.first_email.body.strip(), c.user.signature)}
     for e in emails:
         c.db.add(Email(workspace_id=c.ws_id, sequence_id=seq.id, user_id=c.user.id, **e))
     c.db.commit()
