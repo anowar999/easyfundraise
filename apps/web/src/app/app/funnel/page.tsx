@@ -22,6 +22,7 @@ import { PageHeader } from "@/components/AppShell";
 import { Empty, ErrorState, Field, ListSkeleton, Sheet, StatusBadge, errText, useToast } from "@/components/ui";
 import { api, fmtDate, qs } from "@/lib/api";
 import type { Card, FunnelMeta } from "@/lib/types";
+import { QuickCard } from "./QuickCard";
 
 const SHORT = ["Not started", "Intro req.", "In contact", "First call", "Deck req.", "Deep dive", "Term sheet", "Signed", "Paid"];
 
@@ -92,7 +93,6 @@ function Column({ stage, label, cards, onOpen }: { stage: number; label: string;
 }
 
 function FunnelInner() {
-  const router = useRouter();
   const params = useSearchParams();
   const qc = useQueryClient();
   const toast = useToast();
@@ -104,6 +104,7 @@ function FunnelInner() {
   const [moving, setMoving] = useState<Card | null>(null);
   const [adding, setAdding] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const meta = useQuery<FunnelMeta>({ queryKey: ["funnel-meta"], queryFn: () => api("/funnel/meta"), staleTime: Infinity });
   const filters = { q: search, status: status === OPEN || status === "all" ? "" : status, needs_action: needsAction };
@@ -251,13 +252,13 @@ function FunnelInner() {
             {visibleMobile.length === 0 && <p className="text-sm text-muted text-center py-8">No investors in this stage.</p>}
             {visibleMobile.map((c) => (
               <div key={c.id} className="card">
-                <Link href={`/app/funnel/${c.id}`} className="block p-3">
+                <button type="button" onClick={() => setOpenId(c.id)} className="block w-full text-left p-3">
                   <CardBody c={c} />
                   <div className="text-xs text-muted mt-1.5">
                     {c.stage_label}
                     {c.next_contact_date && ` · next ${fmtDate(c.next_contact_date)}`}
                   </div>
-                </Link>
+                </button>
                 <div className="flex border-t border-line divide-x divide-line">
                   <button className="flex-1 py-2.5 text-sm text-brand flex items-center justify-center gap-1.5" onClick={() => setMoving(c)}>
                     <ArrowRightLeft size={15} /> Move stage
@@ -278,7 +279,7 @@ function FunnelInner() {
           <DndContext sensors={sensors} onDragStart={(e) => setDragId(String(e.active.id))} onDragEnd={onDragEnd} onDragCancel={() => setDragId(null)}>
             <div className="flex gap-3 items-start">
               {stages.map((s) => (
-                <Column key={s.value} stage={s.value} label={s.label} cards={byStage[s.value] ?? []} onOpen={(id) => router.push(`/app/funnel/${id}`)} />
+                <Column key={s.value} stage={s.value} label={s.label} cards={byStage[s.value] ?? []} onOpen={(id) => setOpenId(id)} />
               ))}
             </div>
             <DragOverlay>{dragId ? <div className="card p-3 w-60 shadow-xl rotate-2"><CardBody c={cards.find((c) => c.id === dragId)!} /></div> : null}</DragOverlay>
@@ -301,7 +302,7 @@ function FunnelInner() {
             </thead>
             <tbody>
               {cards.map((c) => (
-                <tr key={c.id} className="border-b border-line last:border-0 hover:bg-surface cursor-pointer" onClick={() => router.push(`/app/funnel/${c.id}`)}>
+                <tr key={c.id} className="border-b border-line last:border-0 hover:bg-surface cursor-pointer" onClick={() => setOpenId(c.id)}>
                   <td className="px-3 py-2 font-medium whitespace-nowrap">{c.name}</td>
                   <td className="px-3 py-2 text-muted">{c.firm}</td>
                   <td className="px-3 py-2 text-muted whitespace-nowrap">{c.investor_type}</td>
@@ -340,6 +341,7 @@ function FunnelInner() {
       </Sheet>
 
       <AddCard open={adding} onClose={() => setAdding(false)} meta={meta.data} />
+      <QuickCard card={all.find((c) => c.id === openId) ?? null} meta={meta.data} onClose={() => setOpenId(null)} />
     </>
   );
 }
