@@ -98,7 +98,7 @@ function FunnelInner() {
   const toast = useToast();
   const [view, setView] = useState<"board" | "table">("board");
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(OPEN); // default: hide inactive and rejected investors
   const [needsAction, setNeedsAction] = useState(params.get("needs_action") === "1");
   const [mobileStage, setMobileStage] = useState<number>(Number(params.get("stage") ?? 0));
   const [moving, setMoving] = useState<Card | null>(null);
@@ -106,9 +106,11 @@ function FunnelInner() {
   const [dragId, setDragId] = useState<string | null>(null);
 
   const meta = useQuery<FunnelMeta>({ queryKey: ["funnel-meta"], queryFn: () => api("/funnel/meta"), staleTime: Infinity });
-  const filters = { q: search, status, needs_action: needsAction };
+  const filters = { q: search, status: status === OPEN || status === "all" ? "" : status, needs_action: needsAction };
   const list = useQuery<{ items: Card[] }>({ queryKey: ["funnel", filters], queryFn: () => api(`/funnel${qs(filters)}`) });
-  const cards = list.data?.items ?? [];
+  const all = list.data?.items ?? [];
+  const cards = status === OPEN ? all.filter((c) => !CLOSED.includes(c.status)) : all;
+  const hidden = all.length - cards.length;
   const byStage = useMemo(() => {
     const m: Record<number, Card[]> = {};
     for (let i = 1; i <= 9; i++) m[i] = [];
@@ -189,7 +191,8 @@ function FunnelInner() {
           <input className="input pl-9" placeholder="Search name or firm" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <select className="input w-auto" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-          <option value="">All statuses</option>
+          <option value={OPEN}>Hide inactive &amp; rejected</option>
+          <option value="all">All statuses</option>
           {meta.data?.statuses.map((s) => (
             <option key={s}>{s}</option>
           ))}
@@ -197,6 +200,11 @@ function FunnelInner() {
         <button className={clsx("chip px-3 py-2 text-sm", needsAction && "bg-brand text-white border-brand")} onClick={() => setNeedsAction((x) => !x)}>
           Needs action
         </button>
+        {hidden > 0 && (
+          <button className="text-sm text-brand" onClick={() => setStatus("all")}>
+            Show {hidden} hidden
+          </button>
+        )}
         <div className="hidden md:flex ml-auto border border-line rounded-lg overflow-hidden">
           <button className={clsx("px-3 py-2", view === "board" && "bg-brand/10 text-brand")} onClick={() => setView("board")} aria-label="Board view">
             <LayoutGrid size={16} />
@@ -209,7 +217,7 @@ function FunnelInner() {
 
       {list.isLoading && <ListSkeleton />}
       {list.error && <ErrorState error={list.error} retry={() => list.refetch()} />}
-      {list.data && cards.length === 0 && !search && !status && !needsAction && (
+      {list.data && all.length === 0 && !search && status === OPEN && !needsAction && (
         <Empty
           title="Your investor tracker is empty"
           body="Import your existing tracker, add investors from the database, or add someone manually."
@@ -402,6 +410,9 @@ function AddCard({ open, onClose, meta }: { open: boolean; onClose: () => void; 
     </Sheet>
   );
 }
+
+const OPEN = "open";
+const CLOSED = ["Inactive", "Rejection"];
 
 export default function FunnelPage() {
   return (

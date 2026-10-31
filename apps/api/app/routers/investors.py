@@ -412,6 +412,27 @@ def run_research(iid: str, c: Ctx = Depends(ctx)):
     return {"research": research_out(cached), "charged": True}
 
 
+class WriteEmailIn(BaseModel):
+    angle: str = Field("", max_length=500)  # optional: what the founder wants to lead with
+
+
+@router.post("/{iid}/write-email")
+def write_email(iid: str, body: WriteEmailIn | None = None, c: Ctx = Depends(ctx)):
+    """A personalised first email (and subject ideas) to copy into Gmail or send through outreach."""
+    from ..services import agent
+
+    rate_limit(c.db, f"write-email:{c.user.id}", 20, 60)
+    inv = _get(c, iid)
+    r = c.db.get(InvestorResearch, inv.id)
+    out = agent.write_email(c.db, c.workspace, inv, c.db.get(CompanyProfile, c.ws_id), c.user.signature,
+                            body.angle if body else "", r.data if r else None)
+    card = c.db.scalar(select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.investor_id == inv.id,
+                                                FunnelCard.deleted_at.is_(None)))
+    to = (card.email if card and card.email else "") or (inv.email if c.db.get(Reveal, (c.ws_id, inv.id)) else "")
+    c.db.commit()
+    return {**out, "to": to}
+
+
 @router.get("/lookup/company")
 def company_lookup(name: str = Query(min_length=2, max_length=200), c: Ctx = Depends(ctx)):
     """SRCH-03: investors who invested in <company> (from stored portfolio / recent deals), then similar ones."""

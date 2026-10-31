@@ -4,6 +4,7 @@ meeting briefs (AGT-04), chat with previewed tools (AGT-05), memory (AGT-07), da
 """
 
 import json
+import re
 from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import func, select
@@ -163,6 +164,53 @@ def draft_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile 
     if got:
         return got
     return outreach.draft_sequence(inv, p, persona, instructions(db, ws.id), signature), "template"
+
+
+# ---------------- one-off email from an investor profile ----------------
+
+EMAIL_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["subjects", "body", "fact_ids"],
+    "properties": {"subjects": {"type": "array", "items": {"type": "string"}}, "body": {"type": "string"},
+                   "fact_ids": {"type": "array", "items": {"type": "string"}}},
+}
+
+
+def write_email(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | None, signature: str,
+                angle: str = "", research: dict | None = None) -> dict:
+    """One personalised first email plus three subject-line ideas, to copy into Gmail or send from outreach.
+    Ends with the founder's signature; the opt-out line is added only when it's sent through outreach."""
+    facts = fact_pack(inv, p)
+    system = (
+        "Write one cold email from a founder to an investor, personalised to this investor. Open with 'Hi <first "
+        "name>,'. Under 110 words before the signature. Use at least 2 investor facts (cite their ids) and only the "
+        "facts and company fields given; never invent names, numbers or portfolio companies. Plain words, one clear "
+        "ask (a short call or a look at the deck). No links, no signature, no opt-out line. Also give 3 different "
+        "subject lines, each 6 words or fewer, no ALL CAPS, no clickbait."
+    )
+    user = json.dumps({"investor_first_name": outreach.first_name(inv.name), "investor_facts": facts,
+                       "recent_research": research or {}, "company": shareable_profile(p),
+                       "founder_angle": angle[:500], "founder_instructions": instructions(db, ws.id)[:2000]}, default=str)
+    out, engine = ai.json_call(db, ws, "draft", system, user, EMAIL_SCHEMA, max_tokens=3000)
+    if not out:
+        out, engine = ai.small_json(db, ws, system, user, EMAIL_SCHEMA, max_tokens=1500), "claude"
+    subjects = [" ".join(x.split()[:outreach.SUBJECT_MAX_WORDS]) for x in (out or {}).get("subjects", []) if x.strip()]
+    if out and out.get("body", "").strip() and subjects:
+        by_id = {f["id"]: f for f in facts}
+        body = outreach.trim_to(out["body"].strip(), outreach.LIMITS[1] - 15)
+        used = [{"text": by_id[i]["text"], "source": by_id[i]["source"]} for i in out.get("fact_ids", []) if i in by_id]
+    else:
+        e1 = outreach.draft_sequence(inv, p, "momentum", instructions(db, ws.id), "")[0]
+        body = e1["body"].replace(outreach.OPT_OUT, "").strip()
+        company = (p.company_name if p else "") or "Intro"
+        firm = re.split(r" - | \(|,", inv.current_firm or inv.company or "")[0].strip()
+        stage = (p.stage if p else "").replace("-", " ")
+        ideas = [f"{company} x {firm}" if firm else "", f"Quick intro: {company}", f"{company} {stage} round".strip()
+                 if stage else f"{company} for {outreach.first_name(inv.name)}"]
+        subjects = [" ".join(x.split()[:outreach.SUBJECT_MAX_WORDS]) for x in ideas if x]
+        used, engine = e1["facts"], "template"
+    if signature.strip():
+        body = f"{body}\n\n{signature.strip()}"
+    return {"subject": subjects[0], "subjects": subjects[:3], "body": body, "facts": used, "engine": engine}
 
 
 # ---------------- deck → company profile (DECK-01) ----------------
