@@ -91,15 +91,41 @@ cd apps/web && npm install && npm run dev   # http://localhost:3000
 
 The importer is idempotent: re-run it whenever the datasets grow. Removed investors stay suppressed.
 
-### Google sign-in
+### Google sign-in and Gmail sending (use your real account)
 
-Create an OAuth client (Web) in Google Cloud, add `<EF_WEB_ORIGIN>/api/auth/google/callback` as a redirect
-URI, and set `EF_GOOGLE_CLIENT_ID` / `EF_GOOGLE_CLIENT_SECRET`. Dev sign-in is always disabled when `EF_ENV=prod`.
+Sign-up asks for Gmail permission on the same Google screen, so founders connect their mailbox in one step.
+Nothing is sent until the founder confirms each sequence (who, from which address, and when).
 
+1. In [Google Cloud Console](https://console.cloud.google.com/) create a project, then **APIs & Services → Library**
+   and enable the **Gmail API**.
+2. **OAuth consent screen**: External, app name EasyFundraise, your support email. Add the scopes
+   `openid`, `email`, `profile`, `gmail.send` and `gmail.readonly`. While the app is in **Testing**, add your own
+   Gmail under **Test users** (up to 100 testers work without Google's review).
+3. **Credentials → Create credentials → OAuth client ID → Web application**. Add both redirect URIs, using the port
+   you open the app on (for example 3001):
+   - `http://localhost:3001/api/auth/google/callback`
+   - `http://localhost:3001/api/gmail/callback`
+4. Put the keys in `apps/api/.env` and switch Gmail from the fake mailbox to the real one:
+   ```
+   EF_GOOGLE_CLIENT_ID=....apps.googleusercontent.com
+   EF_GOOGLE_CLIENT_SECRET=...
+   EF_GMAIL_MODE=google
+   ```
+5. `docker compose -f infra/docker-compose.yml up -d --build`, open the app and press **Continue with Google**.
+
+Going live for everyone: `gmail.readonly` (used only to spot investor replies) is a restricted scope, so Google
+asks for app verification and an annual security assessment before you leave Testing. `gmail.send` alone is a
+sensitive scope and only needs verification. Dev sign-in is always off when `EF_ENV=prod`.
+
+### Email sign-in links
+
+"Continue with email" sends a 15-minute magic link. Set `EF_SMTP_HOST`, `EF_SMTP_PORT`, `EF_SMTP_USER`,
+`EF_SMTP_PASSWORD` and `EF_SMTP_FROM` (any SMTP provider: Postmark, Resend, SES, or Gmail with an app password).
+Without SMTP, development shows the link on screen and production hides email sign-in.
 ## Tests
 
 ```bash
-cd apps/api && createdb easyfundraise_test && pytest     # 54 tests: tiers, isolation, funnel, import, Gmail, agent, data room, updates, billing
+cd apps/api && createdb easyfundraise_test && pytest     # 61 tests: tiers, isolation, funnel, import, Gmail, sign-in, agent, data room, updates, billing, SEO
 cd apps/web && npx tsc --noEmit && npm run build
 ```
 

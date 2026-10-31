@@ -133,7 +133,7 @@ export default function Landing() {
           </Reveal>
           <Reveal delay={240}>
             <div className="mt-9 flex flex-col sm:flex-row justify-center gap-3">
-              <Link href="/login" className="lp-btn-primary h-14 px-8 text-lg">
+              <Link href="/login?mode=signup" className="lp-btn-primary h-14 px-8 text-lg">
                 Find your investors free <ArrowRight size={20} />
               </Link>
               <Link href="/investors" className="lp-btn-glass h-14 px-7 text-lg">
@@ -416,7 +416,7 @@ export default function Landing() {
           </h2>
           <p className="mt-5 text-lg md:text-xl text-white/75">Start your 14-day free trial and send your first personal investor email today.</p>
           <div className="mt-9 flex flex-col sm:flex-row justify-center gap-3">
-            <Link href="/login" className="lp-btn-primary h-14 px-8 text-lg">
+            <Link href="/login?mode=signup" className="lp-btn-primary h-14 px-8 text-lg">
               Find your investors free <ArrowRight size={20} />
             </Link>
             <Link href="/login?next=/app/funnel/import" className="lp-btn-glass h-14 px-7 text-lg">

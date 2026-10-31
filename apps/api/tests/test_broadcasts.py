@@ -40,7 +40,7 @@ def test_round_update_truthful_and_warmest_first(client):
     assert b["recipients"] == 1  # Walt only: Cody excluded, no-email card skipped, committed stage 8/9 outside 2-7
     body = b["emails"][0]["body"]
     assert "Lena Lead (LeadVC) is leading" in body and "$900K committed of our $1.5M round" in body
-    b = client.post(f"/broadcasts/{b['id']}/approve").json()
+    b = client.post(f"/broadcasts/{b['id']}/approve", json={"confirm": True}).json()
     assert b["status"] == "scheduled" and len(b["emails"]) == 2  # + one follow-up
 
 
@@ -55,7 +55,7 @@ def test_investor_update_needs_ir_tier_and_threads_followup(client):
                                          "inputs": {"metrics": [{"label": "MRR", "value": "$42K"}], "wins": ["NHS pilot"]},
                                          "audience": {"stages": [8, 9]}}).json()
     assert b["recipients"] == 2 and "MRR: $42K" in b["emails"][0]["body"]
-    client.post(f"/broadcasts/{b['id']}/approve")
+    client.post(f"/broadcasts/{b['id']}/approve", json={"confirm": True})
     FakeGmail.reset()
     with SessionLocal() as db:
         ems = db.scalars(select(Email).where(Email.broadcast_id == b["id"])).all()

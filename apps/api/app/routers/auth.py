@@ -1,9 +1,10 @@
-"""AUTH-01/02/07: Google sign-in (openid email profile only at signup), sessions, dev login."""
+"""AUTH-01/02/07: Google sign-in (with optional Gmail consent in the same step), email sign-in links,
+sessions, dev login."""
 
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, Request, Response
@@ -16,9 +17,11 @@ from ..config import get_settings
 from ..db import get_db
 from ..deps import COOKIE, _hash, client_ip, create_session, current_user, destroy_session
 from ..errors import ApiError
-from ..models import AuthSession, User, Workspace, WorkspaceMember
+from ..models import AuthSession, GmailAccount, User, Workspace, WorkspaceMember
+from ..services.account_mail import read_sign_in_token, send_sign_in_link, sign_in_token, smtp_ready
 from ..services.crypto import decrypt, encrypt, totp_ok, totp_secret
 from ..services.entitlements import limit, rate_limit
+from ..services.gmail import SCOPES, store_tokens
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -52,28 +55,54 @@ def upsert_user(db: Session, email: str, name: str, picture: str = "", sub: str 
     return user
 
 
+def safe_next(path: str, default: str = "/app") -> str:
+    """Only same-site paths, so a crafted link can't bounce a signed-in user to another site."""
+    return path if path.startswith("/") and not path.startswith("//") and "\\" not in path else default
+
+
+def after_sign_in(db: Session, user: User, is_new: bool, next: str) -> str:
+    """New users without Gmail go to the welcome step that asks for send permission."""
+    if is_new and db.get(GmailAccount, user.id) is None:
+        return f"/welcome?next={quote(next, safe='')}"
+    return next
+
+
+def is_new_user(db: Session, email: str) -> bool:
+    return db.scalar(select(User.id).where(User.email == email.lower())) is None
+
+
 @router.get("/config")
 def auth_config():
     s = get_settings()
-    return {"google": bool(s.google_client_id), "dev_login": s.dev_login_enabled}
+    return {"google": bool(s.google_client_id), "dev_login": s.dev_login_enabled,
+            "email_link": smtp_ready() or not s.is_prod, "gmail_fake": s.gmail_fake}
 
 
 @router.get("/google/start")
-def google_start(request: Request):
+def google_start(request: Request, gmail: bool = True, next: str = "/app"):
+    """AUTH-01/02: sign in with Google. With gmail=1 the same consent screen also asks to send from Gmail
+    (and read replies to stop follow-ups); the user can untick those and connect later."""
     s = get_settings()
     if not s.google_client_id:
         raise ApiError(503, "EF-AUTH-040", "Google sign-in is not configured")
     state = secrets.token_urlsafe(24)
     params = dict(client_id=s.google_client_id, response_type="code", scope="openid email profile",
                   redirect_uri=f"{s.web_origin}/api/auth/google/callback", state=state, prompt="select_account")
+    if gmail and not s.gmail_fake:
+        params.update(scope=f"openid email profile {SCOPES}", access_type="offline", include_granted_scopes="true",
+                      prompt="consent select_account")
     resp = RedirectResponse(f"{GOOGLE_AUTH}?{urlencode(params)}")
-    resp.set_cookie("ef_oauth_state", state, max_age=600, httponly=True, samesite="lax", secure=s.env != "dev")
+    secure = s.env != "dev"
+    resp.set_cookie("ef_oauth_state", state, max_age=600, httponly=True, samesite="lax", secure=secure)
+    resp.set_cookie("ef_oauth_next", safe_next(next), max_age=600, httponly=True, samesite="lax", secure=secure)
     return resp
 
 
 @router.get("/google/callback")
-def google_callback(request: Request, code: str = "", state: str = "", db: Session = Depends(get_db)):
+def google_callback(request: Request, code: str = "", state: str = "", error: str = "", db: Session = Depends(get_db)):
     s = get_settings()
+    if error:  # the user pressed Cancel on Google's screen
+        return RedirectResponse(f"{s.web_origin}/login?error=cancelled")
     if not code or not state or state != request.cookies.get("ef_oauth_state"):
         raise ApiError(400, "EF-AUTH-041", "Sign-in failed", "Invalid OAuth state. Please try again.")
     with httpx.Client(timeout=10) as c:
@@ -85,9 +114,54 @@ def google_callback(request: Request, code: str = "", state: str = "", db: Sessi
         info = c.get(GOOGLE_USERINFO, headers={"Authorization": f"Bearer {tok.json()['access_token']}"}).json()
     if not info.get("email_verified"):
         raise ApiError(403, "EF-AUTH-043", "Google email is not verified")
+    is_new = is_new_user(db, info["email"])
     user = upsert_user(db, info["email"], info.get("name", ""), info.get("picture", ""), info.get("sub"))
-    resp = RedirectResponse(f"{s.web_origin}/app")
+    j = tok.json()
+    if "gmail.send" in j.get("scope", ""):
+        store_tokens(db, user.id, user.email, j)
+        db.commit()
+    resp = RedirectResponse(f"{s.web_origin}{after_sign_in(db, user, is_new, safe_next(request.cookies.get('ef_oauth_next', '')))}")
     resp.delete_cookie("ef_oauth_state")
+    resp.delete_cookie("ef_oauth_next")
+    create_session(db, resp, user, request.headers.get("user-agent", ""), client_ip(request))
+    return resp
+
+
+class EmailStart(BaseModel):
+    email: EmailStr
+    next: str = "/app"
+
+
+@router.post("/email/start")
+def email_start(body: EmailStart, request: Request, db: Session = Depends(get_db)):
+    """Passwordless sign-in: email a link that works for 15 minutes. Without SMTP (dev only) the link is returned."""
+    s = get_settings()
+    rate_limit(db, f"signin-ip:{client_ip(request)}", 10, 600)
+    rate_limit(db, f"signin-email:{body.email.lower()}", 5, 600)
+    if body.email.split("@")[-1].lower() in DISPOSABLE:
+        raise ApiError(403, "EF-AUTH-030", "Disposable email domains are not allowed")
+    link = (f"{s.web_origin}/api/auth/email/verify?"
+            f"{urlencode({'token': sign_in_token(body.email), 'next': safe_next(body.next)})}")
+    if smtp_ready():
+        try:
+            send_sign_in_link(body.email, link)
+        except OSError as e:
+            raise ApiError(502, "EF-AUTH-051", "We couldn't send the email", "Please try again in a minute.") from e
+        return {"sent": True}
+    if s.is_prod:
+        raise ApiError(503, "EF-AUTH-050", "Email sign-in is not configured")
+    return {"sent": False, "dev_link": link}
+
+
+@router.get("/email/verify")
+def email_verify(request: Request, token: str = "", next: str = "/app", db: Session = Depends(get_db)):
+    s = get_settings()
+    email = read_sign_in_token(token)
+    if not email:
+        return RedirectResponse(f"{s.web_origin}/login?error=expired")
+    is_new = is_new_user(db, email)
+    user = upsert_user(db, email, "")
+    resp = RedirectResponse(f"{s.web_origin}{after_sign_in(db, user, is_new, safe_next(next))}")
     create_session(db, resp, user, request.headers.get("user-agent", ""), client_ip(request))
     return resp
 
@@ -96,15 +170,17 @@ class DevLogin(BaseModel):
     email: EmailStr
     name: str = ""
     timezone: str = "UTC"
+    next: str = "/app"
 
 
 @router.post("/dev-login")
 def dev_login(body: DevLogin, request: Request, response: Response, db: Session = Depends(get_db)):
     if not get_settings().dev_login_enabled:
         raise ApiError(404, "EF-NF-001", "Not found")
+    is_new = is_new_user(db, body.email)
     user = upsert_user(db, body.email, body.name, tz=body.timezone)
     create_session(db, response, user, request.headers.get("user-agent", ""), client_ip(request))
-    return {"ok": True}
+    return {"ok": True, "next": after_sign_in(db, user, is_new, safe_next(body.next))}
 
 
 @router.post("/logout")

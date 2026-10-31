@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowLeft, CalendarCheck, Eye, Info, Mail, RefreshCw, Th
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ConfirmSend, type SendPreview } from "@/components/ConfirmSend";
 import { ErrorState, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api, ApiError, fmtDate } from "@/lib/api";
 
@@ -140,17 +141,20 @@ export default function SequencePage() {
   const qc = useQueryClient();
   const q = useQuery<Seq>({ queryKey: ["sequence", id], queryFn: () => api(`/sequences/${id}`) });
   const approve = useMutation({
-    mutationFn: () => api<Seq>(`/sequences/${id}/approve`, { method: "POST" }),
+    mutationFn: (confirm: boolean) => api<Seq>(`/sequences/${id}/approve`, { method: "POST", json: { confirm } }),
     onSuccess: (s) => {
+      setPreview(null);
       qc.setQueryData(["sequence", id], s);
-      toast("Approved and scheduled in the investor's local send window");
+      toast("Confirmed. Scheduled in the investor's local send window");
     },
     onError: (e) => {
-      if (e instanceof ApiError && (e.problem.needs_signature || e.problem.needs_reveal || e.problem.needs_gmail)) setBlocker(e.problem);
+      if (e instanceof ApiError && e.problem.needs_confirm) setPreview(e.problem.preview as SendPreview);
+      else if (e instanceof ApiError && (e.problem.needs_signature || e.problem.needs_reveal || e.problem.needs_gmail)) setBlocker(e.problem);
       else toast(errText(e), "err");
     },
   });
   const [blocker, setBlocker] = useState<Record<string, unknown> | null>(null);
+  const [preview, setPreview] = useState<SendPreview | null>(null);
   const [persona, setPersona] = useState("");
   const regen = useMutation({
     mutationFn: (p: string) => api<Seq>(`/sequences/${id}/regenerate`, { method: "POST", json: { persona: p } }),
@@ -217,9 +221,10 @@ export default function SequencePage() {
       </div>
       {!locked && (
         <div className="sticky bottom-[calc(64px_+_env(safe-area-inset-bottom))] md:bottom-4 mt-4">
-          <button className="btn-primary w-full h-12 shadow-lg" onClick={() => approve.mutate()} disabled={approve.isPending}>
+          <button className="btn-primary w-full h-12 shadow-lg" onClick={() => approve.mutate(false)} disabled={approve.isPending}>
             <CalendarCheck size={18} /> Approve &amp; schedule
           </button>
+          <ConfirmSend preview={preview} busy={approve.isPending} onCancel={() => setPreview(null)} onConfirm={() => approve.mutate(true)} />
           <p className="text-xs text-muted text-center mt-1 bg-surface/80">Sends from your Gmail in their local send window · stops on any reply.</p>
         </div>
       )}

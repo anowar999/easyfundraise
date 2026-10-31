@@ -42,7 +42,7 @@ export function Header() {
           <Link href="/login" className="hidden sm:inline-flex h-10 items-center px-4 text-[15px] font-medium text-white/85 hover:text-white">
             Sign in
           </Link>
-          <Link href="/login" className="lp-btn-primary h-10 px-4 text-[15px]">
+          <Link href="/login?mode=signup" className="lp-btn-primary h-10 px-4 text-[15px]">
             Start free
           </Link>
           <button className="lg:hidden p-2 text-white" onClick={() => setOpen(!open)} aria-label={open ? "Close menu" : "Open menu"} aria-expanded={open}>
