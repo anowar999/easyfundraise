@@ -169,7 +169,7 @@ export default function CardPage() {
             onClick={async () => {
               try {
                 const s = await api<{ id: string }>("/sequences", { method: "POST", json: { investor_id: c.investor_id } });
-                router.push(`/app/sequences/${s.id}`);
+                router.push(`/app/sequences/${s.id}?new=1`);
               } catch (e) {
                 toast(errText(e), "err");
               }

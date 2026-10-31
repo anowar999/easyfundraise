@@ -109,3 +109,19 @@ def test_cheque_size_filter(client):
     assert "Ada Seed" in names
     names = [x["name"] for x in client.get("/investors", params={"check_min": 2000000}).json()["items"]]
     assert "Ada Seed" not in names
+
+
+def test_search_pages_ten_at_a_time_and_trial_stops_at_cap(client):
+    from app.db import SessionLocal
+    from app.models import Investor
+
+    with SessionLocal() as db:
+        for i in range(30):
+            db.add(Investor(name=f"Pager Person {i:02d}", linkedin=f"https://linkedin.com/in/pager{i}", investor_type="angel", source="test", industries=["Paging"]))
+        db.commit()
+    r1 = client.get("/investors", params={"sector": "Paging"}).json()
+    assert r1["page_size"] == 10 and len(r1["items"]) == 10 and r1["total"] == 25 and r1["all_total"] == 30
+    r3 = client.get("/investors", params={"sector": "Paging", "page": 3}).json()
+    assert len(r3["items"]) == 5  # trial cap is 25
+    assert client.get("/investors", params={"sector": "Paging", "page": 4}).status_code == 402
+    assert {x["id"] for x in r1["items"]}.isdisjoint({x["id"] for x in r3["items"]})

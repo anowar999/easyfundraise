@@ -227,7 +227,9 @@ export default function InvestorProfile() {
   });
   const draft = useMutation({
     mutationFn: () => api<{ id: string }>("/sequences", { method: "POST", json: { investor_id: id } }),
-    onSuccess: (s) => router.push(`/app/sequences/${s.id}`),
+    onSuccess: (s) => {
+      router.push(`/app/sequences/${s.id}?new=1`);
+    },
     onError: (e) => {
       if (e instanceof ApiError && e.problem.upgrade) toast("You've used your sample drafts. Upgrade to draft more.", "err");
       else toast(errText(e), "err");
