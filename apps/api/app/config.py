@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,13 +39,23 @@ class Settings(BaseSettings):
     # §6 billing
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
-    password_otp: bool = True  # password sign-in also needs a one-time code emailed to the account
+    # Password sign-in also needs a one-time code emailed to the account. Unset = on in prod only.
+    password_otp: bool | None = None
     admin_mfa: bool = False  # AUTH-08: forced on in prod
     admin_emails: str = ""  # comma-separated; these users get is_admin on login
 
     @property
     def is_prod(self) -> bool:
         return self.env == "prod"
+
+    @field_validator("password_otp", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, v):
+        return None if isinstance(v, str) and not v.strip() else v
+
+    @property
+    def password_code_on(self) -> bool:
+        return self.is_prod if self.password_otp is None else self.password_otp
 
     @property
     def admin_email_set(self) -> set[str]:

@@ -124,8 +124,9 @@ sensitive scope and only needs verification. Dev sign-in is always off when `EF_
 Without SMTP, development shows the link on screen and production hides email sign-in.
 
 Users can also add a password in Settings → Sign-in & password (Google and Gmail stay connected). After a correct
-password we email a 6-digit one-time code that works once, for 10 minutes; five wrong tries burn it. This needs SMTP
-in production. `EF_PASSWORD_OTP=false` turns the code step off (not recommended).
+password we email a 6-digit one-time code that works once, for 10 minutes; five wrong tries burn it. The code step is on
+only when `EF_ENV=prod` (it needs SMTP there); dev and UAT sign in with the password alone. `EF_PASSWORD_OTP=true|false`
+forces it on or off.
 ## Tests
 
 ```bash
