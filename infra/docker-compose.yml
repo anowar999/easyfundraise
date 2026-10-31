@@ -1,0 +1,51 @@
+# Local stack: docker compose -f infra/docker-compose.yml up --build
+# Then load investors (files in data/private/, never committed):
+#   docker compose -f infra/docker-compose.yml exec api python -m app.cli import-investors \
+#     --directory /data/ALL_investors_merged.csv --enrichment /data/enriched_master.jsonl
+name: easyfundraise
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ef
+      POSTGRES_PASSWORD: ef
+      POSTGRES_DB: easyfundraise
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ef -d easyfundraise"]
+      interval: 3s
+      retries: 20
+
+  api:
+    build: ../apps/api
+    env_file: [../apps/api/.env.example]
+    environment:
+      EF_DATABASE_URL: postgresql+psycopg://ef:ef@db:5432/easyfundraise
+      EF_WEB_ORIGIN: http://localhost:3000
+    volumes: ["../data/private:/data:ro"]
+    ports: ["8000:8000"]
+    depends_on:
+      db: { condition: service_healthy }
+
+  worker:
+    build: ../apps/api
+    command: ["python", "-m", "app.worker"]
+    env_file: [../apps/api/.env.example]
+    environment:
+      EF_DATABASE_URL: postgresql+psycopg://ef:ef@db:5432/easyfundraise
+    depends_on:
+      api: { condition: service_started }
+
+  web:
+    build:
+      context: ../apps/web
+      args: { API_URL: "http://api:8000" }
+    environment:
+      API_URL: http://api:8000
+    ports: ["3000:3000"]
+    depends_on: [api]
+
+volumes:
+  pgdata:

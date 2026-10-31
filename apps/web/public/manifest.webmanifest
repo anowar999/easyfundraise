@@ -1,0 +1,14 @@
+{
+  "name": "EasyFundraise",
+  "short_name": "EasyFundraise",
+  "description": "Find investors, reach them with precise emails, and run your raise.",
+  "start_url": "/app",
+  "display": "standalone",
+  "background_color": "#F6F8FB",
+  "theme_color": "#0F62FE",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-256.png", "sizes": "256x256", "type": "image/png" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

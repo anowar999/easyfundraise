@@ -361,7 +361,8 @@ async def import_preview(file: UploadFile, c: Ctx = Depends(ctx)):
         "fields": list(ti.FIELDS.keys()),
         "suggested_sheet": ranked[0].name if ranked and ti.score(ranked[0]) else None,
         "sheets": [{
-            "name": sh.name, "header_row": sh.header_row, "rows": len(sh.data_rows()), "score": ti.score(sh),
+            "name": sh.name, "header_row": sh.header_row, "rows": sum(1 for r in sh.data_rows() if ti.row_to_card(r, sh.mapping)) if sh.mapping else len(sh.data_rows()),
+            "score": ti.score(sh),
             "columns": _columns(sh),
             "preview": [[ti._s(v) for v in r[:30]] for r in sh.data_rows()[:5]],
         } for sh in sheets],
@@ -433,7 +434,11 @@ async def import_commit(file: UploadFile, sheet: str, mapping: str, update_exist
         if r["last_contacted"]:
             card.last_contacted_at = datetime.combine(r["last_contacted"], time(12), UTC)
         if r["next_contact"]:
-            set_next_contact(c, card, r["next_contact"])
+            # Past dates show as "overdue" on the card; don't flood the inbox with a reminder for each one.
+            if r["next_contact"] >= date.today():
+                set_next_contact(c, card, r["next_contact"])
+            else:
+                card.next_contact_date = r["next_contact"]
         for note in r["notes"]:
             _event(c, card, "note", note, imported=True)
         if is_new:

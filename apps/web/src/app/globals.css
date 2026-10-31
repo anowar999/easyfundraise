@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+/* Design tokens (spec §2.2/§2.3). Light by default, dark via prefers-color-scheme. */
+:root {
+  --brand: #0f62fe;
+  --brand-ink: #ffffff;
+  --accent: #16a34a;
+  --ink: #0b1220;
+  --muted: #5b6474;
+  --surface: #f6f8fb;
+  --card: #ffffff;
+  --line: #e3e8ef;
+  --danger: #dc2626;
+  --warn: #d97706;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e6eaf2;
+    --muted: #9aa4b5;
+    --surface: #0b1220;
+    --card: #121a2b;
+    --line: #233049;
+  }
+}
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-accent: var(--accent);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-line: var(--line);
+  --color-danger: var(--danger);
+  --color-warn: var(--warn);
+  --font-sans: Inter, Geist, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-card: 12px;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body { background: var(--surface); color: var(--ink); font-family: var(--font-sans); }
+* { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+@utility card {
+  @apply rounded-[12px] border border-line bg-card; 
+}
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 h-10 text-sm font-medium transition-colors duration-200 disabled:opacity-50 disabled:pointer-events-none; 
+}
+@utility btn-primary {
+  @apply btn bg-brand text-white hover:bg-[#0b55e0]; 
+}
+@utility btn-ghost {
+  @apply btn border border-line bg-card hover:bg-surface; 
+}
+@utility btn-sm {
+  @apply h-8 px-2.5 text-xs; 
+}
+@utility input {
+  @apply w-full rounded-lg border border-line bg-card px-3 h-10 text-[15px] sm:text-sm outline-none focus:border-brand; 
+}
+@utility textarea {
+  @apply w-full rounded-lg border border-line bg-card px-3 py-2 text-[15px] sm:text-sm outline-none focus:border-brand; 
+}
+@utility label {
+  @apply block text-xs font-medium text-muted mb-1; 
+}
+@utility chip {
+  @apply inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-xs; 
+}
+@utility skeleton {
+  @apply animate-pulse rounded-md bg-line/60; 
+}
+@utility no-select {
+  user-select: none; -webkit-user-select: none; 
+}
+
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none { scrollbar-width: none; }
