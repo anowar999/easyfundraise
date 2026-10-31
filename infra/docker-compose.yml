@@ -26,9 +26,9 @@ services:
       - { path: ../apps/api/.env, required: false }  # your keys override the defaults
     environment:
       EF_DATABASE_URL: postgresql+psycopg://ef:ef@db:5432/easyfundraise
-      EF_WEB_ORIGIN: http://localhost:3000
+      EF_WEB_ORIGIN: http://localhost:${EF_WEB_PORT:-3000}
+      EF_TRACKING_BASE_URL: http://localhost:${EF_WEB_PORT:-3000}/api
     volumes: ["../data/private:/data:ro"]
-    ports: ["8000:8000"]
     depends_on:
       db: { condition: service_healthy }
 
@@ -49,7 +49,7 @@ services:
       args: { API_URL: "http://api:8000" }
     environment:
       API_URL: http://api:8000
-    ports: ["3000:3000"]
+    ports: ["${EF_WEB_PORT:-3000}:3000"]  # the API is reached through the web app at /api, so only this port is published
     depends_on: [api]
 
 volumes:
