@@ -9,6 +9,7 @@ from sqlalchemy import (
     Computed,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -377,6 +378,29 @@ class CardEvent(Base):
     body: Mapped[str] = mapped_column(Text, default="")
     meta: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = created()
+
+
+class FounderTask(Base):
+    """Founder Tasks board: a sticky note moving To do -> In progress -> Done (-> Archive, hidden)."""
+
+    __tablename__ = "founder_tasks"
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))  # created by
+    title: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(12), default="todo")  # todo | doing | done | archived
+    priority: Mapped[int] = mapped_column(Integer, default=2)  # 1 top .. 3 low
+    urgent: Mapped[bool] = mapped_column(Boolean, default=False)  # pinned on every screen until done
+    progress: Mapped[int] = mapped_column(Integer, default=0)  # percent done
+    deadline: Mapped[date | None] = mapped_column(Date)
+    follow_ups: Mapped[list] = mapped_column(JSONB, default=list)  # ["2026-11-05", ...] dates to check back
+    owner: Mapped[str] = mapped_column(Text, default="")  # responsible person
+    depends_on: Mapped[str] = mapped_column(Text, default="")  # what it's waiting on
+    position: Mapped[float] = mapped_column(Float, default=0)  # order within its column
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = created()
+    updated_at: Mapped[datetime] = updated()
 
 
 class Reminder(Base):

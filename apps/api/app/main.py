@@ -20,6 +20,7 @@ from .routers import (
     seo,
     sequences,
     shortlist,
+    tasks,
     team,
     workspace,
 )
@@ -68,7 +69,7 @@ app.add_exception_handler(Exception, unhandled_error_handler)
 
 for r in (auth.router, workspace.router, investors.router, investors.public, funnel.router, notifications.router,
           sequences.router, admin.router, outreach.router, outreach.public, agent.router, dataroom.router,
-          dataroom.public, broadcasts.router, team.router, billing.router, seo.router, shortlist.router):
+          dataroom.public, broadcasts.router, team.router, billing.router, seo.router, shortlist.router, tasks.router):
     app.include_router(r)
 
 
