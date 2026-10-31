@@ -7,6 +7,7 @@ import Link from "next/link";
 import { Sheet, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import type { Card, FunnelMeta } from "@/lib/types";
+import { StarPicker } from "./StarPicker";
 
 const PRIORITY_HINT: Record<string, string> = { P1: "Top", P2: "High", P3: "Normal", P4: "Low" };
 
@@ -15,7 +16,7 @@ export function QuickCard({ card, meta, onClose }: { card: Card | null; meta?: F
   const qc = useQueryClient();
   const toast = useToast();
   const save = useMutation({
-    mutationFn: (patch: Partial<Pick<Card, "stage" | "status" | "priority">>) => api<Card>(`/funnel/${card!.id}`, { method: "PATCH", json: patch }),
+    mutationFn: (patch: Partial<Pick<Card, "stage" | "status" | "priority" | "starred" | "star_reason">>) => api<Card>(`/funnel/${card!.id}`, { method: "PATCH", json: patch }),
     onSuccess: (_, patch) => {
       qc.invalidateQueries({ queryKey: ["funnel"] });
       qc.invalidateQueries({ queryKey: ["card", card!.id] });
@@ -33,6 +34,12 @@ export function QuickCard({ card, meta, onClose }: { card: Card | null; meta?: F
     <Sheet open onClose={onClose} title={card.name}>
       <div className="space-y-4">
         {card.firm && <p className="text-sm text-muted -mt-2">{card.firm}</p>}
+        {card.stale && (
+          <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-300/60 px-3 py-2 text-sm text-amber-900">
+            <span className="w-2 h-2 rounded-full bg-amber-400" /> No update for {card.days_since_update} days. Add a note or set a next contact date.
+          </div>
+        )}
+        <StarPicker starred={card.starred} reason={card.star_reason} busy={save.isPending} onSave={(v) => save.mutate(v)} />
         <div>
           <label className="text-xs font-medium text-muted" htmlFor="qc-stage">
             Stage

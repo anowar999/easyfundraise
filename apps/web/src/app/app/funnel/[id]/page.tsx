@@ -2,10 +2,12 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowLeft, Bell, Check, Copy, ExternalLink, MessageCircle, Pencil, Phone, Send, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeft, Bell, Check, Copy, ExternalLink, Mail, MessageCircle, Pencil, Phone, Sparkles, Star, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Fragment, useEffect, useState } from "react";
+import { CardMail } from "@/components/CardMail";
+import { StarPicker } from "../StarPicker";
 import { MeetingBrief, RoomActivity } from "@/components/CardExtras";
 import { ErrorState, Field, ListSkeleton, Sheet, StatusBadge, errText, useToast } from "@/components/ui";
 import { api, fmtDate, timeAgo } from "@/lib/api";
@@ -39,6 +41,7 @@ export default function CardPage() {
   const [callAt, setCallAt] = useState("");
   const [editing, setEditing] = useState(false);
   const [allActivity, setAllActivity] = useState(false);
+  const [mailOpen, setMailOpen] = useState(false);
 
   useEffect(() => {
     if (q.data) setForm(Object.fromEntries(EDITABLE.map((k) => [k, q.data[k]])) as Partial<Card>);
@@ -123,7 +126,10 @@ export default function CardPage() {
       </Link>
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold truncate">{c.name}</h1>
+          <h1 className="text-xl font-semibold truncate flex items-center gap-2">
+            {c.name}
+            {c.starred && <Star size={18} className="fill-amber-400 text-amber-500 shrink-0" aria-label="Star investor" />}
+          </h1>
           <div className="text-sm text-muted">{c.firm || "—"}</div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <StatusBadge status={c.status} />
@@ -160,6 +166,11 @@ export default function CardPage() {
 
       {/* Quick update: the things that change after every touch */}
       <div className="card p-4 mb-4 space-y-4">
+        {c.stale && (
+          <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-300/60 px-3 py-2 text-sm text-amber-900">
+            <span className="w-2 h-2 rounded-full bg-amber-400" /> No update for {c.days_since_update} days. Add a note or set a next contact date.
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-[auto_auto_1fr] gap-4 md:gap-6">
           <div>
             <div className="label">Status</div>
@@ -197,6 +208,7 @@ export default function CardPage() {
             </div>
           </div>
         </div>
+        <StarPicker starred={c.starred} reason={c.star_reason} busy={patch.isPending} onSave={(v) => patch.mutate(v)} />
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -230,6 +242,9 @@ export default function CardPage() {
           </div>
         )}
         <div className="flex flex-wrap gap-2 pt-3 border-t border-line">
+          <button className="btn-primary btn-sm" onClick={() => setMailOpen(true)}>
+            <Mail size={15} /> Email
+          </button>
           <button className="btn-ghost btn-sm" onClick={() => contacted.mutate(c.contact_method || "Email")}>
             <Check size={15} className="text-brand" /> Mark contacted
           </button>
@@ -253,13 +268,7 @@ export default function CardPage() {
             >
               <Sparkles size={15} className="text-brand" /> Draft emails
             </button>
-          ) : (
-            c.email && (
-              <a className="btn-ghost btn-sm" href={`mailto:${c.email}`}>
-                <Send size={15} className="text-brand" /> Email
-              </a>
-            )
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -438,6 +447,7 @@ export default function CardPage() {
         </div>
       </div>
 
+      <CardMail cardId={c.id} name={c.name} open={mailOpen} onClose={() => setMailOpen(false)} />
       <Sheet open={nudgeOpen} onClose={() => setNudgeOpen(false)} title="Short message">
         {nudge.isLoading && <ListSkeleton rows={2} />}
         {nudge.data && (
