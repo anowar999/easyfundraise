@@ -142,3 +142,30 @@ def test_role_address_skipped(client):
         mailer.send_due(db, first.scheduled_for + timedelta(seconds=1))
         db.refresh(first)
         assert first.status == "cancelled" and "Role address" in first.error
+
+
+def test_card_mail_reads_latest_thread_and_replies_in_it(client):
+    FakeGmail.reset()
+    seq = _approved(client)
+    [first, *_] = _send_all(seq["id"])
+    FakeGmail.inbound(first.gmail_thread_id, "Ada <ada@seedfund.vc>", "Thanks Sam, what's your current MRR?\n\n"
+                      "On Tue, Sam wrote:\n> earlier text", {"message-id": "<ada-1@seedfund.vc>", "subject": "Re: hi"})
+    cid = seq["card_id"]
+    m = client.get(f"/funnel/{cid}/mail").json()
+    assert m["connected"] and m["to"] == "ada@seedfund.vc"
+    assert m["thread_id"] == first.gmail_thread_id and m["reply_to"] == "<ada-1@seedfund.vc>"
+    assert m["thread"][-1]["text"] == "Thanks Sam, what's your current MRR?"  # quoted history stripped
+    d = client.post(f"/funnel/{cid}/mail/draft", json={"ask": "share the new pilot"}).json()
+    assert d["body"].startswith("Hi Ada,") and d["subject"]
+    r = client.post(f"/funnel/{cid}/mail/send", json={"subject": d["subject"], "body": d["body"], "add_signature": True,
+                                                       "thread_id": m["thread_id"], "reply_to": m["reply_to"]}).json()
+    assert r["status"] == "sent", r
+    sent = FakeGmail.sent[-1]
+    assert sent["In-Reply-To"] == "<ada-1@seedfund.vc>" and sent.get_body(preferencelist=("plain",)).get_content().rstrip().endswith("Sam")
+    assert FakeGmail.threads[first.gmail_thread_id][-1].headers["to"] == "ada@seedfund.vc"
+    events = client.get(f"/funnel/{cid}").json()["events"]
+    assert any(e["kind"] == "email" and e["body"].startswith("Email sent:") for e in events)
+    later = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    r = client.post(f"/funnel/{cid}/mail/send", json={"subject": "Later", "body": "Hi Ada,\n\nLater.", "send_at": later,
+                                                       "add_signature": False}).json()
+    assert r["status"] == "scheduled" and r["sent_at"] is None

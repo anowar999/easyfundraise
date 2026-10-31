@@ -45,10 +45,25 @@ def out(card: FunnelCard, last_event: datetime | None = None, today: date | None
         "referrer": card.referrer, "last_contacted_at": card.last_contacted_at,
         "next_contact_date": card.next_contact_date, "call_at": card.call_at,
         "investor_timezone": card.investor_timezone, "source": card.source, "tags": card.tags,
-        "shareable": card.shareable, "created_at": card.created_at, "updated_at": card.updated_at,
+        "shareable": card.shareable, "starred": card.starred, "star_reason": card.star_reason,
+        "created_at": card.created_at, "updated_at": card.updated_at,
         "overdue": bool(card.next_contact_date and card.next_contact_date < today),
         "due_today": card.next_contact_date == today, "heat": heat(card, last_event),
+        **_activity(card, last_event),
     }
+
+
+STALE_DAYS = 7
+
+
+def _activity(card: FunnelCard, last_event: datetime | None) -> dict:
+    """When anything last happened on the card (note, email, stage/status change, edit) and whether an open
+    investor has gone 7+ days without an update."""
+    seen = [x for x in (last_event, card.updated_at, card.last_contacted_at, card.created_at) if x]
+    last = max(seen) if seen else None
+    days = (datetime.now(UTC) - last).days if last else 0
+    return {"last_activity_at": last, "days_since_update": days,
+            "stale": card.status in ("Active", "Ghosting") and days >= STALE_DAYS}
 
 
 @router.get("/meta")
@@ -103,6 +118,8 @@ class CardIn(BaseModel):
     investor_timezone: str | None = Field(None, max_length=64)
     tags: list[str] | None = Field(None, max_length=20)
     shareable: bool | None = None
+    starred: bool | None = None
+    star_reason: str | None = Field(None, max_length=200)
     investor_id: str | None = None
 
 
@@ -162,6 +179,9 @@ def apply(c: Ctx, card: FunnelCard, body: CardIn) -> None:
                           due_at=data["call_at"] - timedelta(hours=24)))
     if "next_contact_date" in data:
         set_next_contact(c, card, data.pop("next_contact_date"))
+    if "starred" in data and data["starred"] != card.starred:
+        reason = data.get("star_reason", card.star_reason) or ""
+        _event(c, card, "star", ("Starred" + (f": {reason}" if reason else "")) if data["starred"] else "Unstarred")
     for k, v in data.items():
         setattr(card, k, v.strip() if isinstance(v, str) else v)
 
@@ -455,3 +475,92 @@ async def import_commit(file: UploadFile, sheet: str, mapping: str, update_exist
     c.db.commit()
     return {"created": created, "updated": updated, "linked": linked, "skipped": len(sh.data_rows()) - len(rows)}
 
+
+
+# ---------- Mail on the card: latest Gmail thread, AI update, reply in thread ----------
+
+@router.get("/{cid}/mail")
+def card_mail(cid: str, c: Ctx = Depends(ctx)):
+    from ..models import GmailAccount
+    from ..services import card_mail
+
+    card = _get(c, cid)
+    to = card_mail.address(c.db, c.ws_id, card)
+    acc = c.db.get(GmailAccount, c.user.id)
+    base = {"to": to, "connected": bool(acc and acc.status == "connected"), "from": acc.email if acc else "",
+            "signature": c.user.signature, "thread": [], "thread_id": "", "reply_to": ""}
+    if not to or not base["connected"]:
+        return base
+    msgs = card_mail.latest_thread(c.db, acc, to)
+    c.db.commit()  # a refreshed access token
+    if not msgs:
+        return base
+    return {**base, "thread": [card_mail.msg_out(m, acc.email) for m in msgs[-10:]], "thread_id": msgs[-1].thread_id,
+            "reply_to": msgs[-1].rfc_message_id}
+
+
+class MailDraftIn(BaseModel):
+    ask: str = Field("", max_length=500)
+
+
+@router.post("/{cid}/mail/draft")
+def card_mail_draft(cid: str, body: MailDraftIn | None = None, c: Ctx = Depends(ctx)):
+    from ..models import GmailAccount
+    from ..services import card_mail
+    from ..services.entitlements import rate_limit
+
+    rate_limit(c.db, f"card-mail:{c.user.id}", 20, 60)
+    card = _get(c, cid)
+    to = card_mail.address(c.db, c.ws_id, card)
+    acc = c.db.get(GmailAccount, c.user.id)
+    thread = card_mail.latest_thread(c.db, acc, to) if to and acc and acc.status == "connected" else []
+    out = card_mail.draft_reply(c.db, c.workspace, card, thread, body.ask if body else "")
+    c.db.commit()
+    return out
+
+
+class MailSendIn(BaseModel):
+    subject: str = Field(min_length=1, max_length=300)
+    body: str = Field(min_length=1, max_length=10000)
+    add_signature: bool = True
+    thread_id: str = Field("", max_length=200)
+    reply_to: str = Field("", max_length=500)  # Message-ID of the message being answered
+    send_at: datetime | None = None  # later = held and sent from the founder's Gmail at that time
+
+
+@router.post("/{cid}/mail/send")
+def card_mail_send(cid: str, body: MailSendIn, c: Ctx = Depends(ctx)):
+    from ..models import Email, GmailAccount
+    from ..services import card_mail, mailer
+    from ..services.entitlements import can
+
+    c.require_editor()
+    card = _get(c, cid)
+    if not can(c.db, c.workspace, "send"):
+        raise ApiError(402, "EF-TIER-030", "Upgrade to send emails", "Trial accounts can draft but not send.",
+                       {"upgrade": True})
+    to = card_mail.address(c.db, c.ws_id, card)
+    if not to:
+        raise ApiError(409, "EF-MAIL-020", "Add this investor's email first", "", {"needs_email": True})
+    acc = c.db.get(GmailAccount, c.user.id)
+    if acc is None or acc.status != "connected":
+        raise ApiError(409, "EF-SEQ-007", "Connect Gmail to send", "Emails go out from your own Gmail.",
+                       {"needs_gmail": True})
+    now = datetime.now(UTC)
+    text = body.body.strip()
+    if body.add_signature and c.user.signature.strip() and not text.endswith(c.user.signature.strip()):
+        text = f"{text}\n\n{c.user.signature.strip()}"
+    at = card_mail.when(body.send_at, now)
+    em = Email(workspace_id=c.ws_id, card_id=card.id, user_id=c.user.id, to_email=to, step=1, hook="reply",
+               subject=body.subject.strip(), body=text, status="scheduled", scheduled_for=at,
+               gmail_thread_id=body.thread_id, rfc_message_id=body.reply_to)
+    c.db.add(em)
+    c.db.flush()
+    if at > now:
+        _event(c, card, "email", f"Email scheduled for {at:%d %b %Y %H:%M} UTC: {em.subject}")
+    else:
+        mailer._send_one(c.db, em, now)
+    c.audit("card.mail", str(card.id), after={"status": em.status})
+    c.db.commit()
+    return {"id": str(em.id), "status": em.status, "scheduled_for": em.scheduled_for, "sent_at": em.sent_at,
+            "error": em.error}

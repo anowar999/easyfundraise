@@ -155,7 +155,10 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     if acc is None or acc.status != "connected":
         _reschedule(em, now, tz, "Gmail not connected")
         return 0
-    if acc.next_send_at and acc.next_send_at > now:  # MAIL-06 pacing: never bursts
+    # A one-off email the founder wrote and sent from a tracker card (often a reply in an ongoing conversation):
+    # the daily cap still counts it, but cold-outreach pacing and the per-firm cap don't hold it back.
+    direct = seq is None and not em.broadcast_id
+    if acc.next_send_at and acc.next_send_at > now and not direct:  # MAIL-06 pacing: never bursts
         em.scheduled_for = acc.next_send_at
         return 0
 
@@ -172,7 +175,7 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
         return 0
     per_domain = int(cfg(db, "sending", {}).get("per_domain_daily_cap", 3))
     start = now - timedelta(hours=24)
-    if db.scalar(select(func.count()).select_from(Email).where(
+    if not direct and db.scalar(select(func.count()).select_from(Email).where(
             Email.workspace_id == ws.id, Email.sent_at > start,
             func.lower(Email.to_email).like(f"%@{domain(em.to_email)}"))) >= per_domain:
         _reschedule(em, now, tz, "Per-firm daily cap reached")
@@ -188,17 +191,20 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
             em.status, em.error = "cancelled", "First email was not sent"
             return 0
 
+    # A one-off reply written on a tracker card carries the Gmail thread and the Message-ID it answers.
+    reply_thread, reply_to = (em.gmail_thread_id, em.rfc_message_id) if direct else ("", "")
+
     em.open_token = em.open_token or secrets.token_urlsafe(18)
     html_part = pixel_html(em.body, em.open_token) if ws.tracking_enabled else None
     unsub = ""
     if em.broadcast_id and db.get(Broadcast, em.broadcast_id).kind == "investor_update":  # MAIL-07
         unsub = f"<mailto:{acc.email}?subject=unsubscribe>"
     mime = build_mime(sender=acc.email, sender_name=user.name, to=em.to_email, subject=em.subject, text=em.body,
-                      html=html_part, in_reply_to=first.rfc_message_id if first else "", list_unsubscribe=unsub)
+                      html=html_part, in_reply_to=first.rfc_message_id if first else reply_to, list_unsubscribe=unsub)
     em.status = "sending"
     db.flush()
     try:
-        res = client_for(db, acc).send(mime, first.gmail_thread_id if first else "")
+        res = client_for(db, acc).send(mime, first.gmail_thread_id if first else reply_thread)
     except GmailRevoked:
         acc.status = "revoked"  # AUTH-03: pause all sends, tell the user
         em.status = "scheduled"
@@ -218,7 +224,8 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     if card:
         card.last_contacted_at = now
         db.add(CardEvent(workspace_id=ws.id, card_id=card.id, user_id=user.id, kind="email",
-                         body=f"Email {em.step} sent: {em.subject}" if seq else f"Update sent: {em.subject}"))
+                         body=f"Email {em.step} sent: {em.subject}" if seq else
+                         f"Email sent: {em.subject}\n\n{em.body}" if direct else f"Update sent: {em.subject}"))
     if seq is not None and em.step == 3:
         # §10.4: no reply 7 days after E3 → ghosting suggestion
         db.add(Reminder(workspace_id=ws.id, user_id=user.id, card_id=em.card_id,

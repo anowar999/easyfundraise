@@ -5,6 +5,7 @@ a FakeGmail that records messages in memory so the whole send/reply pipeline can
 """
 
 import base64
+import re
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -53,6 +54,44 @@ class ThreadMessage:
     snippet: str
     headers: dict = field(default_factory=dict)
     at: datetime | None = None
+
+
+@dataclass
+class FullMessage:
+    id: str
+    thread_id: str
+    sender: str
+    to: str
+    subject: str
+    text: str
+    rfc_message_id: str
+    at: datetime | None = None
+
+
+def _plain(payload: dict) -> str:
+    """First text/plain part of a Gmail message payload (falls back to stripped HTML)."""
+    stack, html = [payload], ""
+    while stack:
+        part = stack.pop(0)
+        data = part.get("body", {}).get("data")
+        mt = part.get("mimeType", "")
+        if data and mt == "text/plain":
+            return base64.urlsafe_b64decode(data + "==").decode("utf-8", "replace")
+        if data and mt == "text/html" and not html:
+            html = re.sub(r"<[^>]+>", " ", base64.urlsafe_b64decode(data + "==").decode("utf-8", "replace"))
+        stack.extend(part.get("parts", []))
+    return html
+
+
+def strip_quoted(text: str) -> str:
+    """Drop the quoted history under a reply ("On ... wrote:" and "> " lines) so each message reads on its own."""
+    out = []
+    for line in text.replace("\r\n", "\n").split("\n"):
+        if re.match(r"^On .+wrote:\s*$", line.strip()) or line.strip().startswith("-----Original Message"):
+            break
+        if not line.startswith(">"):
+            out.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
 
 
 def build_mime(*, sender: str, sender_name: str, to: str, subject: str, text: str, html: str | None = None,
@@ -123,6 +162,23 @@ class GoogleGmail:
                                      datetime.fromtimestamp(int(m.get("internalDate", "0")) / 1000, UTC)))
         return out
 
+    def latest_thread_with(self, addr: str) -> str | None:
+        """Thread id of the most recent message to or from this address, in Inbox or Sent."""
+        j = self._req("GET", "/messages", params={"q": f"from:{addr} OR to:{addr}", "maxResults": 1})
+        msgs = j.get("messages") or []
+        return msgs[0]["threadId"] if msgs else None
+
+    def thread_full(self, thread_id: str) -> list[FullMessage]:
+        j = self._req("GET", f"/threads/{thread_id}", params={"format": "full"})
+        out = []
+        for m in j.get("messages", []):
+            hdr = {h["name"].lower(): h["value"] for h in m.get("payload", {}).get("headers", [])}
+            out.append(FullMessage(m["id"], m["threadId"], hdr.get("from", ""), hdr.get("to", ""), hdr.get("subject", ""),
+                                   strip_quoted(_plain(m.get("payload", {})) or m.get("snippet", "")),
+                                   hdr.get("message-id", ""),
+                                   datetime.fromtimestamp(int(m.get("internalDate", "0")) / 1000, UTC)))
+        return out
+
     def changed_threads(self) -> set[str] | None:
         """Thread ids touched since the stored historyId (MAIL-03 polling via history.list). None = full scan."""
         if not self.acc.history_id:
@@ -160,8 +216,20 @@ class FakeGmail:
         mid = "m_" + secrets.token_hex(6)
         FakeGmail.sent.append(mime)
         text = mime.get_body(preferencelist=("plain",)).get_content()
-        FakeGmail.threads.setdefault(tid, []).append(ThreadMessage(mid, self.acc.email, text[:200], {}, datetime.now(UTC)))
+        FakeGmail.threads.setdefault(tid, []).append(ThreadMessage(
+            mid, self.acc.email, text, {"to": mime["To"], "subject": mime["Subject"], "message-id": mime["Message-ID"]},
+            datetime.now(UTC)))
         return Sent(mid, tid, mime["Message-ID"])
+
+    def latest_thread_with(self, addr: str) -> str | None:
+        hits = [(m.at, tid) for tid, ms in FakeGmail.threads.items() for m in ms
+                if addr.lower() in (m.sender.lower(), str(m.headers.get("to", "")).lower())]
+        return max(hits)[1] if hits else None
+
+    def thread_full(self, thread_id: str) -> list[FullMessage]:
+        return [FullMessage(m.id, thread_id, m.sender, str(m.headers.get("to", "")), str(m.headers.get("subject", "")),
+                            strip_quoted(m.snippet), str(m.headers.get("message-id", "")), m.at)
+                for m in FakeGmail.threads.get(thread_id, [])]
 
     def thread(self, thread_id: str) -> list[ThreadMessage]:
         return list(FakeGmail.threads.get(thread_id, []))

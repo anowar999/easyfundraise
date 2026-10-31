@@ -55,6 +55,11 @@ export type Card = {
   overdue: boolean;
   due_today: boolean;
   heat: "hot" | "warm" | "cold";
+  last_activity_at: string | null;
+  days_since_update: number;
+  stale: boolean;
+  starred: boolean;
+  star_reason: string;
 };
 
 export type FunnelMeta = {

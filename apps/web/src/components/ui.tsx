@@ -138,7 +138,7 @@ export function ErrorState({ error, retry }: { error: unknown; retry?: () => voi
 }
 
 /** Bottom sheet on phones, centred dialog on larger screens. */
-export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
+export function Sheet({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -154,7 +154,7 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
   return createPortal(
     <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center" role="dialog" aria-modal="true" aria-label={title}>
       <button className="absolute inset-0 bg-black/40" aria-label="Close" onClick={onClose} />
-      <div className="relative w-full sm:max-w-lg max-h-[88vh] overflow-y-auto bg-card rounded-t-2xl sm:rounded-2xl border border-line shadow-xl safe-bottom">
+      <div className={`relative w-full ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"} max-h-[88vh] overflow-y-auto bg-card rounded-t-2xl sm:rounded-2xl border border-line shadow-xl safe-bottom`}>
         <div className="sticky top-0 bg-card flex items-center justify-between px-4 py-3 border-b border-line">
           <div className="font-semibold">{title}</div>
           <button className="p-1 text-muted" onClick={onClose} aria-label="Close">

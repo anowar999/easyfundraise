@@ -358,6 +358,8 @@ class FunnelCard(Base):
     source: Mapped[str] = mapped_column(String(16), default="Manual")
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
     shareable: Mapped[bool] = mapped_column(Boolean, default=False)
+    starred: Mapped[bool] = mapped_column(Boolean, default=False)  # a key investor: can lead, great intros, ...
+    star_reason: Mapped[str] = mapped_column(String(200), default="")
     created_at: Mapped[datetime] = created()
     updated_at: Mapped[datetime] = updated()
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

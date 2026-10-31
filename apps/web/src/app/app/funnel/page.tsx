@@ -14,7 +14,7 @@ import {
 } from "@dnd-kit/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertCircle, ArrowRightLeft, Check, Download, Flame, LayoutGrid, Plus, Rows3, Search, Snowflake, Upload } from "lucide-react";
+import { AlertCircle, ArrowRightLeft, Check, Download, Flame, LayoutGrid, Plus, Rows3, Search, Snowflake, Star, Upload } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
@@ -23,6 +23,7 @@ import { Empty, ErrorState, Field, ListSkeleton, Sheet, StatusBadge, errText, us
 import { api, fmtDate, qs } from "@/lib/api";
 import type { Card, FunnelMeta } from "@/lib/types";
 import { QuickCard } from "./QuickCard";
+import { ActionTray, DEFAULT_STATUSES, StaleDot, StarMark, StatusMulti } from "./TrackerBits";
 
 const SHORT = ["Not started", "Intro req.", "In contact", "First call", "Deck req.", "Deep dive", "Term sheet", "Signed", "Paid"];
 
@@ -37,7 +38,11 @@ function CardBody({ c }: { c: Card }) {
     <>
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium truncate">{c.name}</div>
+          <div className="text-sm font-medium flex items-center gap-1.5 min-w-0">
+            <span className="truncate">{c.name}</span>
+            <StarMark c={c} />
+            <StaleDot c={c} />
+          </div>
           <div className="text-xs text-muted truncate">{c.firm || "—"}</div>
         </div>
         <span className="text-[10px] font-mono text-muted border border-line rounded px-1">{c.priority}</span>
@@ -98,7 +103,8 @@ function FunnelInner() {
   const toast = useToast();
   const [view, setView] = useState<"board" | "table">("board");
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState(OPEN); // default: hide inactive and rejected investors
+  const [statuses, setStatuses] = useState<string[]>(DEFAULT_STATUSES); // Inactive and Rejected hidden by default
+  const [starredOnly, setStarredOnly] = useState(false);
   const [needsAction, setNeedsAction] = useState(params.get("needs_action") === "1");
   const [mobileStage, setMobileStage] = useState<number>(Number(params.get("stage") ?? 0));
   const [moving, setMoving] = useState<Card | null>(null);
@@ -107,11 +113,11 @@ function FunnelInner() {
   const [openId, setOpenId] = useState<string | null>(null);
 
   const meta = useQuery<FunnelMeta>({ queryKey: ["funnel-meta"], queryFn: () => api("/funnel/meta"), staleTime: Infinity });
-  const filters = { q: search, status: status === OPEN || status === "all" ? "" : status, needs_action: needsAction };
+  const filters = { q: search, needs_action: needsAction };
   const list = useQuery<{ items: Card[] }>({ queryKey: ["funnel", filters], queryFn: () => api(`/funnel${qs(filters)}`) });
   const all = list.data?.items ?? [];
-  const cards = status === OPEN ? all.filter((c) => !CLOSED.includes(c.status)) : all;
-  const hidden = all.length - cards.length;
+  const cards = all.filter((c) => statuses.includes(c.status) && (!starredOnly || c.starred));
+  const hidden = all.filter((c) => !statuses.includes(c.status)).length;
   const byStage = useMemo(() => {
     const m: Record<number, Card[]> = {};
     for (let i = 1; i <= 9; i++) m[i] = [];
@@ -191,18 +197,15 @@ function FunnelInner() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input className="input pl-9" placeholder="Search name or firm" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <select className="input w-auto" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-          <option value={OPEN}>Hide inactive &amp; rejected</option>
-          <option value="all">All statuses</option>
-          {meta.data?.statuses.map((s) => (
-            <option key={s}>{s}</option>
-          ))}
-        </select>
+        <StatusMulti all={meta.data?.statuses ?? [...DEFAULT_STATUSES, "Inactive", "Rejection"]} value={statuses} onChange={setStatuses} />
+        <button className={clsx("chip px-3 py-2 text-sm", starredOnly && "bg-amber-400 text-white border-amber-400")} onClick={() => setStarredOnly((x) => !x)}>
+          <Star size={14} className={starredOnly ? "fill-white" : "text-amber-500"} /> Starred
+        </button>
         <button className={clsx("chip px-3 py-2 text-sm", needsAction && "bg-brand text-white border-brand")} onClick={() => setNeedsAction((x) => !x)}>
           Needs action
         </button>
         {hidden > 0 && (
-          <button className="text-sm text-brand" onClick={() => setStatus("all")}>
+          <button className="text-sm text-brand" onClick={() => setStatuses(meta.data?.statuses ?? [...DEFAULT_STATUSES, "Inactive", "Rejection"])}>
             Show {hidden} hidden
           </button>
         )}
@@ -218,7 +221,8 @@ function FunnelInner() {
 
       {list.isLoading && <ListSkeleton />}
       {list.error && <ErrorState error={list.error} retry={() => list.refetch()} />}
-      {list.data && all.length === 0 && !search && status === OPEN && !needsAction && (
+      {list.data && all.length > 0 && <ActionTray cards={all} onOpen={setOpenId} />}
+      {list.data && all.length === 0 && !search && !needsAction && (
         <Empty
           title="Your investor tracker is empty"
           body="Import your existing tracker, add investors from the database, or add someone manually."
@@ -303,7 +307,11 @@ function FunnelInner() {
             <tbody>
               {cards.map((c) => (
                 <tr key={c.id} className="border-b border-line last:border-0 hover:bg-surface cursor-pointer" onClick={() => setOpenId(c.id)}>
-                  <td className="px-3 py-2 font-medium whitespace-nowrap">{c.name}</td>
+                  <td className="px-3 py-2 font-medium whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1.5">
+                      {c.name} <StarMark c={c} /> <StaleDot c={c} />
+                    </span>
+                  </td>
                   <td className="px-3 py-2 text-muted">{c.firm}</td>
                   <td className="px-3 py-2 text-muted whitespace-nowrap">{c.investor_type}</td>
                   <td className="px-3 py-2 font-mono text-xs">{c.priority}</td>
@@ -412,9 +420,6 @@ function AddCard({ open, onClose, meta }: { open: boolean; onClose: () => void; 
     </Sheet>
   );
 }
-
-const OPEN = "open";
-const CLOSED = ["Inactive", "Rejection"];
 
 export default function FunnelPage() {
   return (

@@ -52,3 +52,11 @@ def test_export_is_own_data_and_watermarked(client):
     client.post("/funnel", json={"name": "Export Me", "email": "e@x.com"})
     r = client.get("/funnel/export/csv")
     assert r.status_code == 200 and "Export Me" in r.text and "exported by EasyFundraise workspace" in r.text
+
+
+def test_star_and_stale(client):
+    card = client.post("/funnel", json={"name": "Grace Hopper", "firm": "Navy Ventures"}).json()
+    assert card["starred"] is False and card["stale"] is False and card["days_since_update"] == 0
+    r = client.patch(f"/funnel/{card['id']}", json={"starred": True, "star_reason": "Can lead"}).json()
+    assert r["starred"] and r["star_reason"] == "Can lead"
+    assert any(e["body"] == "Starred: Can lead" for e in client.get(f"/funnel/{card['id']}").json()["events"])
