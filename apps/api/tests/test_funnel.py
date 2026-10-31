@@ -69,3 +69,23 @@ def test_card_summary_follows_up_on_notes(client):
     client.post(f"/funnel/{card['id']}/notes", json={"body": "Waiting for our deck"})
     s = client.get(f"/funnel/{card['id']}/summary").json()
     assert "Waiting for our deck" in s["headline"] and "Did you send it" in s["next_step"]
+
+
+def test_card_summary_waits_after_a_sent_note_or_scheduled_email(client):
+    from datetime import UTC, datetime, timedelta
+
+    from app.db import SessionLocal
+    from app.models import Email, FunnelCard
+
+    card = client.post("/funnel", json={"name": "Ada Byron", "firm": "Engine Capital"}).json()
+    client.post(f"/funnel/{card['id']}/notes", json={"body": "Deck sent on 31/01"})
+    s = client.get(f"/funnel/{card['id']}/summary").json()
+    assert "not contacted" not in s["headline"] and "Waiting on their reply" in s["next_step"]
+    with SessionLocal() as db:
+        c = db.get(FunnelCard, card["id"])
+        db.add(Email(workspace_id=c.workspace_id, card_id=c.id, to_email="ada@engine.vc", step=1, hook="reply",
+                     subject="Re: deck", body="Hi", status="scheduled",
+                     scheduled_for=datetime.now(UTC) + timedelta(minutes=5)))
+        db.commit()
+    s = client.get(f"/funnel/{card['id']}/summary").json()
+    assert "scheduled" in s["headline"] and "Wait for their reply" in s["next_step"]

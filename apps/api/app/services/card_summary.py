@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import STAGES, CardEvent, FunnelCard, Workspace
+from ..models import STAGES, CardEvent, Email, FunnelCard, Workspace
 from . import ai
 
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["headline", "next_step"],
@@ -24,10 +24,23 @@ def _days(d: datetime | None, now: datetime) -> int | None:
     return (now - d).days if d else None
 
 
-def rules(card: FunnelCard, events: list[CardEvent], now: datetime) -> dict:
+def last_touch(card: FunnelCard, events: list[CardEvent], emails: list[Email]) -> datetime | None:
+    """When the founder last reached out: the card's date, a sent email, or a note saying something went out."""
+    times = [card.last_contacted_at] + [e.sent_at for e in emails if e.sent_at] + \
+        [e.created_at for e in events if (e.kind == "email" and e.body.startswith("Email sent"))
+         or (e.kind == "note" and SENT.search(e.body))]
+    times = [t for t in times if t]
+    return max(times) if times else None
+
+
+def rules(card: FunnelCard, events: list[CardEvent], now: datetime, emails: list[Email] | None = None) -> dict:
+    emails = emails or []
     stage = STAGES[card.stage - 1].split(" ", 1)[-1]
-    last = _days(card.last_contacted_at, now)
+    touched = last_touch(card, events, emails)
+    last = _days(touched, now)
     notes = [e for e in events if e.kind == "note"]
+    pending = sorted((e for e in emails if e.status in ("scheduled", "sending") and e.scheduled_for),
+                     key=lambda e: e.scheduled_for)
     reply = next((e for e in events if e.kind == "reply"), None)
     sent_after_note = notes and any(e.kind == "email" and e.created_at > notes[0].created_at for e in events)
     when = "never contacted" if last is None else "last contact today" if last == 0 else f"last contact {last} day{'s' * (last != 1)} ago"
@@ -36,10 +49,14 @@ def rules(card: FunnelCard, events: list[CardEvent], now: datetime) -> dict:
         return {"headline": f"They passed ({when}).", "next_step": "Log why they passed if you haven't, and ask if they'd intro a better-fit investor."}
     if card.status == "Inactive":
         return {"headline": f"Marked inactive · {when}.", "next_step": "Nothing to do unless they come back. Reactivate the card if they do."}
-    if reply and (not card.last_contacted_at or reply.created_at > card.last_contacted_at):
+    if reply and (not touched or reply.created_at > touched):
         days = _days(reply.created_at, now) or 0
         return {"headline": f"They replied {'today' if not days else f'{days} days ago'}: “{reply.body[:120]}”",
                 "next_step": "Reply to keep the momentum. Use Email to answer in the same thread."}
+    if pending:
+        e = pending[0]
+        return {"headline": f"{head} Email “{e.subject[:80]}” is scheduled for {e.scheduled_for:%a %d %b, %H:%M} UTC.",
+                "next_step": "Nothing to do now. Wait for their reply; follow up if you hear nothing within a week."}
     if card.call_at and card.call_at > now:
         return {"headline": f"{head} Call booked for {card.call_at:%a %d %b, %H:%M}.",
                 "next_step": "Prep your brief and send any material they asked for before the call."}
@@ -54,6 +71,10 @@ def rules(card: FunnelCard, events: list[CardEvent], now: datetime) -> dict:
         return {"headline": head, "next_step": "Follow up today."}
     if last is None:
         return {"headline": f"{stage} · not contacted yet.", "next_step": "Send a short, personalised intro email."}
+    if notes and touched and notes[0].created_at <= touched + timedelta(minutes=5) and SENT.search(notes[0].body):
+        return {"headline": f"{head} Your last note: “{notes[0].body[:140]}”",
+                "next_step": "Waiting on their reply. Follow up if you hear nothing within a week of sending."
+                if last < 7 else "No reply in over a week. Send a short follow-up."}
     if last >= 7:
         return {"headline": head, "next_step": "Time to follow up with a short update."}
     return {"headline": head, "next_step": f"Set a next contact date{' for next week' if last <= 3 else ''} so it doesn't go quiet."}
@@ -62,18 +83,28 @@ def rules(card: FunnelCard, events: list[CardEvent], now: datetime) -> dict:
 def summary(db: Session, ws: Workspace, card: FunnelCard) -> dict:
     events = db.scalars(select(CardEvent).where(CardEvent.card_id == card.id)
                         .order_by(CardEvent.created_at.desc()).limit(15)).all()
-    key = (card.id, card.updated_at, events[0].created_at if events else None)
+    emails = db.scalars(select(Email).where(Email.card_id == card.id)
+                        .order_by(Email.updated_at.desc()).limit(10)).all()
+    now = datetime.now(UTC)
+    key = (card.id, card.updated_at, events[0].created_at if events else None,
+           tuple((e.id, e.status) for e in emails), now.date())
     if key in _cache:
         return _cache[key]
-    now = datetime.now(UTC)
-    base = rules(card, events, now)
+    base = rules(card, events, now, emails)
+    touched = last_touch(card, events, emails)
     system = ("You brief a startup founder on one investor in their fundraise. Give a one-sentence headline of where "
-              "things stand (stage, last contact, anything outstanding) and the single most useful next step. Be "
-              "specific and short; quote the founder's own note when it shows something outstanding (e.g. a deck they "
-              "promised). Use only the facts given. No greetings.")
+              "things stand (stage, last contact, anything outstanding) and the single most useful next step. Base it "
+              "on the most recent activity: the newest note, emails sent or scheduled, and replies. If an email is "
+              "scheduled or was just sent, the step is to wait for their reply (say until when to follow up), never "
+              "to send an intro. If the newest note says something was sent, treat it as done. Quote the founder's "
+              "own note when it shows something outstanding (e.g. a deck they promised). Be specific and short. Use "
+              "only the facts given. No greetings.")
     facts = {"investor": card.name, "firm": card.firm, "stage": STAGES[card.stage - 1], "status": card.status,
              "priority": card.priority, "today": str(date.today()),
-             "days_since_last_contact": _days(card.last_contacted_at, now),
+             "days_since_last_contact": _days(touched, now),
+             "emails_newest_first": [{"subject": e.subject[:120], "status": e.status,
+                                      "scheduled_for": str(e.scheduled_for or ""), "sent_days_ago": _days(e.sent_at, now),
+                                      "replied": bool(e.replied_at)} for e in emails[:5]],
              "next_contact_date": str(card.next_contact_date or ""), "call_at": str(card.call_at or ""),
              "recent_activity_newest_first": [{"kind": e.kind, "text": e.body[:300], "days_ago": _days(e.created_at, now)}
                                               for e in events[:10]],
