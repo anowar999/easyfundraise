@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +26,8 @@ class Settings(BaseSettings):
     tracking_base_url: str = "http://localhost:3000/api"
     # §9 AI layer. The Anthropic SDK reads ANTHROPIC_API_KEY itself; this only turns the AI paths on.
     ai_enabled: bool = True
+    # Read from .env too (pydantic-settings doesn't export .env to os.environ, which the SDK reads)
+    anthropic_api_key: str = Field("", validation_alias=AliasChoices("ANTHROPIC_API_KEY", "EF_ANTHROPIC_API_KEY"))
     ai_model_frontier: str = "claude-opus-5-5"
     ai_model_small: str = "claude-haiku-5-5"
     # §6 billing

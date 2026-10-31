@@ -33,13 +33,13 @@ SAFETY = (
 
 def available() -> bool:
     s = get_settings()
-    return s.ai_enabled and bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    return s.ai_enabled and bool(s.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
 
 
 def client() -> anthropic.Anthropic:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic(max_retries=2, timeout=120)
+        _client = anthropic.Anthropic(api_key=get_settings().anthropic_api_key or None, max_retries=2, timeout=120)
     return _client
 
 
