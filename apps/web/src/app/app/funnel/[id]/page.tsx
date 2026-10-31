@@ -8,6 +8,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Fragment, useEffect, useState } from "react";
 import { CardMail } from "@/components/CardMail";
 import { StarPicker } from "../StarPicker";
+import { StatusNote, useCardChange } from "../StatusNote";
 import { MeetingBrief, RoomActivity } from "@/components/CardExtras";
 import { ErrorState, Field, ListSkeleton, Sheet, StatusBadge, errText, useToast } from "@/components/ui";
 import { api, fmtDate, timeAgo } from "@/lib/api";
@@ -42,6 +43,15 @@ export default function CardPage() {
   const [editing, setEditing] = useState(false);
   const [allActivity, setAllActivity] = useState(false);
   const [mailOpen, setMailOpen] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const [statusNote, setStatusNote] = useState("");
+  const [reason, setReason] = useState("");
+  const statusChange = useCardChange(id, () => {
+    toast("Status saved");
+    setPending(null);
+    setStatusNote("");
+    setReason("");
+  });
 
   useEffect(() => {
     if (q.data) setForm(Object.fromEntries(EDITABLE.map((k) => [k, q.data[k]])) as Partial<Card>);
@@ -176,7 +186,12 @@ export default function CardPage() {
             <div className="label">Status</div>
             <div className="flex flex-wrap gap-1.5">
               {meta.data?.statuses.map((s) => (
-                <button key={s} type="button" className={pill(c.status === s)} disabled={patch.isPending} onClick={() => c.status !== s && patch.mutate({ status: s })}>
+                <button
+                  key={s}
+                  type="button"
+                  className={clsx(pill((pending || c.status) === s), pending && c.status === s && "bg-transparent text-ink border-brand/40 border-dashed")}
+                  onClick={() => setPending(s === c.status ? null : s)}
+                >
                   {s === "Rejection" ? "Rejected" : s}
                 </button>
               ))}
@@ -208,6 +223,26 @@ export default function CardPage() {
             </div>
           </div>
         </div>
+        {pending && (
+          <div className="space-y-2">
+            <div className="text-sm">
+              Change status from <b>{c.status === "Rejection" ? "Rejected" : c.status}</b> to <b>{pending === "Rejection" ? "Rejected" : pending}</b>
+            </div>
+            <StatusNote status={pending} note={statusNote} setNote={setStatusNote} reason={reason} setReason={setReason} />
+            <div className="flex gap-2">
+              <button
+                className="btn-primary btn-sm"
+                disabled={statusChange.isPending}
+                onClick={() => statusChange.mutate({ change: { status: pending }, note: statusNote, reason: pending === "Rejection" ? reason : "" }, { onError: (e) => toast(errText(e), "err") })}
+              >
+                Save status
+              </button>
+              <button className="btn-ghost btn-sm" onClick={() => setPending(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
         <StarPicker starred={c.starred} reason={c.star_reason} busy={patch.isPending} onSave={(v) => patch.mutate(v)} />
         <form
           onSubmit={(e) => {
