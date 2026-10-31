@@ -1,0 +1,21 @@
+# EasyFundraise
+
+> EasyFundraise is an AI-powered fundraising workspace for founders raising angel, pre-seed and seed rounds. It helps founders find the right investors, contact them with short personalised emails, track every conversation in a fundraising-native CRM, and stay on top of follow-ups with a personal AI agent.
+
+## Features
+- Investor discovery: search and filter investors by sector, stage, geography, check size, firm type and decision-maker role, with researched profiles (thesis, portfolio, recent deals, how to pitch).
+- Fit scoring: investors ranked for your company profile with the reasons.
+- Personalised outreach: three-email sequences grounded in each investor's own thesis and deals, sent from the founder's own Gmail.
+- Investor CRM: drag-and-drop funnel from "Not started" to "Payment received", reminders, notes and imports from existing spreadsheets.
+- Notifications and a daily brief of follow-ups due and investors going cold.
+
+## Key pages
+- https://easyfundraise.com/ : product overview
+- https://easyfundraise.com/legal/privacy : privacy policy
+- https://easyfundraise.com/legal/terms : terms
+- https://easyfundraise.com/legal/data-sources : data sources and investor rights
+- https://easyfundraise.com/investor-request : investors can update or remove their profile
+- https://easyfundraise.com/investors : investor lists by country (angel, pre-seed, seed, VC) and by sector
+- https://easyfundraise.com/blog : fundraising guides (finding investors, cold email templates, pre-seed vs seed)
+- https://easyfundraise.com/glossary : fundraising glossary
+- https://easyfundraise.com/legal/cookies : cookie policy

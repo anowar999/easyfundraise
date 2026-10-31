@@ -1,0 +1,64 @@
+export type Fit = { score: number; reasons: string[]; warnings: string[] };
+
+export type InvestorCard = {
+  id: string;
+  name: string;
+  title: string;
+  firm: string;
+  listed_company: string;
+  location: string;
+  photo_url: string;
+  industries: string[];
+  investor_type: string;
+  investor_type_label: string;
+  seed_fit: boolean | null;
+  is_decision_maker: boolean | null;
+  enriched: boolean;
+  identity_confidence: string | null;
+  verified_recent_deal: boolean;
+  thesis_summary: string;
+  check_size: string;
+  has_email: boolean;
+  in_funnel: boolean;
+  fit?: Fit;
+};
+
+export type Card = {
+  id: string;
+  investor_id: string | null;
+  name: string;
+  firm: string;
+  investor_type: string;
+  priority: string;
+  status: string;
+  stage: number;
+  stage_label: string;
+  position: number;
+  can_lead: string;
+  ticket_size: string;
+  agreed_size: string;
+  instrument: string;
+  contact_method: string;
+  email: string;
+  referrer: string;
+  last_contacted_at: string | null;
+  next_contact_date: string | null;
+  call_at: string | null;
+  investor_timezone: string;
+  source: string;
+  tags: string[];
+  shareable: boolean;
+  overdue: boolean;
+  due_today: boolean;
+  heat: "hot" | "warm" | "cold";
+};
+
+export type FunnelMeta = {
+  stages: { value: number; label: string }[];
+  statuses: string[];
+  types: string[];
+  priorities: string[];
+  can_lead: string[];
+  instruments: string[];
+  contact_methods: string[];
+};

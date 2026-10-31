@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+/* Design tokens (spec §2.2/§2.3). Light by default, dark via prefers-color-scheme. */
+:root {
+  --brand: #0f62fe;
+  --brand-ink: #ffffff;
+  --accent: #16a34a;
+  --ink: #0b1220;
+  --muted: #5b6474;
+  --surface: #f6f8fb;
+  --card: #ffffff;
+  --line: #e3e8ef;
+  --danger: #dc2626;
+  --warn: #d97706;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e6eaf2;
+    --muted: #9aa4b5;
+    --surface: #0b1220;
+    --card: #121a2b;
+    --line: #233049;
+  }
+}
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-accent: var(--accent);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-line: var(--line);
+  --color-danger: var(--danger);
+  --color-warn: var(--warn);
+  --font-sans: Inter, Geist, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-card: 12px;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body { background: var(--surface); color: var(--ink); font-family: var(--font-sans); }
+* { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+@utility card {
+  @apply rounded-[12px] border border-line bg-card; 
+}
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 h-10 text-sm font-medium transition-colors duration-200 disabled:opacity-50 disabled:pointer-events-none; 
+}
+@utility btn-primary {
+  @apply btn bg-brand text-white hover:bg-[#0b55e0]; 
+}
+@utility btn-ghost {
+  @apply btn border border-line bg-card hover:bg-surface; 
+}
+@utility btn-sm {
+  @apply h-8 px-2.5 text-xs; 
+}
+@utility input {
+  @apply w-full rounded-lg border border-line bg-card px-3 h-10 text-[15px] sm:text-sm outline-none focus:border-brand; 
+}
+@utility textarea {
+  @apply w-full rounded-lg border border-line bg-card px-3 py-2 text-[15px] sm:text-sm outline-none focus:border-brand; 
+}
+@utility label {
+  @apply block text-xs font-medium text-muted mb-1; 
+}
+@utility chip {
+  @apply inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-xs; 
+}
+@utility skeleton {
+  @apply animate-pulse rounded-md bg-line/60; 
+}
+@utility no-select {
+  user-select: none; -webkit-user-select: none; 
+}
+
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-top { padding-top: env(safe-area-inset-top); }
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none { scrollbar-width: none; }
+
+/* ---------- Landing page (fixed palette, independent of the OS light/dark setting) ---------- */
+.lp { --ink: #0b1220; --muted: #4a5670; --surface: #ffffff; --card: #ffffff; --line: #e6ebf3; background: #fff; color: #0b1220; }
+.lp-dark { background: #070b1a; color: #fff; }
+.lp-hero-bg {
+  background:
+    radial-gradient(60% 55% at 15% 10%, rgba(47, 107, 255, 0.45), transparent 60%),
+    radial-gradient(45% 45% at 90% 20%, rgba(124, 92, 255, 0.35), transparent 60%),
+    radial-gradient(50% 50% at 60% 100%, rgba(25, 195, 166, 0.18), transparent 60%),
+    #070b1a;
+}
+.lp-grid {
+  background-image: linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(70% 60% at 50% 30%, #000 30%, transparent 75%);
+}
+.lp-gradient-text { background: linear-gradient(92deg, #8ab8ff 0%, #c4a8ff 50%, #6ee7c8 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lp-pill { box-shadow: 0 0 0 1px rgba(138,184,255,0.45), 0 0 32px rgba(76,141,255,0.35) inset, 0 0 40px rgba(76,141,255,0.25); }
+@utility lp-btn-primary {
+  @apply inline-flex items-center justify-center gap-2 rounded-full font-semibold text-white bg-[#0f62fe] hover:bg-[#2b74ff] transition-all shadow-[0_10px_30px_-10px_rgba(15,98,254,0.9)] hover:shadow-[0_14px_40px_-10px_rgba(15,98,254,1)] hover:-translate-y-0.5;
+}
+@utility lp-btn-glass {
+  @apply inline-flex items-center justify-center gap-2 rounded-full font-semibold text-white bg-white/10 hover:bg-white/15 ring-1 ring-white/25 backdrop-blur transition-all;
+}
+.reveal { opacity: 0; transform: translateY(28px); transition: opacity .8s cubic-bezier(.2,.7,.2,1), transform .8s cubic-bezier(.2,.7,.2,1); }
+.reveal.is-in { opacity: 1; transform: none; }
+@keyframes lp-float { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-10px) } }
+.lp-float { animation: lp-float 6s ease-in-out infinite; }
+.lp-float-slow { animation: lp-float 8s ease-in-out infinite; animation-delay: -2s; }
+@keyframes lp-marquee { from { transform: translateX(0) } to { transform: translateX(-50%) } }
+.lp-marquee { animation: lp-marquee 38s linear infinite; }
+@keyframes lp-kenburns { from { transform: scale(1) } to { transform: scale(1.12) } }
+.lp-kenburns { animation: lp-kenburns 9s ease-out forwards; }
+@keyframes lp-progress { from { width: 0 } to { width: 100% } }
+.lp-progress { animation: lp-progress linear forwards; }
+@keyframes lp-fade { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+@media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; } }
+
+/* Brand text needs a lighter blue on dark backgrounds to stay readable. */
+.logo-accent { color: var(--brand); }
+@media (prefers-color-scheme: dark) { .logo-accent { color: #7cb4ff; } }

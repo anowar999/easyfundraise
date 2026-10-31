@@ -1,0 +1,34 @@
+[project]
+name = "easyfundraise-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "sqlalchemy>=2.0",
+  "psycopg[binary]>=3.2",
+  "alembic>=1.13",
+  "pydantic-settings>=2.4",
+  "httpx>=0.27",
+  "pypdf>=5.0",
+  "python-multipart>=0.0.9",
+  "openpyxl>=3.1",
+  "email-validator>=2.2",
+  "anthropic>=2.3",
+  "cryptography>=44",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008", "E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

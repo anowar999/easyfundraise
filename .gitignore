@@ -1,0 +1,19 @@
+# Investor datasets are the core asset (spec §7) and include contact data.
+# Never commit them to this (public) repo; drop them in data/private/ locally.
+data/private/
+!data/private/.gitkeep
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+apps/web/next-env.d.ts
+*.tsbuildinfo
+.DS_Store

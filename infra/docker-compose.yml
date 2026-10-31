@@ -1,0 +1,56 @@
+# Local stack: docker compose -f infra/docker-compose.yml up --build   ->  http://localhost:3000
+# Your settings (ANTHROPIC_API_KEY, EF_ADMIN_EMAILS, ...) go in apps/api/.env; they override .env.example.
+# Demo investors: docker compose -f infra/docker-compose.yml exec api python -m app.cli demo-investors --count 200
+# Then load investors (files in data/private/, never committed):
+#   docker compose -f infra/docker-compose.yml exec api python -m app.cli import-investors \
+#     --directory /data/ALL_investors_merged.csv --enrichment /data/enriched_master.jsonl
+name: easyfundraise
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ef
+      POSTGRES_PASSWORD: ef
+      POSTGRES_DB: easyfundraise
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ef -d easyfundraise"]
+      interval: 3s
+      retries: 20
+
+  api:
+    build: ../apps/api
+    env_file:
+      - ../apps/api/.env.example
+      - { path: ../apps/api/.env, required: false }  # your keys override the defaults
+    environment:
+      EF_DATABASE_URL: postgresql+psycopg://ef:ef@db:5432/easyfundraise
+      EF_WEB_ORIGIN: http://localhost:${EF_WEB_PORT:-3000}
+      EF_TRACKING_BASE_URL: http://localhost:${EF_WEB_PORT:-3000}/api
+    volumes: ["../data/private:/data:ro"]
+    depends_on:
+      db: { condition: service_healthy }
+
+  worker:
+    build: ../apps/api
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - ../apps/api/.env.example
+      - { path: ../apps/api/.env, required: false }  # your keys override the defaults
+    environment:
+      EF_DATABASE_URL: postgresql+psycopg://ef:ef@db:5432/easyfundraise
+    depends_on:
+      api: { condition: service_started }
+
+  web:
+    build:
+      context: ../apps/web
+      args: { API_URL: "http://api:8000" }
+    environment:
+      API_URL: http://api:8000
+    ports: ["${EF_WEB_PORT:-3000}:3000"]  # the API is reached through the web app at /api, so only this port is published
+    depends_on: [api]
+
+volumes:
+  pgdata:
