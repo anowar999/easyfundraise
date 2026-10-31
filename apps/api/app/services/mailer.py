@@ -75,6 +75,11 @@ def domain(addr: str) -> str:
     return addr.rsplit("@", 1)[-1].lower() if "@" in addr else ""
 
 
+def primary(to: str) -> str:
+    """First address of a To header (a card reply-all can carry several, the investor first)."""
+    return to.split(",")[0].strip()
+
+
 def excluded(db: Session, ws_id, addr: str) -> bool:
     addr = addr.lower()
     return bool(db.scalar(select(func.count()).select_from(Exclusion).where(
@@ -135,7 +140,7 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     if not em.to_email or user is None:
         em.status, em.error = "failed", "No recipient email or sender"
         return 0
-    if excluded(db, ws.id, em.to_email) or (card and card.status == "Rejection"):  # SEQ-06
+    if excluded(db, ws.id, primary(em.to_email)) or (card and card.status == "Rejection"):  # SEQ-06
         em.status, em.error = "cancelled", "Recipient excluded"
         return 0
     if em.to_email.lower().startswith(ROLE_PREFIXES) and not (seq and seq.persona == "allow-role"):
@@ -200,7 +205,8 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     if em.broadcast_id and db.get(Broadcast, em.broadcast_id).kind == "investor_update":  # MAIL-07
         unsub = f"<mailto:{acc.email}?subject=unsubscribe>"
     mime = build_mime(sender=acc.email, sender_name=user.name, to=em.to_email, subject=em.subject, text=em.body,
-                      html=html_part, in_reply_to=first.rfc_message_id if first else reply_to, list_unsubscribe=unsub)
+                      html=html_part, in_reply_to=first.rfc_message_id if first else reply_to, list_unsubscribe=unsub,
+                      cc=em.cc if direct else "")
     em.status = "sending"
     db.flush()
     try:
@@ -286,8 +292,8 @@ def handle_reply(db: Session, em: Email, msg, now: datetime) -> None:
     link = f"/app/funnel/{card.id}" if card else "/app/outreach"
     if kind == "bounce":  # MAIL-04
         em.bounced_at = now
-        if not excluded(db, ws.id, em.to_email):
-            db.add(Exclusion(workspace_id=ws.id, kind="email", value=em.to_email.lower(), reason="bounced"))
+        if not excluded(db, ws.id, primary(em.to_email)):
+            db.add(Exclusion(workspace_id=ws.id, kind="email", value=primary(em.to_email).lower(), reason="bounced"))
         _stop(db, em)
         notify(db, ws.id, em.user_id, "bounce", f"Email to {name} bounced", "The address is marked invalid.", link)
         return
@@ -300,8 +306,8 @@ def handle_reply(db: Session, em: Email, msg, now: datetime) -> None:
         db.add(CardEvent(workspace_id=ws.id, card_id=card.id, kind="reply", body=msg.snippet[:500],
                          meta={"kind": kind, "signals": res.get("signals", [])}))
     if kind == "opt_out":  # MAIL-07
-        if not excluded(db, ws.id, em.to_email):
-            db.add(Exclusion(workspace_id=ws.id, kind="email", value=em.to_email.lower(), reason="opt_out"))
+        if not excluded(db, ws.id, primary(em.to_email)):
+            db.add(Exclusion(workspace_id=ws.id, kind="email", value=primary(em.to_email).lower(), reason="opt_out"))
         notify(db, ws.id, em.user_id, "reply", f"{name} asked not to be contacted", "Added to your exclusion list.", link)
         return
     if kind == "positive" and card and _auto(ws, "positive_reply"):

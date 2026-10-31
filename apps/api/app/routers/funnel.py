@@ -488,15 +488,18 @@ def card_mail(cid: str, c: Ctx = Depends(ctx)):
     to = card_mail.address(c.db, c.ws_id, card)
     acc = c.db.get(GmailAccount, c.user.id)
     base = {"to": to, "connected": bool(acc and acc.status == "connected"), "from": acc.email if acc else "",
-            "signature": c.user.signature, "thread": [], "thread_id": "", "reply_to": ""}
+            "signature": c.user.signature, "thread": [], "thread_id": "", "reply_to": "",
+            "reply_all": {"to": [to] if to else [], "cc": []}, "subject": ""}
     if not to or not base["connected"]:
         return base
     msgs = card_mail.latest_thread(c.db, acc, to)
     c.db.commit()  # a refreshed access token
     if not msgs:
         return base
+    ra = card_mail.reply_all(msgs, acc.email, to)
     return {**base, "thread": [card_mail.msg_out(m, acc.email) for m in msgs[-10:]], "thread_id": msgs[-1].thread_id,
-            "reply_to": msgs[-1].rfc_message_id}
+            "reply_to": msgs[-1].rfc_message_id, "reply_all": {"to": ra["to"], "cc": ra["cc"]},
+            "subject": ra["subject"]}
 
 
 class MailDraftIn(BaseModel):
@@ -514,13 +517,13 @@ def card_mail_draft(cid: str, body: MailDraftIn | None = None, c: Ctx = Depends(
     to = card_mail.address(c.db, c.ws_id, card)
     acc = c.db.get(GmailAccount, c.user.id)
     thread = card_mail.latest_thread(c.db, acc, to) if to and acc and acc.status == "connected" else []
-    out = card_mail.draft_reply(c.db, c.workspace, card, thread, body.ask if body else "")
+    out = card_mail.draft_reply(c.db, c.workspace, card, thread, body.ask if body else "", c.user.name)
     c.db.commit()
     return out
 
 
 class MailSendIn(BaseModel):
-    subject: str = Field(min_length=1, max_length=300)
+    subject: str = Field("", max_length=300)  # ignored on a thread reply: it keeps "Re: <thread subject>"
     body: str = Field(min_length=1, max_length=10000)
     add_signature: bool = True
     thread_id: str = Field("", max_length=200)
@@ -551,9 +554,18 @@ def card_mail_send(cid: str, body: MailSendIn, c: Ctx = Depends(ctx)):
     if body.add_signature and c.user.signature.strip() and not text.endswith(c.user.signature.strip()):
         text = f"{text}\n\n{c.user.signature.strip()}"
     at = card_mail.when(body.send_at, now)
-    em = Email(workspace_id=c.ws_id, card_id=card.id, user_id=c.user.id, to_email=to, step=1, hook="reply",
-               subject=body.subject.strip(), body=text, status="scheduled", scheduled_for=at,
-               gmail_thread_id=body.thread_id, rfc_message_id=body.reply_to)
+    recipients, cc, subject, thread_id, reply_to = [to], [], body.subject.strip(), "", ""
+    if body.thread_id:  # reply all, worked out from the thread itself rather than trusted from the browser
+        msgs = card_mail.latest_thread(c.db, acc, to)
+        if msgs and msgs[-1].thread_id == body.thread_id:
+            ra = card_mail.reply_all(msgs, acc.email, to)
+            recipients, cc, subject = ra["to"] or [to], ra["cc"], ra["subject"] or subject
+            thread_id, reply_to = msgs[-1].thread_id, msgs[-1].rfc_message_id
+    if not subject:
+        raise ApiError(422, "EF-MAIL-021", "Add a subject", "")
+    em = Email(workspace_id=c.ws_id, card_id=card.id, user_id=c.user.id, to_email=", ".join(recipients),
+               cc=", ".join(cc), step=1, hook="reply", subject=subject, body=text, status="scheduled",
+               scheduled_for=at, gmail_thread_id=thread_id, rfc_message_id=reply_to)
     c.db.add(em)
     c.db.flush()
     if at > now:
@@ -564,3 +576,14 @@ def card_mail_send(cid: str, body: MailSendIn, c: Ctx = Depends(ctx)):
     c.db.commit()
     return {"id": str(em.id), "status": em.status, "scheduled_for": em.scheduled_for, "sent_at": em.sent_at,
             "error": em.error}
+
+
+@router.get("/{cid}/summary")
+def card_summary(cid: str, c: Ctx = Depends(ctx)):
+    """Where this investor stands and the founder's next step, for the top of the card."""
+    from ..services import card_summary as cs
+
+    card = _get(c, cid)
+    res = cs.summary(c.db, c.workspace, card)
+    c.db.commit()  # AI usage
+    return res

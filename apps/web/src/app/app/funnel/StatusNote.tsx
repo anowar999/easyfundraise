@@ -8,7 +8,7 @@ import type { Card } from "@/lib/types";
 export const REJECTION_REASONS = ["Not our stage", "Not our sector", "Too early on traction", "Market too small", "Team concerns",
   "Valuation / terms", "Fund timing", "Competitive conflict", "No reason given"];
 
-type Change = Partial<Pick<Card, "stage" | "status" | "priority" | "starred" | "star_reason" | "next_contact_date">>;
+export type Change = Partial<Pick<Card, "stage" | "status" | "priority" | "starred" | "star_reason" | "next_contact_date">>;
 
 /** Note box shown with every status change; a rejection also asks for the reason so patterns show up over time. */
 export function StatusNote({ status, note, setNote, reason, setReason }: { status: string; note: string; setNote: (v: string) => void; reason: string; setReason: (v: string) => void }) {
@@ -40,14 +40,16 @@ export function StatusNote({ status, note, setNote, reason, setReason }: { statu
 }
 
 /** Saves a set of changes plus an optional note (with the rejection reason first) in one go. */
-export function useCardChange(cardId: string | undefined, onDone: (c: Change) => void) {
+export type Suggestion = { field: string; value: string | number; reason: string };
+
+export function useCardChange(cardId: string | undefined, onDone: (c: Change & { suggestions: Suggestion[]; reminder_date: string | null }) => void) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ change, note, reason }: { change: Change; note: string; reason: string }) => {
       if (Object.keys(change).length) await api(`/funnel/${cardId}`, { method: "PATCH", json: change });
       const text = [reason && `Rejection reason: ${reason}.`, note.trim()].filter(Boolean).join(" ");
-      if (text) await api(`/funnel/${cardId}/notes`, { method: "POST", json: { body: text } });
-      return change;
+      const r = text ? await api<{ reminder_date: string | null; suggestions: Suggestion[] }>(`/funnel/${cardId}/notes`, { method: "POST", json: { body: text } }) : null;
+      return { ...change, suggestions: r?.suggestions ?? [], reminder_date: r?.reminder_date ?? null };
     },
     onSuccess: (change) => {
       qc.invalidateQueries({ queryKey: ["funnel"] });

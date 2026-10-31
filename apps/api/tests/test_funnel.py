@@ -60,3 +60,12 @@ def test_star_and_stale(client):
     r = client.patch(f"/funnel/{card['id']}", json={"starred": True, "star_reason": "Can lead"}).json()
     assert r["starred"] and r["star_reason"] == "Can lead"
     assert any(e["body"] == "Starred: Can lead" for e in client.get(f"/funnel/{card['id']}").json()["events"])
+
+
+def test_card_summary_follows_up_on_notes(client):
+    card = client.post("/funnel", json={"name": "Grace Hopper", "firm": "Navy Ventures"}).json()
+    s = client.get(f"/funnel/{card['id']}/summary").json()
+    assert "not contacted yet" in s["headline"] and s["engine"] == "rules"
+    client.post(f"/funnel/{card['id']}/notes", json={"body": "Waiting for our deck"})
+    s = client.get(f"/funnel/{card['id']}/summary").json()
+    assert "Waiting for our deck" in s["headline"] and "Did you send it" in s["next_step"]

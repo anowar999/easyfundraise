@@ -5,10 +5,11 @@ import clsx from "clsx";
 import { ArrowLeft, Bell, Check, Copy, ExternalLink, Mail, MessageCircle, Pencil, Phone, Sparkles, Star, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { CardMail } from "@/components/CardMail";
 import { StarPicker } from "../StarPicker";
-import { StatusNote, useCardChange } from "../StatusNote";
+import { CardSummary } from "../CardSummary";
+import { UpdatePanel } from "../UpdatePanel";
 import { MeetingBrief, RoomActivity } from "@/components/CardExtras";
 import { ErrorState, Field, ListSkeleton, Sheet, StatusBadge, errText, useToast } from "@/components/ui";
 import { api, fmtDate, timeAgo } from "@/lib/api";
@@ -16,7 +17,6 @@ import type { Card, FunnelMeta } from "@/lib/types";
 
 type Event = { id: string; kind: string; body: string; meta: Record<string, unknown>; created_at: string };
 type Detail = Card & { events: Event[]; reminders: { id: string; title: string; due_at: string }[] };
-type Suggestion = { field: string; value: string | number; reason: string };
 
 const EDITABLE = ["name", "firm", "investor_type", "priority", "status", "stage", "can_lead", "ticket_size", "agreed_size", "instrument", "contact_method", "email", "referrer", "next_contact_date", "call_at", "investor_timezone", "shareable"] as const;
 
@@ -35,23 +35,12 @@ export default function CardPage() {
   const meta = useQuery<FunnelMeta>({ queryKey: ["funnel-meta"], queryFn: () => api("/funnel/meta"), staleTime: Infinity });
   const q = useQuery<Detail>({ queryKey: ["card", id], queryFn: () => api(`/funnel/${id}`) });
   const [form, setForm] = useState<Partial<Card>>({});
-  const [note, setNote] = useState("");
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [nudgeOpen, setNudgeOpen] = useState(false);
   const [callPrompt, setCallPrompt] = useState(false);
   const [callAt, setCallAt] = useState("");
   const [editing, setEditing] = useState(false);
   const [allActivity, setAllActivity] = useState(false);
   const [mailOpen, setMailOpen] = useState(false);
-  const [pending, setPending] = useState<string | null>(null);
-  const [statusNote, setStatusNote] = useState("");
-  const [reason, setReason] = useState("");
-  const statusChange = useCardChange(id, () => {
-    toast("Status saved");
-    setPending(null);
-    setStatusNote("");
-    setReason("");
-  });
 
   useEffect(() => {
     if (q.data) setForm(Object.fromEntries(EDITABLE.map((k) => [k, q.data[k]])) as Partial<Card>);
@@ -66,16 +55,6 @@ export default function CardPage() {
     mutationFn: (body: Partial<Card>) => api<Card>(`/funnel/${id}`, { method: "PATCH", json: body }),
     onSuccess: () => {
       toast("Saved");
-      refresh();
-    },
-    onError: (e) => toast(errText(e), "err"),
-  });
-  const addNote = useMutation({
-    mutationFn: () => api<{ reminder_date: string | null; suggestions: Suggestion[] }>(`/funnel/${id}/notes`, { method: "POST", json: { body: note } }),
-    onSuccess: (r) => {
-      setNote("");
-      setSuggestions(r.suggestions);
-      if (r.reminder_date) toast(`Reminder set for ${fmtDate(r.reminder_date)}`);
       refresh();
     },
     onError: (e) => toast(errText(e), "err"),
@@ -105,20 +84,9 @@ export default function CardPage() {
   const c = q.data!;
   const set = (k: keyof Card, v: unknown) => setForm((f) => ({ ...f, [k]: v }));
   const dirty = EDITABLE.some((k) => (form[k] ?? "") !== (c[k] ?? ""));
-  const pill = (active: boolean) => clsx("chip px-3 py-1.5 text-sm", active ? "bg-brand text-white border-brand" : "hover:border-brand");
   const timeline = [...c.events]
-    .filter((e) => allActivity || e.kind === "note" || e.kind === "reply")
+    .filter((e) => allActivity || e.kind === "note" || e.kind === "reply" || e.kind === "email")
     .sort((x, y) => y.created_at.localeCompare(x.created_at));
-
-  const setStage = (stage: number) => {
-    if (stage === 4 && !c.call_at) setCallPrompt(true);
-    patch.mutate({ stage });
-  };
-
-  const applySuggestion = (s: Suggestion) => {
-    patch.mutate({ [s.field]: s.value } as Partial<Card>);
-    setSuggestions((x) => x.filter((y) => y !== s));
-  };
 
   const copy = async (text: string) => {
     try {
@@ -136,12 +104,13 @@ export default function CardPage() {
       </Link>
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold truncate flex items-center gap-2">
+          <h1 className="text-2xl font-semibold truncate flex items-center gap-2">
             {c.name}
-            {c.starred && <Star size={18} className="fill-amber-400 text-amber-500 shrink-0" aria-label="Star investor" />}
+            {c.starred && <Star size={20} className="fill-amber-400 text-amber-500 shrink-0" aria-label="Star investor" />}
           </h1>
           <div className="text-sm text-muted">{c.firm || "—"}</div>
           <div className="mt-2 flex flex-wrap gap-1.5">
+            <span className="chip">{c.stage_label}</span>
             <StatusBadge status={c.status} />
             <span className="chip">{c.priority}</span>
             {c.tags.map((t) => (
@@ -158,157 +127,48 @@ export default function CardPage() {
         </div>
       </div>
 
-      {/* Stage stepper (scrollable on phones) */}
-      <div className="card p-3 mb-4">
-        <div className="label">Stage</div>
-        <div className="flex gap-1.5 overflow-x-auto scrollbar-none -mx-1 px-1">
-          {meta.data?.stages.map((s) => (
-            <button
-              key={s.value}
-              onClick={() => setStage(s.value)}
-              className={clsx("chip whitespace-nowrap px-3 py-1.5 text-sm", c.stage === s.value ? "bg-brand text-white border-brand" : s.value < c.stage ? "bg-brand/10 text-brand border-brand/20" : "")}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4 items-start">
+        <div className="space-y-4 min-w-0">
+          <CardSummary card={c} />
 
-      {/* Quick update: the things that change after every touch */}
-      <div className="card p-4 mb-4 space-y-4">
-        {c.stale && (
-          <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-300/60 px-3 py-2 text-sm text-amber-900">
-            <span className="w-2 h-2 rounded-full bg-amber-400" /> No update for {c.days_since_update} days. Add a note or set a next contact date.
-          </div>
-        )}
-        <div className="grid grid-cols-1 md:grid-cols-[auto_auto_1fr] gap-4 md:gap-6">
-          <div>
-            <div className="label">Status</div>
-            <div className="flex flex-wrap gap-1.5">
-              {meta.data?.statuses.map((s) => (
+          {/* Update: quick actions, then stage/status/priority/next contact + note, saved together */}
+          <div className="card p-4 space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <button className="btn-primary btn-sm" onClick={() => setMailOpen(true)}>
+                <Mail size={15} /> Email
+              </button>
+              <button className="btn-ghost btn-sm" onClick={() => contacted.mutate(c.contact_method || "Email")}>
+                <Check size={15} className="text-brand" /> Mark contacted
+              </button>
+              <button className="btn-ghost btn-sm" onClick={() => setNudgeOpen(true)}>
+                <MessageCircle size={15} className="text-brand" /> Nudge
+              </button>
+              <button className={clsx("btn-sm", c.call_at && new Date(c.call_at).getTime() > Date.now() ? "btn-ghost border-orange-300 bg-orange-50 text-orange-800" : "btn-ghost")} onClick={() => setCallPrompt(true)}>
+                <Phone size={15} className="text-brand" /> {c.call_at ? `Call ${fmtDate(c.call_at, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : "Set call date"}
+              </button>
+              {c.investor_id && (
                 <button
-                  key={s}
-                  type="button"
-                  className={clsx(pill((pending || c.status) === s), pending && c.status === s && "bg-transparent text-ink border-brand/40 border-dashed")}
-                  onClick={() => setPending(s === c.status ? null : s)}
+                  className="btn-ghost btn-sm"
+                  onClick={async () => {
+                    try {
+                      const s = await api<{ id: string }>("/sequences", { method: "POST", json: { investor_id: c.investor_id } });
+                      router.push(`/app/sequences/${s.id}?new=1`);
+                    } catch (e) {
+                      toast(errText(e), "err");
+                    }
+                  }}
                 >
-                  {s === "Rejection" ? "Rejected" : s}
+                  <Sparkles size={15} className="text-brand" /> Draft emails
                 </button>
-              ))}
+              )}
+              <span className="text-xs text-muted self-center ml-auto">Last contacted {c.last_contacted_at ? timeAgo(c.last_contacted_at) : "never"}</span>
+            </div>
+            <div className="border-t border-line pt-4">
+              <h2 className="font-semibold mb-3">Update</h2>
+              <UpdatePanel card={c} meta={meta.data} />
             </div>
           </div>
-          <div>
-            <div className="label">Priority</div>
-            <div className="flex flex-wrap gap-1.5">
-              {meta.data?.priorities.map((p) => (
-                <button key={p} type="button" className={pill(c.priority === p)} disabled={patch.isPending} onClick={() => c.priority !== p && patch.mutate({ priority: p })}>
-                  {p}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="label" htmlFor="next-contact">
-              Next contact
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                id="next-contact"
-                className="input w-auto"
-                type="date"
-                value={c.next_contact_date ?? ""}
-                onChange={(e) => patch.mutate({ next_contact_date: e.target.value || null })}
-              />
-              <span className="text-xs text-muted">Last contacted {c.last_contacted_at ? timeAgo(c.last_contacted_at) : "never"}</span>
-            </div>
-          </div>
-        </div>
-        {pending && (
-          <div className="space-y-2">
-            <div className="text-sm">
-              Change status from <b>{c.status === "Rejection" ? "Rejected" : c.status}</b> to <b>{pending === "Rejection" ? "Rejected" : pending}</b>
-            </div>
-            <StatusNote status={pending} note={statusNote} setNote={setStatusNote} reason={reason} setReason={setReason} />
-            <div className="flex gap-2">
-              <button
-                className="btn-primary btn-sm"
-                disabled={statusChange.isPending}
-                onClick={() => statusChange.mutate({ change: { status: pending }, note: statusNote, reason: pending === "Rejection" ? reason : "" }, { onError: (e) => toast(errText(e), "err") })}
-              >
-                Save status
-              </button>
-              <button className="btn-ghost btn-sm" onClick={() => setPending(null)}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-        <StarPicker starred={c.starred} reason={c.star_reason} busy={patch.isPending} onSave={(v) => patch.mutate(v)} />
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (note.trim()) addNote.mutate();
-          }}
-        >
-          <label className="label" htmlFor="note">
-            Add a note
-          </label>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <textarea id="note" className="textarea min-h-16 flex-1" placeholder='e.g. "Asked for the deck, follow up Thursday. Intro via Sam"' value={note} onChange={(e) => setNote(e.target.value)} />
-            <button className="btn-primary sm:self-end" disabled={!note.trim() || addNote.isPending}>
-              Save note
-            </button>
-          </div>
-          <span className="text-xs text-muted">Dates in a note become reminders automatically.</span>
-        </form>
-        {suggestions.length > 0 && (
-          <div className="space-y-2">
-            {suggestions.map((s) => (
-              <div key={s.field + s.value} className="flex items-center gap-2 rounded-lg border border-brand/30 bg-brand/5 p-2.5 text-sm">
-                <Sparkles size={14} className="text-brand shrink-0" />
-                <span className="flex-1">
-                  {s.reason}: set {s.field.replace(/_/g, " ")} to <b>{s.field === "stage" ? meta.data?.stages[Number(s.value) - 1]?.label : String(s.value)}</b>?
-                </span>
-                <button className="btn-primary btn-sm" onClick={() => applySuggestion(s)}>
-                  Apply
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="flex flex-wrap gap-2 pt-3 border-t border-line">
-          <button className="btn-primary btn-sm" onClick={() => setMailOpen(true)}>
-            <Mail size={15} /> Email
-          </button>
-          <button className="btn-ghost btn-sm" onClick={() => contacted.mutate(c.contact_method || "Email")}>
-            <Check size={15} className="text-brand" /> Mark contacted
-          </button>
-          <button className="btn-ghost btn-sm" onClick={() => setNudgeOpen(true)}>
-            <MessageCircle size={15} className="text-brand" /> Nudge
-          </button>
-          <button className="btn-ghost btn-sm" onClick={() => setCallPrompt(true)}>
-            <Phone size={15} className="text-brand" /> {c.call_at ? `Call ${fmtDate(c.call_at, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : "Set call date"}
-          </button>
-          {c.investor_id ? (
-            <button
-              className="btn-ghost btn-sm"
-              onClick={async () => {
-                try {
-                  const s = await api<{ id: string }>("/sequences", { method: "POST", json: { investor_id: c.investor_id } });
-                  router.push(`/app/sequences/${s.id}?new=1`);
-                } catch (e) {
-                  toast(errText(e), "err");
-                }
-              }}
-            >
-              <Sparkles size={15} className="text-brand" /> Draft emails
-            </button>
-          ) : null}
-        </div>
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
-        <div className="space-y-4 order-2 lg:order-1">
           {(c.stage >= 3 || c.call_at) && <MeetingBrief cardId={c.id} />}
           <RoomActivity cardId={c.id} />
 
@@ -333,19 +193,17 @@ export default function CardPage() {
               ))}
             </div>
           )}
-        </div>
 
-        <div className="flex flex-col gap-4 order-1 lg:order-2">
           {/* Details: read-only until the pencil is pressed */}
           {!editing ? (
             <div className="card p-4">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-3">
                 <h2 className="font-semibold">Details</h2>
                 <button className="p-1.5 rounded-lg text-muted hover:text-brand hover:bg-brand/5" aria-label="Edit details" title="Edit details" onClick={() => setEditing(true)}>
                   <Pencil size={16} />
                 </button>
               </div>
-              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
                 {[
                   ["Name", c.name],
                   ["Firm", c.firm],
@@ -359,12 +217,15 @@ export default function CardPage() {
                   ["Introduced by", c.referrer],
                   ["Named in updates", c.shareable ? "Yes" : "No"],
                 ].map(([k, v]) => (
-                  <Fragment key={k}>
-                    <dt className="text-muted">{k}</dt>
+                  <div key={k} className="flex gap-3 min-w-0">
+                    <dt className="text-muted w-32 shrink-0">{k}</dt>
                     <dd className="min-w-0 break-words">{v || <span className="text-muted">—</span>}</dd>
-                  </Fragment>
+                  </div>
                 ))}
               </dl>
+              <div className="mt-4 pt-3 border-t border-line">
+                <StarPicker starred={c.starred} reason={c.star_reason} busy={patch.isPending} onSave={(v) => patch.mutate(v)} />
+              </div>
             </div>
           ) : (
             <form
@@ -453,32 +314,39 @@ export default function CardPage() {
               </div>
             </form>
           )}
+        </div>
 
-          {/* Timeline: notes first, newest at the top (shown above the details) */}
-          <div className="card p-4 order-first">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-semibold">Timeline</h2>
-              <button className="text-xs text-brand" onClick={() => setAllActivity((x) => !x)}>
-                {allActivity ? "Notes only" : "Show all activity"}
-              </button>
-            </div>
-            {timeline.length === 0 ? (
-              <p className="text-sm text-muted">No notes yet. Add one above after each conversation.</p>
-            ) : (
-              <ol className="relative border-l border-line ml-1 space-y-4">
-                {timeline.map((e) => (
-                  <li key={e.id} className="pl-4 relative">
-                    <span className={clsx("absolute -left-[5px] top-1.5 w-2.5 h-2.5 rounded-full ring-2 ring-card", e.kind === "note" ? "bg-brand" : e.kind === "reply" ? "bg-green-500" : "bg-line")} />
-                    <div className="text-xs text-muted">{fmtDate(e.created_at, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
-                    <div className={clsx("text-sm whitespace-pre-wrap break-words mt-0.5", e.kind !== "note" && e.kind !== "reply" && "text-muted")}>
-                      {e.kind === "reply" && <b className="text-green-700">Reply: </b>}
-                      {e.body}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
+        {/* Timeline: right column from the top, newest first */}
+        <div className="card p-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">Timeline</h2>
+            <button className="text-xs text-brand" onClick={() => setAllActivity((x) => !x)}>
+              {allActivity ? "Notes only" : "Show all activity"}
+            </button>
           </div>
+          {timeline.length === 0 ? (
+            <p className="text-sm text-muted">No notes yet. Add one in Update after each conversation.</p>
+          ) : (
+            <ol className="relative border-l border-line ml-1 space-y-4">
+              {timeline.map((e) => (
+                <li key={e.id} className="pl-4 relative">
+                  <span className={clsx("absolute -left-[5px] top-1.5 w-2.5 h-2.5 rounded-full ring-2 ring-card", e.kind === "note" ? "bg-brand" : e.kind === "reply" ? "bg-green-500" : e.kind === "email" ? "bg-sky-400" : "bg-line")} />
+                  <div className="text-xs text-muted">{fmtDate(e.created_at, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+                  <div className={clsx("text-sm whitespace-pre-wrap break-words mt-0.5", e.kind !== "note" && e.kind !== "reply" && "text-muted")}>
+                    {e.kind === "reply" && <b className="text-green-700">Reply: </b>}
+                    {e.body.startsWith("Rejection reason:") ? (
+                      <>
+                        <b className="text-red-700">Rejection reason:</b>
+                        {e.body.slice("Rejection reason:".length)}
+                      </>
+                    ) : (
+                      e.body
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
         </div>
       </div>
 
