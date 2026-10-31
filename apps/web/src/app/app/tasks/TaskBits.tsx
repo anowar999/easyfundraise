@@ -271,3 +271,133 @@ export function TaskEditor({ task, onClose }: { task: Task | null; onClose: () =
     </Sheet>
   );
 }
+
+const STATUS_PILL: Record<TaskStatus, string> = {
+  todo: "bg-slate-500",
+  doing: "bg-amber-500",
+  done: "bg-emerald-600",
+  archived: "bg-zinc-400",
+};
+const GROUP_BAR: Record<string, string> = { todo: "border-l-slate-400", doing: "border-l-amber-500", done: "border-l-emerald-600" };
+
+function OwnerCell({ t }: { t: Task }) {
+  const update = useUpdateTask();
+  const [v, setV] = useState(t.owner);
+  useEffect(() => setV(t.owner), [t.owner]);
+  return (
+    <input
+      className="w-full bg-transparent rounded px-1.5 py-1 text-sm hover:bg-black/5 focus:bg-card focus:outline-none focus:ring-2 focus:ring-brand/40"
+      value={v}
+      placeholder="Me"
+      aria-label={`Owner of ${t.title}`}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => v !== t.owner && update.mutate({ id: t.id, owner: v.trim() || "Me" })}
+      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+    />
+  );
+}
+
+/** Monday-style table: Task, Owner, Status, Priority, Deadline, Done. Everything edits in place. */
+export function TaskTable({ items, onOpen }: { items: Task[]; onOpen: (t: Task) => void }) {
+  const update = useUpdateTask();
+  return (
+    <div className="space-y-6">
+      {COLUMNS.map((g) => {
+        const rows = items.filter((t) => t.status === g.status).sort((a, b) => a.position - b.position);
+        return (
+          <section key={g.status}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className={clsx("w-2.5 h-2.5 rounded-full", STATUS_PILL[g.status])} />
+              <h2 className="font-semibold">{g.label}</h2>
+              <span className="text-xs text-muted">{rows.length}</span>
+            </div>
+            <div className={clsx("card overflow-hidden border-l-4", GROUP_BAR[g.status])}>
+              <div className="hidden md:grid grid-cols-[minmax(0,1fr)_140px_140px_110px_130px_120px] gap-2 px-3 py-2 text-xs font-medium text-muted border-b border-line bg-surface/60">
+                <span>Task</span>
+                <span>Owner</span>
+                <span>Status</span>
+                <span>Priority</span>
+                <span>Deadline</span>
+                <span>Done</span>
+              </div>
+              {rows.map((t) => (
+                <div
+                  key={t.id}
+                  className={clsx(
+                    "grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_140px_140px_110px_130px_120px] gap-x-2 gap-y-1 items-center px-3 py-2 border-b border-line last:border-0 text-sm",
+                    t.priority === 1 && t.status !== "done" && "bg-orange-50/70 dark:bg-orange-500/10",
+                    t.due_today && "shadow-[inset_3px_0_0_#db2777]",
+                    t.overdue && "shadow-[inset_3px_0_0_#dc2626]",
+                  )}
+                >
+                  <button className="text-left min-w-0" onClick={() => onOpen(t)}>
+                    <span className={clsx("font-medium break-words", t.status === "done" && "line-through text-muted")}>
+                      {t.urgent && <Pin size={12} className="inline text-red-600 mr-1" />}
+                      {t.title}
+                    </span>
+                    {t.due_today && t.status !== "done" && <span className="ml-2 inline-block whitespace-nowrap rounded-full bg-pink-600 text-white text-[10px] px-1.5 py-0.5 align-middle">Due today</span>}
+                    {t.overdue && <span className="ml-2 inline-block whitespace-nowrap rounded-full bg-red-600 text-white text-[10px] px-1.5 py-0.5 align-middle">Overdue</span>}
+                    {t.depends_on && <span className="block text-xs text-muted truncate">Depends on: {t.depends_on}</span>}
+                    <span className="md:hidden block text-xs text-muted truncate">
+                      {[t.owner, `P${t.priority}`, t.deadline && `due ${shortDate(t.deadline)}`, t.progress ? `${t.progress}%` : ""].filter(Boolean).join(" · ")}
+                    </span>
+                  </button>
+                  <div className="hidden md:block md:order-none">
+                    <OwnerCell t={t} />
+                  </div>
+                  <select
+                    className={clsx("rounded-md text-white text-xs font-semibold h-8 px-2 border-0 cursor-pointer w-28 md:w-full", STATUS_PILL[t.status])}
+                    value={t.status}
+                    aria-label={`Status of ${t.title}`}
+                    onChange={(e) => {
+                      const s = e.target.value as TaskStatus;
+                      update.mutate({ id: t.id, status: s, ...(s === "done" ? { progress: 100, urgent: false } : {}) });
+                    }}
+                  >
+                    {COLUMNS.map((c) => (
+                      <option key={c.status} value={c.status}>
+                        {c.label}
+                      </option>
+                    ))}
+                    <option value="archived">Archive</option>
+                  </select>
+                  <select
+                    className={clsx("hidden md:block input h-8 text-xs px-2", t.priority === 1 && "border-orange-400 text-orange-700 font-semibold")}
+                    value={t.priority}
+                    aria-label={`Priority of ${t.title}`}
+                    onChange={(e) => update.mutate({ id: t.id, priority: Number(e.target.value) as 1 | 2 | 3 })}
+                  >
+                    {[1, 2, 3].map((p) => (
+                      <option key={p} value={p}>
+                        P{p}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="date"
+                    className={clsx("hidden md:block input h-8 text-xs px-2", t.overdue && "border-red-400 text-red-700")}
+                    value={t.deadline ?? ""}
+                    aria-label={`Deadline of ${t.title}`}
+                    onChange={(e) => update.mutate({ id: t.id, deadline: e.target.value || null })}
+                  />
+                  <div className="hidden md:flex items-center gap-2">
+                    <div className="h-1.5 flex-1 rounded-full bg-black/10 overflow-hidden">
+                      <div className="h-full bg-emerald-500" style={{ width: `${t.progress}%` }} />
+                    </div>
+                    <span className="text-xs tabular-nums w-8 text-right">{t.progress}%</span>
+                  </div>
+                </div>
+              ))}
+              {g.status === "todo" && (
+                <div className="px-3 py-2 bg-surface/40">
+                  <QuickAdd />
+                </div>
+              )}
+              {rows.length === 0 && g.status !== "todo" && <div className="px-3 py-4 text-xs text-muted">Nothing here yet.</div>}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}

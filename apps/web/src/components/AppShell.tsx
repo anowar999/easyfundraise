@@ -13,7 +13,7 @@ import { Sheet, ToastProvider } from "./ui";
 
 const NAV = [
   { href: "/app", label: "Home", icon: Home, exact: true },
-  { href: "/app/tasks", label: "Founder tasks", short: "Tasks", icon: ListTodo },
+  { href: "/app/tasks", label: "My tasks", short: "Tasks", icon: ListTodo },
   { href: "/app/investors", label: "Investors", icon: Search },
   { href: "/app/shortlist", label: "Shortlist", icon: ListPlus },
   { href: "/app/funnel", label: "Investor tracker", short: "Tracker", icon: KanbanSquare },
