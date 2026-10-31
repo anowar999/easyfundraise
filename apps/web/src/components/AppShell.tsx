@@ -2,16 +2,18 @@
 
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bell, BarChart3, Globe, Home, KanbanSquare, ListPlus, LogOut, Megaphone, Menu, Search, Settings, Shield, Sparkles } from "lucide-react";
+import { Bell, BarChart3, Globe, Home, KanbanSquare, ListPlus, ListTodo, LogOut, Megaphone, Menu, Search, Settings, Shield, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, getWorkspace, setWorkspace } from "@/lib/api";
 import { AgentChat } from "./AgentChat";
+import { UrgentPin } from "./FounderTasks";
 import { Sheet, ToastProvider } from "./ui";
 
 const NAV = [
   { href: "/app", label: "Home", icon: Home, exact: true },
+  { href: "/app/tasks", label: "Founder tasks", short: "Tasks", icon: ListTodo },
   { href: "/app/investors", label: "Investors", icon: Search },
   { href: "/app/shortlist", label: "Shortlist", icon: ListPlus },
   { href: "/app/funnel", label: "Investor tracker", short: "Tracker", icon: KanbanSquare },
@@ -21,8 +23,8 @@ const NAV = [
   { href: "/app/notifications", label: "Alerts", icon: Bell },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
-// Phones: four primary tabs + "More" (the rest live in a sheet)
-const TABS = ["/app", "/app/investors", "/app/funnel", "/app/notifications"];
+// Phones: five primary tabs + "More" (the rest live in a sheet)
+const TABS = ["/app", "/app/tasks", "/app/investors", "/app/funnel", "/app/notifications"];
 
 export type Me = {
   id: string;
@@ -187,10 +189,11 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
       </main>
 
       {!admin && <AgentChat />}
+      {!admin && <UrgentPin />}
 
       {/* Mobile bottom tab bar */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-card/95 backdrop-blur border-t border-line safe-bottom" aria-label="Main">
-        <div className="grid grid-cols-5">
+        <div className="grid grid-cols-6">
           {NAV.filter((n) => TABS.includes(n.href)).map(({ href, label, short, icon: Icon, exact }) => (
             <Link
               key={href}

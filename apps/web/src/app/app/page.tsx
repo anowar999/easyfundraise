@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { askAgent } from "@/components/AgentChat";
 import { PageHeader, useMe } from "@/components/AppShell";
+import { TopTasks } from "@/components/FounderTasks";
 import { CountryTag, InvestorActions } from "@/components/InvestorRow";
 import { Avatar, ErrorState, FitScore, ListSkeleton } from "@/components/ui";
 import type { InvestorCard } from "@/lib/types";
@@ -165,6 +166,7 @@ export default function HomePage() {
       {q.data && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <section className="lg:col-span-2 space-y-4">
+            <TopTasks />
             {q.data.profile_complete ? <Matches /> : <SetupCard />}
             <div className="card p-4 border-brand/30 bg-brand/[0.03]">
               <div className="flex items-center gap-2 text-sm font-medium text-brand">
