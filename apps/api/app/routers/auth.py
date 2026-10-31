@@ -247,7 +247,7 @@ def password_login(body: PasswordLogin, request: Request, response: Response, db
     if user.suspended_at:
         raise ApiError(403, "EF-AUTH-003", "Account suspended")
     s = get_settings()
-    if not s.password_otp:
+    if not s.password_code_on:  # dev/UAT: the password alone is enough
         create_session(db, response, user, request.headers.get("user-agent", ""), client_ip(request))
         return {"ok": True, "next": after_sign_in(db, user, False, safe_next(body.next))}
     # Step two: a one-time code to the account's own inbox, so a leaked password alone is not enough.

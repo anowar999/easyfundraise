@@ -1,10 +1,21 @@
+import pytest
 from fastapi.testclient import TestClient
 
+from app.config import get_settings
 from app.main import app
 
 from .conftest import ORIGIN, login
 
 PW = "Blue-harbour-42"
+
+
+@pytest.fixture(autouse=True)
+def code_on():
+    """These tests cover the production flow (password, then emailed code)."""
+    s = get_settings()
+    old, s.password_otp = s.password_otp, True
+    yield
+    s.password_otp = old
 
 
 def fresh():
@@ -111,3 +122,13 @@ def test_expired_code_rejected():
         u.login_code_expires_at = datetime.now(UTC) - timedelta(seconds=1)
         db.commit()
     assert c.post("/auth/password/verify", json={"email": "pw-exp@example.com", "code": code}).status_code == 401
+
+
+def test_dev_signs_in_with_password_alone(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "password_otp", None)  # unset: on only when EF_ENV=prod (tests run as dev)
+    login("pw-dev@example.com").post("/auth/password", json={"password": PW})
+    c = fresh()
+    r = c.post("/auth/password/login", json={"email": "pw-dev@example.com", "password": PW})
+    assert r.status_code == 200 and "code_required" not in r.json()
+    assert c.get("/auth/me").json()["email"] == "pw-dev@example.com"
