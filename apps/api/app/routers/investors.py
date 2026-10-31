@@ -22,6 +22,7 @@ from ..models import (
     InvestorResearch,
     RemovalRequest,
     Reveal,
+    Sequence,
     ShortlistItem,
 )
 from ..services import ai, search_parse
@@ -41,7 +42,8 @@ def domain(url: str) -> str:
     return d.split("/")[0] if "." in d else ""
 
 
-def card(inv: Investor, f: dict | None = None, in_funnel: bool = False, in_shortlist: bool = False) -> dict:
+def card(inv: Investor, f: dict | None = None, in_funnel: bool = False, in_shortlist: bool = False,
+         in_outreach: bool = False) -> dict:
     """List-safe representation: no email / LinkedIn / X (ASP-01)."""
     return {
         "id": str(inv.id), "name": inv.name, "title": inv.role_at_firm or inv.title,
@@ -56,7 +58,7 @@ def card(inv: Investor, f: dict | None = None, in_funnel: bool = False, in_short
         "thesis_summary": (inv.investment_thesis or "")[:240],
         "check_size": inv.typical_check_size if inv.enriched else "",
         "has_email": bool(inv.email), "in_funnel": in_funnel, "in_shortlist": in_shortlist,
-        **({"fit": f} if f else {}),
+        "in_outreach": in_outreach, **({"fit": f} if f else {}),
     }
 
 
@@ -134,6 +136,12 @@ def _shortlist_ids(c: Ctx) -> set:
     return set(c.db.scalars(select(ShortlistItem.investor_id).where(ShortlistItem.workspace_id == c.ws_id)))
 
 
+def _outreach_ids(c: Ctx) -> set:
+    """Investors with an email sequence (draft or live) in this workspace."""
+    return set(c.db.scalars(select(Sequence.investor_id).where(Sequence.workspace_id == c.ws_id,
+                                                                Sequence.status != "stopped")))
+
+
 def _funnel_ids(c: Ctx) -> set:
     return set(c.db.scalars(select(FunnelCard.investor_id).where(
         FunnelCard.workspace_id == c.ws_id, FunnelCard.investor_id.is_not(None), FunnelCard.deleted_at.is_(None))))
@@ -174,12 +182,12 @@ def search(
     n = min(page_size, cap - (page - 1) * page_size) if cap else page_size  # the last capped page may be short
     rows = c.db.scalars(select(Investor).where(*conds).order_by(*order).offset((page - 1) * page_size).limit(n)).all()
     prof = c.db.get(CompanyProfile, c.ws_id)
-    fids, sids = _funnel_ids(c), _shortlist_ids(c)
+    fids, sids, oids = _funnel_ids(c), _shortlist_ids(c), _outreach_ids(c)
     c.access("search", None, params=p.model_dump(exclude_defaults=True), results=len(rows))
     c.db.commit()
     return {
         "total": total if cap is None else min(total, cap), "all_total": total, "page": page, "page_size": page_size,
-        "items": [card(i, fit(i, prof), i.id in fids, i.id in sids) for i in rows],
+        "items": [card(i, fit(i, prof), i.id in fids, i.id in sids, i.id in oids) for i in rows],
         "searches_used": usage(c.db, c.workspace, "searches", "all" if cap else "month"),
         "searches_limit": limit(c.db, c.workspace, "searches_total") or limit(c.db, c.workspace, "searches_month"),
         "contacts_locked": not can(c.db, c.workspace, "contacts_visible"),
@@ -250,9 +258,10 @@ def recommended(c: Ctx = Depends(ctx)):
     excl = _exclusions(c)
     scored = [(fit(i, prof), i) for i in cand if not is_excluded(i, excl)]
     scored.sort(key=lambda x: -x[0]["score"])
-    fids, sids = _funnel_ids(c), _shortlist_ids(c)
+    fids, sids, oids = _funnel_ids(c), _shortlist_ids(c), _outreach_ids(c)
     cap = limit(c.db, c.workspace, "result_cap") or 100  # paged ten at a time in the app
-    return {"items": [card(i, f, i.id in fids, i.id in sids) for f, i in scored[:cap]], "needs_profile": False}
+    return {"items": [card(i, f, i.id in fids, i.id in sids, i.id in oids) for f, i in scored[:cap]],
+            "needs_profile": False}
 
 
 def _exclusions(c: Ctx) -> list[tuple[str, str]]:
@@ -426,7 +435,8 @@ def company_lookup(name: str = Query(min_length=2, max_length=200), c: Ctx = Dep
                                                    Investor.industries.overlap(inds), ~Investor.id.in_(seen))
                             .order_by(Investor.enriched.desc(), Investor.seed_fit.desc().nulls_last()).limit(200)).all()
         scored = sorted(((fit(i, prof), i) for i in cand), key=lambda x: -x[0]["score"])[:10]
-        similar_items = [card(i, f) for f, i in scored]
+        sids, oids = _shortlist_ids(c), _outreach_ids(c)
+        similar_items = [card(i, f, False, i.id in sids, i.id in oids) for f, i in scored]
     c.access("search", None, company_lookup=name, results=len(items))
     c.db.commit()
     return {"company": name, "investors": items, "similar": similar_items}

@@ -22,6 +22,7 @@ export type InvestorCard = {
   check_size: string;
   has_email: boolean;
   in_funnel: boolean;
+  in_outreach?: boolean;
   in_shortlist: boolean;
   fit?: Fit;
 };
