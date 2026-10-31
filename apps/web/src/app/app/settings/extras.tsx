@@ -1,13 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Copy, Laptop, Mail, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, Copy, Laptop, Mail, Pause, Play, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useMe } from "@/components/AppShell";
 import { Field, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api, fmtDate, setWorkspace } from "@/lib/api";
 
-type Gmail = { connected: boolean; status?: string; email?: string; mode?: string; sent_today?: number; daily_cap?: number; fake_available: boolean; calendar?: boolean };
+type Gmail = { connected: boolean; status?: string; email?: string; mode?: string; sent_today?: number; daily_cap?: number; fake_available: boolean; calendar?: boolean; paused_until?: string | null; paused_reason?: string; burst_max?: number; burst_window_minutes?: number };
 
 /** GML-01: progressive consent. We only ask for Gmail when the founder wants to send. */
 export function GmailSection() {
@@ -17,6 +17,14 @@ export function GmailSection() {
   const off = useMutation({
     mutationFn: () => api("/gmail", { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["gmail"] }),
+    onError: (e) => toast(errText(e), "err"),
+  });
+  const pause = useMutation({
+    mutationFn: (on: boolean) => api<Gmail>(`/gmail/${on ? "pause" : "resume"}`, { method: "POST" }),
+    onSuccess: (g) => {
+      qc.setQueryData(["gmail"], g);
+      toast(g.paused_until ? "Sending paused. Nothing leaves your Gmail until you resume." : "Sending resumed");
+    },
     onError: (e) => toast(errText(e), "err"),
   });
   if (!q.data) return <ListSkeleton rows={1} />;
@@ -41,6 +49,28 @@ export function GmailSection() {
       <p className="text-muted">
         Sent today: {g.sent_today} of {g.daily_cap}. New mailboxes warm up over 10 days, and we send at most 3 a day to any one firm.
       </p>
+      {g.paused_until ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400/50 bg-amber-50 p-3 text-amber-900">
+          <Pause size={16} />
+          <span className="flex-1 min-w-48">
+            <b>Sending is paused</b>
+            <span className="block">{g.paused_reason}</span>
+          </span>
+          <button className="btn-primary btn-sm" disabled={pause.isPending} onClick={() => pause.mutate(false)}>
+            <Play size={14} /> Resume sending
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-line p-3">
+          <ShieldCheck size={16} className="text-brand" />
+          <span className="flex-1 min-w-48 text-muted">
+            <b className="text-ink">Send protection is on.</b> Only emails you approve go out, each is re-checked right before sending, and if {g.burst_max ?? 25} or more leave your Gmail within {g.burst_window_minutes ?? 10} minutes we pause sending and alert you.
+          </span>
+          <button className="btn-ghost btn-sm" disabled={pause.isPending} onClick={() => pause.mutate(true)}>
+            <Pause size={14} /> Pause all sending
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line p-3">
         <CalendarDays size={16} className="text-brand" />
         <span className="flex-1 min-w-48">

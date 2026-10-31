@@ -562,7 +562,7 @@ class MailSendIn(BaseModel):
 def card_mail_send(cid: str, body: MailSendIn, c: Ctx = Depends(ctx)):
     from ..models import Email, GmailAccount
     from ..services import card_mail, mailer
-    from ..services.entitlements import can
+    from ..services.entitlements import can, rate_limit
 
     c.require_editor()
     card = _get(c, cid)
@@ -577,6 +577,12 @@ def card_mail_send(cid: str, body: MailSendIn, c: Ctx = Depends(ctx)):
         raise ApiError(409, "EF-SEQ-007", "Connect Gmail to send", "Emails go out from your own Gmail.",
                        {"needs_gmail": True})
     now = datetime.now(UTC)
+    rate_limit(c.db, f"card-send:{c.user.id}", 10, 60)
+    if block := mailer.send_block(c.db, c.ws_id, c.user.id, acc, now):
+        raise ApiError(423, "EF-MAIL-030", "Sending is paused", block, {"paused": True})
+    if body.send_at is None and mailer.trip_burst(c.db, c.ws_id, c.user.id, acc, now):
+        c.db.commit()
+        raise ApiError(429, "EF-MAIL-031", "Sending paused for your safety", acc.paused_reason, {"paused": True})
     text = body.body.strip()
     if body.add_signature and c.user.signature.strip() and not text.endswith(c.user.signature.strip()):
         text = f"{text}\n\n{c.user.signature.strip()}"
