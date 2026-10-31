@@ -170,6 +170,13 @@ def test_card_mail_reads_latest_thread_and_replies_in_it(client):
     assert FakeGmail.threads[first.gmail_thread_id][-1].headers["to"] == "ada@seedfund.vc"
     events = client.get(f"/funnel/{cid}").json()["events"]
     assert any(e["kind"] == "email" and e["body"].startswith("Email sent:") for e in events)
+    # Check email: Ada's reply and a mail the founder sent from Gmail directly land on the timeline, once
+    FakeGmail.inbound("t_direct", me, "Sharing the deck as promised.", {"to": "ada@seedfund.vc", "subject": "Deck"})
+    assert client.post(f"/funnel/{cid}/mail/sync").json()["new"] == 2
+    assert client.post(f"/funnel/{cid}/mail/sync").json()["new"] == 0
+    events = client.get(f"/funnel/{cid}").json()["events"]
+    assert any(e["kind"] == "reply" and "MRR" in e["body"] for e in events)
+    assert any(e["kind"] == "email" and e["body"].startswith("Email sent: Deck") for e in events)
     later = (datetime.now(UTC) + timedelta(days=1)).isoformat()
     r = client.post(f"/funnel/{cid}/mail/send", json={"subject": "Later", "body": "Hi Ada,\n\nLater.", "send_at": later,
                                                        "add_signature": False}).json()

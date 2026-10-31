@@ -174,18 +174,25 @@ class GoogleGmail:
         msgs = j.get("messages") or []
         return msgs[0]["threadId"] if msgs else None
 
+    @staticmethod
+    def _full(m: dict) -> FullMessage:
+        hdr = {h["name"].lower(): h["value"] for h in m.get("payload", {}).get("headers", [])}
+        return FullMessage(m["id"], m["threadId"], hdr.get("from", ""), hdr.get("to", ""), hdr.get("subject", ""),
+                           strip_quoted(_plain(m.get("payload", {})) or m.get("snippet", "")), hdr.get("message-id", ""),
+                           datetime.fromtimestamp(int(m.get("internalDate", "0")) / 1000, UTC), hdr.get("cc", ""))
+
     def thread_full(self, thread_id: str) -> list[FullMessage]:
         j = self._req("GET", f"/threads/{thread_id}", params={"format": "full"})
-        out = []
-        for m in j.get("messages", []):
-            if "DRAFT" in m.get("labelIds", []):
-                continue
-            hdr = {h["name"].lower(): h["value"] for h in m.get("payload", {}).get("headers", [])}
-            out.append(FullMessage(m["id"], m["threadId"], hdr.get("from", ""), hdr.get("to", ""), hdr.get("subject", ""),
-                                   strip_quoted(_plain(m.get("payload", {})) or m.get("snippet", "")),
-                                   hdr.get("message-id", ""),
-                                   datetime.fromtimestamp(int(m.get("internalDate", "0")) / 1000, UTC), hdr.get("cc", "")))
+        out = [self._full(m) for m in j.get("messages", []) if "DRAFT" not in m.get("labelIds", [])]
         return sorted(out, key=lambda x: x.at)  # oldest first; the last one is the message a reply answers
+
+    def messages_with(self, addr: str, limit: int = 20) -> list[FullMessage]:
+        """The most recent messages to, from or copying this address (Inbox and Sent, no drafts), oldest first."""
+        j = self._req("GET", "/messages", params={"q": f"{{from:{addr} to:{addr} cc:{addr}}} -in:drafts",
+                                                  "maxResults": limit})
+        out = [self._full(self._req("GET", f"/messages/{m['id']}", params={"format": "full"}))
+               for m in j.get("messages") or []]
+        return sorted(out, key=lambda x: x.at)
 
     def changed_threads(self) -> set[str] | None:
         """Thread ids touched since the stored historyId (MAIL-03 polling via history.list). None = full scan."""
@@ -242,6 +249,14 @@ class FakeGmail:
 
     def thread(self, thread_id: str) -> list[ThreadMessage]:
         return list(FakeGmail.threads.get(thread_id, []))
+
+    def messages_with(self, addr: str, limit: int = 20) -> list[FullMessage]:
+        tids = {tid for tid, ms in FakeGmail.threads.items() for m in ms
+                if addr.lower() in f"{m.sender} {m.headers.get('to', '')} {m.headers.get('cc', '')}".lower()}
+        me = self.acc.email.lower()  # one shared fake mailbox: keep to this account's own mail
+        out = [m for tid in tids for m in self.thread_full(tid)
+               if addr.lower() in (h := f"{m.sender} {m.to} {m.cc}".lower()) and me in h]
+        return sorted(out, key=lambda x: x.at)[-limit:]
 
     def changed_threads(self) -> set[str] | None:
         return None
