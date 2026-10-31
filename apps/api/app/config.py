@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     dev_login: bool = True
+    # Sign-in links by email (and other account email). Without SMTP, dev shows the link on screen instead.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "EasyFundraise <hello@easyfundraise.com>"
 
     session_days: int = 30
     # AUTH-03: base64 32-byte key for AES-256-GCM token encryption. Empty = derived from secret_key (dev only).

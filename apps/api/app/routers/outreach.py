@@ -17,11 +17,10 @@ from ..db import get_db
 from ..deps import Ctx, ctx
 from ..errors import ApiError
 from ..models import Email, EmailEvent, FunnelCard, GmailAccount, Sequence
-from ..services.crypto import encrypt
 from ..services.entitlements import usage
-from ..services.gmail import SCOPES, client_for
+from ..services.gmail import SCOPES, client_for, store_tokens
 from ..services.mailer import daily_cap, sent_metric, user_day
-from .auth import GOOGLE_AUTH, GOOGLE_TOKEN
+from .auth import GOOGLE_AUTH, GOOGLE_TOKEN, safe_next
 
 router = APIRouter(tags=["outreach"])
 public = APIRouter(tags=["tracking"])
@@ -44,15 +43,16 @@ def gmail_status(c: Ctx = Depends(ctx)):
 
 
 @router.get("/gmail/connect")
-def gmail_connect(request: Request, c: Ctx = Depends(ctx)):
-    """AUTH-02: Gmail scopes are requested only now, when the user first wants to send."""
+def gmail_connect(request: Request, next: str = "/app/settings?gmail=connected", c: Ctx = Depends(ctx)):
+    """AUTH-02: Gmail scopes are requested at sign-up or later, when the user first wants to send."""
     s = get_settings()
+    next = safe_next(next, "/app/settings?gmail=connected")
     if s.gmail_fake:
         acc = c.db.get(GmailAccount, c.user.id) or GmailAccount(user_id=c.user.id, email=c.user.email)
         acc.mode, acc.status, acc.email = "fake", "connected", c.user.email
         c.db.merge(acc)
         c.db.commit()
-        return RedirectResponse(f"{s.web_origin}/app/settings?gmail=connected")
+        return RedirectResponse(f"{s.web_origin}{next}")
     if not s.google_client_id:
         raise ApiError(503, "EF-MAIL-001", "Gmail connection is not configured")
     state = secrets.token_urlsafe(24)
@@ -61,6 +61,7 @@ def gmail_connect(request: Request, c: Ctx = Depends(ctx)):
                   redirect_uri=f"{s.web_origin}/api/gmail/callback")
     resp = RedirectResponse(f"{GOOGLE_AUTH}?{urlencode(params)}")
     resp.set_cookie("ef_gmail_state", state, max_age=600, httponly=True, samesite="lax", secure=s.env != "dev")
+    resp.set_cookie("ef_gmail_next", next, max_age=600, httponly=True, samesite="lax", secure=s.env != "dev")
     return resp
 
 
@@ -80,17 +81,12 @@ def gmail_callback(request: Request, code: str = "", state: str = "", error: str
     granted = j.get("scope", "")
     if "gmail.send" not in granted:
         return RedirectResponse(f"{s.web_origin}/app/settings?gmail=missing_scope")
-    acc = c.db.get(GmailAccount, c.user.id) or GmailAccount(user_id=c.user.id, email=c.user.email)
-    if j.get("refresh_token"):
-        acc.refresh_token_enc = encrypt(j["refresh_token"])
-    acc.access_token_enc = encrypt(j["access_token"])
-    acc.access_expires_at = datetime.now(UTC) + timedelta(seconds=int(j.get("expires_in", 3600)))
-    acc.scopes, acc.status, acc.mode, acc.history_id = granted, "connected", "google", ""
-    c.db.merge(acc)
+    store_tokens(c.db, c.user.id, c.user.email, j)
     c.audit("gmail.connect", c.user.email)
     c.db.commit()
-    resp = RedirectResponse(f"{s.web_origin}/app/settings?gmail=connected")
+    resp = RedirectResponse(f"{s.web_origin}{safe_next(request.cookies.get('ef_gmail_next', ''), '/app/settings?gmail=connected')}")
     resp.delete_cookie("ef_gmail_state")
+    resp.delete_cookie("ef_gmail_next")
     return resp
 
 

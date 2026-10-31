@@ -3,6 +3,7 @@
 import clsx from "clsx";
 import { AlertTriangle, Lock, RotateCw, X } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { ApiError } from "@/lib/api";
 
 export const STATUS_COLORS: Record<string, string> = {
@@ -133,9 +134,10 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
       document.body.style.overflow = "";
     };
   }, [open, onClose]);
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" role="dialog" aria-modal="true" aria-label={title}>
+  if (!open || typeof document === "undefined") return null;
+  // Portalled to <body> so it sits above the tab bar and the agent button, whatever page it's opened from
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center" role="dialog" aria-modal="true" aria-label={title}>
       <button className="absolute inset-0 bg-black/40" aria-label="Close" onClick={onClose} />
       <div className="relative w-full sm:max-w-lg max-h-[88vh] overflow-y-auto bg-card rounded-t-2xl sm:rounded-2xl border border-line shadow-xl safe-bottom">
         <div className="sticky top-0 bg-card flex items-center justify-between px-4 py-3 border-b border-line">
@@ -146,7 +148,8 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
         </div>
         <div className="p-4">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

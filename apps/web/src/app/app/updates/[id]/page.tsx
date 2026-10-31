@@ -5,6 +5,7 @@ import { ArrowLeft, CalendarCheck, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ConfirmSend, type SendPreview } from "@/components/ConfirmSend";
 import { ErrorState, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api, ApiError, fmtDate } from "@/lib/api";
 
@@ -63,14 +64,20 @@ export default function UpdatePage() {
   const q = useQuery<B>({ queryKey: ["broadcast", id], queryFn: () => api(`/broadcasts/${id}`) });
   const eng = useQuery<Eng>({ queryKey: ["broadcast-eng", id], queryFn: () => api(`/broadcasts/${id}/engagement`), enabled: !!q.data && q.data.sent > 0 });
   const [needsGmail, setNeedsGmail] = useState(false);
+  const [preview, setPreview] = useState<SendPreview | null>(null);
   const approve = useMutation({
-    mutationFn: () => api<B>(`/broadcasts/${id}/approve`, { method: "POST" }),
+    mutationFn: (confirm: boolean) => api<B>(`/broadcasts/${id}/approve`, { method: "POST", json: { confirm } }),
     onSuccess: (b) => {
+      setPreview(null);
       qc.setQueryData(["broadcast", id], b);
       qc.invalidateQueries({ queryKey: ["broadcasts"] });
       toast("Approved. Emails go out spaced over the next hours.");
     },
-    onError: (e) => (e instanceof ApiError && e.problem.needs_gmail ? setNeedsGmail(true) : toast(errText(e), "err")),
+    onError: (e) => {
+      if (e instanceof ApiError && e.problem.needs_confirm) setPreview(e.problem.preview as SendPreview);
+      else if (e instanceof ApiError && e.problem.needs_gmail) setNeedsGmail(true);
+      else toast(errText(e), "err");
+    },
   });
   const cancel = useMutation({ mutationFn: () => api(`/broadcasts/${id}/cancel`, { method: "POST" }), onSuccess: () => qc.invalidateQueries({ queryKey: ["broadcast", id] }) });
   if (q.isLoading) return <ListSkeleton rows={3} />;
@@ -115,9 +122,10 @@ export default function UpdatePage() {
       </div>
       {editable ? (
         <div className="sticky bottom-[calc(64px_+_env(safe-area-inset-bottom))] md:bottom-4 mt-4">
-          <button className="btn-primary w-full h-12 shadow-lg" disabled={approve.isPending || firsts.length === 0} onClick={() => approve.mutate()}>
+          <button className="btn-primary w-full h-12 shadow-lg" disabled={approve.isPending || firsts.length === 0} onClick={() => approve.mutate(false)}>
             <CalendarCheck size={18} /> Approve &amp; send to {firsts.length}
           </button>
+          <ConfirmSend preview={preview} busy={approve.isPending} onCancel={() => setPreview(null)} onConfirm={() => approve.mutate(true)} />
           <p className="text-xs text-muted text-center mt-1 bg-surface/80">Each email is personal and sent from your Gmail, a few minutes apart.</p>
         </div>
       ) : (

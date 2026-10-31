@@ -23,16 +23,23 @@ def test_sequence_draft_limits_and_lint(client):
     assert "Medibot" in emails[0]["body"]  # grounded in a stored, sourced deal
     assert emails[0]["facts"][0]["source"].startswith("https://")
     # Approve requires a signature (AUTH-05)
-    r = client.post(f"/sequences/{seq['id']}/approve")
+    r = client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True})
     assert r.status_code == 409 and r.json()["needs_signature"]
     client.patch("/workspace/me", json={"signature": "Sam\nDocAI"})
-    r = client.post(f"/sequences/{seq['id']}/approve")
+    r = client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True})
     assert r.status_code == 409 and r.json()["needs_reveal"]  # sending needs the contact (ASP-01 credit)
     client.post(f"/investors/{seq['investor_id']}/reveal")
-    r = client.post(f"/sequences/{seq['id']}/approve")
+    r = client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True})
     assert r.status_code == 409 and r.json()["needs_gmail"]
     client.get("/gmail/connect", follow_redirects=False)  # fake mailbox in tests
-    r = client.post(f"/sequences/{seq['id']}/approve").json()
+    # Nothing is scheduled until the founder confirms the sender, recipient and send times
+    r = client.post(f"/sequences/{seq['id']}/approve")
+    assert r.status_code == 409 and r.json()["needs_confirm"]
+    preview = r.json()["preview"]
+    assert preview["to"] == "ada@seedfund.vc" and preview["from"] and len(preview["emails"]) == 3
+    assert client.get(f"/sequences/{seq['id']}").json()["status"] == "draft"
+    assert all(e["status"] == "draft" for e in client.get(f"/sequences/{seq['id']}").json()["emails"])
+    r = client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True}).json()
     assert r["status"] == "approved"
     london = [datetime.fromisoformat(e["scheduled_for"]).astimezone(ZoneInfo("Europe/London")) for e in r["emails"]]
     assert all(d.weekday() in (1, 2, 3) for d in london)

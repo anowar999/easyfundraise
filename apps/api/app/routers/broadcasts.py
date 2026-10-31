@@ -140,8 +140,13 @@ def remove_recipient(bid: str, eid: str, c: Ctx = Depends(ctx)):
     return {"ok": True}
 
 
+class ApproveIn(BaseModel):
+    confirm: bool = False
+
+
 @router.post("/{bid}/approve")
-def approve(bid: str, c: Ctx = Depends(ctx)):
+def approve(bid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
+    """Nothing is scheduled until the founder confirms the sender and recipients (409 needs_confirm first)."""
     c.require_editor()
     b = _get(c, bid)
     _gate(c, b.kind)
@@ -150,6 +155,10 @@ def approve(bid: str, c: Ctx = Depends(ctx)):
     acc = c.db.get(GmailAccount, c.user.id)
     if acc is None or acc.status != "connected":
         raise ApiError(409, "EF-SEQ-007", "Connect Gmail to send", "", {"needs_gmail": True})
+    if not (body and body.confirm):
+        to = sorted({e.to_email for e in b.emails if e.step == 1 and e.to_email})
+        raise ApiError(409, "EF-SEQ-010", "Confirm sending", "",
+                       {"needs_confirm": True, "preview": {"from": acc.email, "count": len(to), "to": to[:5]}})
     svc.schedule(c.db, b, datetime.now(UTC))
     b.status = "scheduled"
     c.audit("broadcast.approve", str(b.id))

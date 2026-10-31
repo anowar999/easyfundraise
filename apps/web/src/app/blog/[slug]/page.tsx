@@ -42,7 +42,7 @@ export default async function Post({ params }: { params: Promise<{ slug: string 
         <div className="rounded-3xl lp-hero-bg text-white p-8 md:p-10">
           <h2 className="text-2xl md:text-3xl font-bold">Find investors who fit your round</h2>
           <p className="mt-2 text-white/75">Search 14,900+ investors, send personal emails from your Gmail and track every conversation.</p>
-          <Link href="/login" className="lp-btn-primary mt-6 h-12 px-6 text-[16px]">
+          <Link href="/login?mode=signup" className="lp-btn-primary mt-6 h-12 px-6 text-[16px]">
             Start free <ArrowRight size={18} />
           </Link>
         </div>

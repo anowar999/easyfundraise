@@ -150,7 +150,7 @@ export default async function InvestorList({ params }: { params: Promise<{ slug:
             <div className="text-3xl font-extrabold">{plus(s.count)}</div>
             <div className="text-white/70">{what}{page.country ? ` in ${theCountry(page.country)}` : ""}</div>
             <p className="mt-4 text-[15px] text-white/75">See every investor with fit scores, theses and recent deals, then send personal emails from your Gmail.</p>
-            <Link href="/login" className="lp-btn-primary mt-5 h-12 w-full text-[16px]">
+            <Link href="/login?mode=signup" className="lp-btn-primary mt-5 h-12 w-full text-[16px]">
               See the investors <ArrowRight size={18} />
             </Link>
             <p className="mt-2 text-xs text-white/50 text-center">14-day free trial · no card</p>

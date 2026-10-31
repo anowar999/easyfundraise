@@ -2,7 +2,7 @@ import Link from "next/link";
 import { LogoMark } from "./LogoMark";
 
 const COLS: [string, [string, string][]][] = [
-  ["Product", [["/#investor-database", "Investor database"], ["/#cold-email", "Cold email to investors"], ["/#crm", "Fundraising CRM"], ["/#data-room", "Startup data room"], ["/#tour", "Product tour"], ["/login", "Start free trial"]]],
+  ["Product", [["/#investor-database", "Investor database"], ["/#cold-email", "Cold email to investors"], ["/#crm", "Fundraising CRM"], ["/#data-room", "Startup data room"], ["/login?mode=signup", "Start free trial"]]],
   ["Browse investors", [
     ["/investors/angel-investors-in-united-states", "Angel investors in the US"],
     ["/investors/venture-capital-firms-in-united-kingdom", "VC investors in the UK"],

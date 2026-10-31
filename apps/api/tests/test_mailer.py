@@ -21,7 +21,7 @@ def _approved(client):
     client.post(f"/investors/{ada['id']}/reveal")
     client.get("/gmail/connect", follow_redirects=False)
     seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
-    r = client.post(f"/sequences/{seq['id']}/approve")
+    r = client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True})
     assert r.status_code == 200, r.text
     with SessionLocal() as db:  # warm-up ramp would cap a brand-new account at 5/day; age it
         acc = db.get(GmailAccount, db.scalar(select(Sequence.user_id).where(Sequence.id == r.json()["id"])))

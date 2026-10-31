@@ -113,10 +113,6 @@ body { background: var(--surface); color: var(--ink); font-family: var(--font-sa
 .lp-float-slow { animation: lp-float 8s ease-in-out infinite; animation-delay: -2s; }
 @keyframes lp-marquee { from { transform: translateX(0) } to { transform: translateX(-50%) } }
 .lp-marquee { animation: lp-marquee 38s linear infinite; }
-@keyframes lp-kenburns { from { transform: scale(1) } to { transform: scale(1.12) } }
-.lp-kenburns { animation: lp-kenburns 9s ease-out forwards; }
-@keyframes lp-progress { from { width: 0 } to { width: 100% } }
-.lp-progress { animation: lp-progress linear forwards; }
 @keyframes lp-fade { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
 @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; } }
 

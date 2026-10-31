@@ -1,4 +1,4 @@
-import { ArrowRight, BellRing, Bot, CalendarCheck, Check, FileSpreadsheet, Globe2, LineChart, Mail, MousePointerClick, PlayCircle, Search, ShieldCheck, Sparkles, Target, Users } from "lucide-react";
+import { ArrowRight, BellRing, Bot, CalendarCheck, Check, FileSpreadsheet, Globe2, LineChart, Mail, MousePointerClick, Search, ShieldCheck, Sparkles, Target, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -7,7 +7,6 @@ import { Footer } from "@/components/landing/Footer";
 import { Header } from "@/components/landing/Header";
 import { Reveal } from "@/components/landing/Reveal";
 import { RoundTabs } from "@/components/landing/RoundTabs";
-import { PlayTourButton, Tour } from "@/components/landing/Tour";
 
 export const metadata: Metadata = {
   title: { absolute: "Investor Database & Cold Email for Founders | EasyFundraise" },
@@ -134,12 +133,12 @@ export default function Landing() {
           </Reveal>
           <Reveal delay={240}>
             <div className="mt-9 flex flex-col sm:flex-row justify-center gap-3">
-              <Link href="/login" className="lp-btn-primary h-14 px-8 text-lg">
+              <Link href="/login?mode=signup" className="lp-btn-primary h-14 px-8 text-lg">
                 Find your investors free <ArrowRight size={20} />
               </Link>
-              <PlayTourButton className="lp-btn-glass h-14 px-7 text-lg">
-                <PlayCircle size={22} /> Watch the 60-second tour
-              </PlayTourButton>
+              <Link href="/investors" className="lp-btn-glass h-14 px-7 text-lg">
+                <Search size={20} /> Browse investor lists
+              </Link>
             </div>
             <p className="mt-4 text-sm text-white/55">14-day free trial · No credit card · Sign in with Google</p>
           </Reveal>
@@ -317,19 +316,6 @@ export default function Landing() {
         <Browser src="/screens/d-dataroom.webp" alt="Startup data room page shared with investors" />
       </Feature>
 
-      {/* ---------------- Tour ---------------- */}
-      <section id="tour" className="scroll-mt-20 lp-dark py-20 md:py-28">
-        <div className="mx-auto max-w-6xl px-4 md:px-6">
-          <Reveal className="text-center">
-            <h2 className="text-3xl md:text-5xl font-bold tracking-tight">See EasyFundraise in 60 seconds</h2>
-            <p className="mt-4 text-lg text-white/70">From finding investors to closing your round. Turn your sound on.</p>
-          </Reveal>
-          <Reveal delay={120} className="mt-10 md:mt-14">
-            <Tour />
-          </Reveal>
-        </div>
-      </section>
-
       {/* ---------------- How it works ---------------- */}
       <section className="py-20 md:py-28">
         <div className="mx-auto max-w-6xl px-4 md:px-6">
@@ -430,7 +416,7 @@ export default function Landing() {
           </h2>
           <p className="mt-5 text-lg md:text-xl text-white/75">Start your 14-day free trial and send your first personal investor email today.</p>
           <div className="mt-9 flex flex-col sm:flex-row justify-center gap-3">
-            <Link href="/login" className="lp-btn-primary h-14 px-8 text-lg">
+            <Link href="/login?mode=signup" className="lp-btn-primary h-14 px-8 text-lg">
               Find your investors free <ArrowRight size={20} />
             </Link>
             <Link href="/login?next=/app/funnel/import" className="lp-btn-glass h-14 px-7 text-lg">

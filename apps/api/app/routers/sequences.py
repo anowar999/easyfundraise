@@ -122,9 +122,15 @@ def regenerate(sid: str, body: RegenIn, c: Ctx = Depends(ctx)):
     return s_out(s, inv, c.user.signature)
 
 
+class ApproveIn(BaseModel):
+    confirm: bool = False  # the founder saw who, from which mailbox and when, and said yes
+
+
 @router.post("/{sid}/approve")
-def approve(sid: str, c: Ctx = Depends(ctx)):
-    """SEQ-05: Approve & schedule. Lint must pass; slots land in the investor's local send window."""
+def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
+    """SEQ-05: Approve & schedule. Lint must pass; slots land in the investor's local send window.
+    Without confirm=true nothing is scheduled: the reply (409 needs_confirm) carries the exact sender, recipient
+    and send times so the founder confirms before anything can go out from their Gmail."""
     c.require_editor()
     s = _get(c, sid)
     if not can(c.db, c.workspace, "send"):
@@ -148,6 +154,12 @@ def approve(sid: str, c: Ctx = Depends(ctx)):
         raise ApiError(409, "EF-SEQ-007", "Connect Gmail to send", "Emails go out from your own Gmail.",
                        {"needs_gmail": True})
     outreach.schedule(s.emails, datetime.now(UTC), inv.timezone)
+    if not (body and body.confirm):
+        preview = {"from": acc.email, "to": to, "investor": inv.name, "timezone": inv.timezone,
+                   "emails": [{"step": e.step, "subject": e.subject, "scheduled_for": e.scheduled_for.isoformat()}
+                              for e in sorted(s.emails, key=lambda e: e.step)]}
+        c.db.rollback()
+        raise ApiError(409, "EF-SEQ-010", "Confirm sending", "", {"needs_confirm": True, "preview": preview})
     s.status, s.user_id = "approved", c.user.id
     if s.card_id is None:
         card = FunnelCard(workspace_id=c.ws_id, investor_id=inv.id, name=inv.name, firm=inv.current_firm or inv.company,

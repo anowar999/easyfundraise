@@ -24,6 +24,17 @@ REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 SCOPES = "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly"
 
 
+def store_tokens(db: Session, user_id, email: str, tok: dict) -> GmailAccount:
+    """Save a Google token response that includes gmail.send, from the Gmail connect flow or from sign-in."""
+    acc = db.get(GmailAccount, user_id) or GmailAccount(user_id=user_id, email=email)
+    if tok.get("refresh_token"):
+        acc.refresh_token_enc = encrypt(tok["refresh_token"])
+    acc.access_token_enc = encrypt(tok["access_token"])
+    acc.access_expires_at = datetime.now(UTC) + timedelta(seconds=int(tok.get("expires_in", 3600)))
+    acc.email, acc.scopes, acc.status, acc.mode, acc.history_id = email, tok.get("scope", ""), "connected", "google", ""
+    return db.merge(acc)
+
+
 class GmailRevoked(Exception):
     """Google revoked the grant (AUTH-03): pause sends and ask the user to reconnect."""
 
