@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     # §6 billing
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    password_otp: bool = True  # password sign-in also needs a one-time code emailed to the account
     admin_mfa: bool = False  # AUTH-08: forced on in prod
     admin_emails: str = ""  # comma-separated; these users get is_admin on login
 

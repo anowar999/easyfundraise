@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, Eye, EyeOff, Info, KeyRound, Lock, Mail, MailCheck } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Info, KeyRound, Lock, Mail, MailCheck, ShieldCheck } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { AuthShell, GoogleG } from "@/components/AuthShell";
 
@@ -31,6 +31,8 @@ function LoginInner() {
   const [usePw, setUsePw] = useState(false);
   const [pw, setPw] = useState("");
   const [showPw, setShowPw] = useState(false);
+  const [codeStep, setCodeStep] = useState<{ masked: string; devCode?: string; minutes: number } | null>(null);
+  const [code, setCode] = useState("");
 
   useEffect(() => {
     api<Cfg>("/auth/config").then(setCfg).catch(() => setCfg({ google: false, dev_login: false, email_link: false, gmail_fake: false }));
@@ -42,10 +44,32 @@ function LoginInner() {
   const pwLogin = async () => {
     setBusy(true);
     try {
-      const r = await api<{ next: string }>("/auth/password/login", { method: "POST", json: { email, password: pw, next } });
+      const r = await api<{ next?: string; code_required?: boolean; email?: string; dev_code?: string; expires_in?: number }>("/auth/password/login", {
+        method: "POST",
+        json: { email, password: pw, next },
+      });
+      if (r.code_required) {
+        setCodeStep({ masked: r.email || email, devCode: r.dev_code, minutes: Math.round((r.expires_in || 600) / 60) });
+        setCode("");
+        setBusy(false);
+        return;
+      }
       location.href = r.next || next;
     } catch (e) {
       setErr(problem(e, "Sign-in failed. Please try again."));
+      setBusy(false);
+    }
+  };
+
+  const verifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErr("");
+    setBusy(true);
+    try {
+      const r = await api<{ next: string }>("/auth/password/verify", { method: "POST", json: { email, code, next } });
+      location.href = r.next || next;
+    } catch (e) {
+      setErr(problem(e, "That code didn't work. Please try again."));
       setBusy(false);
     }
   };
@@ -74,6 +98,59 @@ function LoginInner() {
       setErr(problem(e, "Sign-in failed"));
     }
   };
+
+  if (codeStep) {
+    return (
+      <AuthShell>
+        <div className="grid place-items-center w-14 h-14 rounded-2xl bg-[#eef4ff] text-[#0f62fe]">
+          <ShieldCheck size={28} />
+        </div>
+        <h1 className="mt-6 text-3xl font-bold tracking-tight text-[#0b1220]">Enter your code</h1>
+        <p className="mt-3 text-[16px] leading-relaxed text-[#4a5670]">
+          We emailed a 6-digit code to <strong className="text-[#0b1220]">{codeStep.masked}</strong>. It works once, for {codeStep.minutes} minutes.
+        </p>
+        {err && (
+          <p role="alert" className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            {err}
+          </p>
+        )}
+        {codeStep.devCode && (
+          <p className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            Email isn&apos;t set up on this server yet (development). Your code is <strong className="font-mono tracking-widest">{codeStep.devCode}</strong>
+          </p>
+        )}
+        <form onSubmit={verifyCode} className="mt-6 space-y-3">
+          <label htmlFor="code" className="block text-sm font-medium text-[#1c2740]">
+            Sign-in code
+          </label>
+          <input
+            id="code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9 ]{6,7}"
+            maxLength={7}
+            required
+            autoFocus
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
+            placeholder="123456"
+            className="h-14 w-full rounded-2xl border border-[#d5dbe6] bg-white px-4 text-center font-mono text-2xl tracking-[0.5em] text-[#0b1220] placeholder:text-[#c4cad6] outline-none focus:border-[#0f62fe] focus:ring-4 focus:ring-[#0f62fe]/15"
+          />
+          <button disabled={busy || code.length !== 6} className="lp-btn-primary w-full py-3.5 text-[16px] disabled:opacity-60">
+            {busy ? "Checking…" : "Verify and sign in"} <ArrowRight size={18} />
+          </button>
+        </form>
+        <div className="mt-6 flex flex-wrap justify-between gap-3 text-sm">
+          <button type="button" disabled={busy} onClick={() => { setErr(""); pwLogin(); }} className="font-medium text-[#0f62fe] hover:underline disabled:opacity-50">
+            Send a new code
+          </button>
+          <button type="button" onClick={() => { setCodeStep(null); setErr(""); }} className="text-[#4a5670] hover:underline">
+            Back
+          </button>
+        </div>
+      </AuthShell>
+    );
+  }
 
   if (sent) {
     return (
@@ -189,7 +266,7 @@ function LoginInner() {
             </button>
             {pwMode ? (
               <p className="flex gap-1.5 text-xs text-[#7a849a]">
-                <Info size={14} className="shrink-0 mt-px" /> Signed up with Google? Add a password in Settings, then use it here. Your Gmail stays connected.
+                <Info size={14} className="shrink-0 mt-px" /> We&apos;ll also email you a one-time code. Signed up with Google? Add a password in Settings first.
               </p>
             ) : (
               <div className="flex flex-wrap items-start justify-between gap-2 text-xs text-[#7a849a]">
