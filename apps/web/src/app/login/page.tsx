@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, Info, Lock, Mail, MailCheck } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Info, KeyRound, Lock, Mail, MailCheck } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { AuthShell, GoogleG } from "@/components/AuthShell";
 
@@ -28,16 +28,32 @@ function LoginInner() {
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<{ email: string; devLink?: string } | null>(null);
   const [err, setErr] = useState(ERRORS[params.get("error") ?? ""] ?? "");
+  const [usePw, setUsePw] = useState(false);
+  const [pw, setPw] = useState("");
+  const [showPw, setShowPw] = useState(false);
 
   useEffect(() => {
     api<Cfg>("/auth/config").then(setCfg).catch(() => setCfg({ google: false, dev_login: false, email_link: false, gmail_fake: false }));
   }, []);
 
+  const pwMode = usePw || cfg?.email_link === false;
   const googleHref = `/api/auth/google/start?${new URLSearchParams({ gmail: gmail ? "1" : "0", next })}`;
+
+  const pwLogin = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ next: string }>("/auth/password/login", { method: "POST", json: { email, password: pw, next } });
+      location.href = r.next || next;
+    } catch (e) {
+      setErr(problem(e, "Sign-in failed. Please try again."));
+      setBusy(false);
+    }
+  };
 
   const sendLink = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr("");
+    if (pwMode) return pwLogin();
     setBusy(true);
     try {
       const r = await api<{ sent: boolean; dev_link?: string }>("/auth/email/start", { method: "POST", json: { email, next } });
@@ -117,7 +133,7 @@ function LoginInner() {
         </span>
       </label>
 
-      {cfg?.email_link !== false && (
+      {cfg && (
         <>
           <div className="my-7 flex items-center gap-4 text-xs font-medium uppercase tracking-wider text-[#9aa3b5]">
             <span className="h-px flex-1 bg-[#e6ebf3]" /> or <span className="h-px flex-1 bg-[#e6ebf3]" />
@@ -139,12 +155,54 @@ function LoginInner() {
                 className="h-13 py-3.5 w-full rounded-full border border-[#d5dbe6] bg-white pl-11 pr-4 text-[16px] text-[#0b1220] placeholder:text-[#9aa3b5] outline-none focus:border-[#0f62fe] focus:ring-4 focus:ring-[#0f62fe]/15"
               />
             </div>
+            {pwMode && (
+              <>
+                <div className="flex items-baseline justify-between">
+                  <label htmlFor="password" className="block text-sm font-medium text-[#1c2740]">
+                    Password
+                  </label>
+                  {cfg.email_link && (
+                    <button type="button" className="text-xs font-medium text-[#0f62fe] hover:underline" onClick={() => { setUsePw(false); setErr(""); }}>
+                      Forgot it? Email me a link
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <KeyRound size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#9aa3b5]" />
+                  <input
+                    id="password"
+                    type={showPw ? "text" : "password"}
+                    required
+                    value={pw}
+                    onChange={(e) => setPw(e.target.value)}
+                    autoComplete="current-password"
+                    className="h-13 py-3.5 w-full rounded-full border border-[#d5dbe6] bg-white pl-11 pr-12 text-[16px] text-[#0b1220] outline-none focus:border-[#0f62fe] focus:ring-4 focus:ring-[#0f62fe]/15"
+                  />
+                  <button type="button" onClick={() => setShowPw(!showPw)} aria-label={showPw ? "Hide password" : "Show password"} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-[#7a849a] hover:text-[#1c2740]">
+                    {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </>
+            )}
             <button disabled={busy} className="lp-btn-primary w-full py-3.5 text-[16px] disabled:opacity-60">
-              {busy ? "Sending…" : "Continue with email"} <ArrowRight size={18} />
+              {pwMode ? (busy ? "Signing in…" : "Sign in") : busy ? "Sending…" : "Continue with email"} <ArrowRight size={18} />
             </button>
-            <p className="flex gap-1.5 text-xs text-[#7a849a]">
-              <Info size={14} className="shrink-0 mt-px" /> We&apos;ll email you a magic link. No password needed. You can connect Gmail after.
-            </p>
+            {pwMode ? (
+              <p className="flex gap-1.5 text-xs text-[#7a849a]">
+                <Info size={14} className="shrink-0 mt-px" /> Signed up with Google? Add a password in Settings, then use it here. Your Gmail stays connected.
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-start justify-between gap-2 text-xs text-[#7a849a]">
+                <p className="flex gap-1.5">
+                  <Info size={14} className="shrink-0 mt-px" /> We&apos;ll email you a magic link. No password needed.
+                </p>
+                {!signup && (
+                  <button type="button" className="font-medium text-[#0f62fe] hover:underline" onClick={() => { setUsePw(true); setErr(""); }}>
+                    Use a password instead
+                  </button>
+                )}
+              </div>
+            )}
           </form>
         </>
       )}

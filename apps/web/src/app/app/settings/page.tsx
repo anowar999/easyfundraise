@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { PageHeader, useMe } from "@/components/AppShell";
 import { Field, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
-import { AgentMemoryList, BillingPlans, Devices, GmailSection, NewWorkspace, NotificationPrefs, OutreachSettings, Positioning, Team } from "./extras";
+import { AgentMemoryList, BillingPlans, Devices, GmailSection, NewWorkspace, NotificationPrefs, OutreachSettings, Positioning, SignInMethods, Team } from "./extras";
 
 type Profile = { company_name: string; one_liner: string; sectors: string[]; stage: string; geography: string; round_size: string; instrument: string; traction: string; business_model: string; investor_types: string[]; looking_for: string; shareable: Record<string, boolean>; deck_filename: string };
 type WS = { name: string; agent_name: string; tier: { code: string; name: string; limits: Record<string, number> }; trial_ends_at: string | null; trial_expired: boolean; usage: Record<string, number> };
@@ -333,6 +333,9 @@ export default function Settings() {
         </Section>
         <Section id="workspaces" title="Another company or raise" sub="Each workspace has its own investor tracker, data room and emails.">
           <NewWorkspace />
+        </Section>
+        <Section id="signin" title="Sign-in & password" sub="Keep Google and Gmail connected, and also sign in with your email and a password.">
+          <SignInMethods />
         </Section>
         <Section id="devices" title="Signed-in devices">
           <Devices />

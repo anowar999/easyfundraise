@@ -58,6 +58,9 @@ class User(Base):
     # §10.5: {"<kind>": {"in_app": bool, "email": bool}, "quiet_hours": ["22:00", "07:00"], "brief_time": "08:00"}
     notify_prefs: Mapped[dict] = mapped_column(JSONB, default=dict)
     totp_secret_enc: Mapped[str] = mapped_column(Text, default="")  # AUTH-08 admin MFA
+    # Optional password sign-in (scrypt, salted), alongside Google and email links
+    password_hash: Mapped[str] = mapped_column(Text, default="")
+    password_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_brief_on: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = created()
     updated_at: Mapped[datetime] = updated()
