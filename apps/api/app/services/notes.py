@@ -39,9 +39,16 @@ def find_date(text: str, today: date) -> date | None:
             except ValueError:
                 return None
         return d if yy or d >= today else date(y + 1, d.month, d.day)
-    if m := re.search(r"\b(\d{1,2}) (" + "|".join(MONTHS) + r")[a-z]*\b", t):
+    mon = "|".join(MONTHS)
+    m = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?[ /.-]?(" + mon + r")[a-z]*\b", t)
+    if not m and (m2 := re.search(r"\b(" + mon + r")[a-z]* (\d{1,2})(?:st|nd|rd|th)?\b", t)):
+        m = m2
+        day, mo = int(m2.group(2)), m2.group(1)
+    elif m:
+        day, mo = int(m.group(1)), m.group(2)
+    if m:
         try:
-            d = date(today.year, MONTHS.index(m.group(2)) + 1, int(m.group(1)))
+            d = date(today.year, MONTHS.index(mo) + 1, day)
             return d if d >= today else d.replace(year=today.year + 1)
         except ValueError:
             return None

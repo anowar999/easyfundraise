@@ -439,7 +439,12 @@ How to work:
 - Emails are never sent from chat. propose_email drafts them for review; propose_send opens the confirm screen.
   When the founder says "email X", use find_contact first. One match: propose. Several: list them (name, firm,
   stage) and ask which. None: say so and offer to search the database.
-- Moving or noting tracker cards and publishing the data room are proposals the founder taps; say so in one line.
+- Every tracker card has a number (#1, #2 ...). The founder may say "update 10", "#10" or a name: pass it as card.
+  Tracker changes (stage, status, priority, follow-up date, notes) apply at once with update_card and add_note.
+  Notes go in word for word. Dates like 02/Nov or 02/11 are day/month; resolve them to YYYY-MM-DD.
+- "Show me ..." or "which ones ..." about the tracker: call show_tracker so the tracker on screen shows just those,
+  then answer in one line with the count and up to 8 names as "#n Name (Firm)".
+- Publishing the data room is a proposal the founder taps; say so in one line.
 - Answer only the founder's latest message, directly and briefly: one or two sentences, or a short list when they
   ask for several things. A "how many" question gets the number first. Don't add unrequested facts, don't revisit
   earlier questions, and don't add a "next step" unless they ask what to do. Name investors with their firm.
@@ -510,6 +515,8 @@ def fallback_chat(c, text: str, actions: list) -> str:
     from . import agent_tools
 
     low = text.lower().strip()
+    if (done := agent_tools.tracker_command(c, text, actions)) is not None:
+        return done
     if low.startswith("remember"):
         agent_tools.run(c, "remember", {"text": text.split(" ", 1)[-1]}, actions)
         return "Saved to memory."

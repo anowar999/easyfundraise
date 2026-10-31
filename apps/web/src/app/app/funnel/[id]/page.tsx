@@ -117,6 +117,7 @@ export default function CardPage() {
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold truncate flex items-center gap-2">
+            {c.number > 0 && <span className="font-mono text-base text-muted">#{c.number}</span>}
             {c.name}
             {c.starred && <Star size={20} className="fill-amber-400 text-amber-500 shrink-0" aria-label="Star investor" />}
           </h1>
