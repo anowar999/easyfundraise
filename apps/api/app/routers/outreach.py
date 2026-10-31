@@ -21,7 +21,7 @@ from ..services.calendar import SCOPE as CAL_SCOPE
 from ..services.calendar import connected as calendar_connected
 from ..services.entitlements import usage
 from ..services.gmail import SCOPES, client_for, store_tokens
-from ..services.mailer import daily_cap, sent_metric, user_day
+from ..services.mailer import FOREVER, daily_cap, safety, sent_metric, user_day
 from .auth import GOOGLE_AUTH, GOOGLE_TOKEN, google_reason, safe_next
 
 router = APIRouter(tags=["outreach"])
@@ -36,7 +36,34 @@ def gmail_out(acc: GmailAccount | None, db: Session, c: Ctx) -> dict:
     cap = daily_cap(db, c.workspace, acc, now)
     return {"connected": acc.status == "connected", "status": acc.status, "email": acc.email, "mode": acc.mode,
             "connected_at": acc.connected_at, "sent_today": usage(db, c.workspace, sent_metric(c.user.id), user_day(c.user, now)),
-            "daily_cap": cap, "fake_available": get_settings().gmail_fake, "calendar": calendar_connected(acc)}
+            "daily_cap": cap, "fake_available": get_settings().gmail_fake, "calendar": calendar_connected(acc),
+            "paused_until": acc.paused_until if acc.paused_until and acc.paused_until > now else None,
+            "paused_reason": acc.paused_reason if acc.paused_until and acc.paused_until > now else "",
+            "burst_max": safety(db)["burst_max"], "burst_window_minutes": safety(db)["burst_window_minutes"]}
+
+
+@router.post("/gmail/pause")
+def gmail_pause(c: Ctx = Depends(ctx)):
+    """Stops every email from leaving this user's Gmail (scheduled ones wait) until they resume."""
+    acc = c.db.get(GmailAccount, c.user.id)
+    if acc is None:
+        raise ApiError(404, "EF-MAIL-004", "Gmail is not connected")
+    acc.paused_until, acc.paused_reason = FOREVER, "Paused by you. Nothing sends until you resume."
+    c.audit("gmail.pause", c.user.email)
+    c.db.commit()
+    return gmail_out(acc, c.db, c)
+
+
+@router.post("/gmail/resume")
+def gmail_resume(c: Ctx = Depends(ctx)):
+    acc = c.db.get(GmailAccount, c.user.id)
+    if acc is None:
+        raise ApiError(404, "EF-MAIL-004", "Gmail is not connected")
+    before = acc.paused_reason
+    acc.paused_until, acc.paused_reason = None, ""
+    c.audit("gmail.resume", c.user.email, before={"reason": before})
+    c.db.commit()
+    return gmail_out(acc, c.db, c)
 
 
 @router.get("/gmail")

@@ -69,3 +69,29 @@ def parse_note(text: str, today: date) -> dict:
         sug.append({"field": "next_contact_date", "value": out["reminder_date"].isoformat(),
                     "reason": "Snooze and re-engage"})
     return out
+
+
+WAITING = re.compile(r"\b(get back|getting back|looking into|look into|will update|update you|circle back|come back to you|"
+                     r"revert|in touch|discuss(ing)? (it )?(with|internally)|review(ing)? (it|this)|take a look|"
+                     r"let you know|think about it|after (our|the) (partner|ic|investment committee)|next steps?)\b", re.I)
+PASSED = re.compile(r"\b(pass|not a fit|not for us|won't be investing|will not be investing|decline)\b", re.I)
+
+
+def follow_up_date(text: str, today: date) -> date | None:
+    """When to chase an investor after their reply: the date they gave ('next week' = Thursday next week, late
+    enough for them to have done it), else a week out when they said they'd come back. None when they passed."""
+    t = text.lower()
+    if PASSED.search(t):
+        return None
+    if re.search(r"\b(next|the following) week\b", t):
+        return _next_weekday(today, 0) + timedelta(days=3)
+    if re.search(r"\b(end of|by the end of|later) (the |this )?week\b", t):
+        return _next_weekday(today, 0) if today.weekday() >= 4 else today + timedelta(days=4 - today.weekday() + 3)
+    if re.search(r"\b(end of|later this|by the end of) (the |this )?month\b", t):
+        nxt = date(today.year + (today.month == 12), today.month % 12 + 1, 1)
+        return nxt + timedelta(days=2)
+    if d := find_date(t, today):
+        return d + timedelta(days=1) if d > today else None  # the day after they said they'd act
+    if WAITING.search(t):
+        return today + timedelta(days=7)
+    return None

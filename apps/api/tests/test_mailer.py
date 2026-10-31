@@ -177,7 +177,85 @@ def test_card_mail_reads_latest_thread_and_replies_in_it(client):
     events = client.get(f"/funnel/{cid}").json()["events"]
     assert any(e["kind"] == "reply" and "MRR" in e["body"] for e in events)
     assert any(e["kind"] == "email" and e["body"].startswith("Email sent: Deck") for e in events)
+    # their newest reply gives a timeline: the card gets a follow-up date and reminder, quoted history dropped
+    FakeGmail.inbound("t_direct", "Ada <ada@seedfund.vc>", "Thanks for the nudge. The team will update you next week. "
+                      "Best On Sat, 31 Oct 2026 at 01:15, Sam wrote", {"to": me, "subject": "Re: Deck"})
+    assert client.post(f"/funnel/{cid}/mail/sync").json()["new"] == 1
+    card = client.get(f"/funnel/{cid}").json()
+    assert card["next_contact_date"] and card["events"]
+    latest = next(e for e in card["events"] if e["kind"] == "reply" and "nudge" in e["body"])
+    assert latest["body"].endswith("next week.") and latest["meta"]["follow_up"] == card["next_contact_date"]
     later = (datetime.now(UTC) + timedelta(days=1)).isoformat()
     r = client.post(f"/funnel/{cid}/mail/send", json={"subject": "Later", "body": "Hi Ada,\n\nLater.", "send_at": later,
                                                        "add_signature": False}).json()
     assert r["status"] == "scheduled" and r["sent_at"] is None
+
+
+def test_send_safety_burst_pause_and_editor_check(client):
+    from app.models import ConfigKV, Notification, WorkspaceMember
+
+    FakeGmail.reset()
+    seq = _approved(client)
+    cid = seq["card_id"]
+    with SessionLocal() as db:
+        row = db.get(ConfigKV, "sending")
+        old = dict(row.value) if row else None
+        db.merge(ConfigKV(key="sending", value={**(old or {}), "burst_max": 2, "burst_window_minutes": 10,
+                                                "max_recipients": 10}, version=1))
+        db.commit()
+    try:
+        send = lambda: client.post(f"/funnel/{cid}/mail/send", json={"subject": "Hi", "body": "Hi Ada"})  # noqa: E731
+        assert send().json()["status"] == "sent"
+        assert send().json()["status"] == "sent"
+        r = send()  # a third within 10 minutes trips the burst guard
+        assert r.status_code == 429 and r.json()["paused"]
+        g = client.get("/gmail").json()
+        assert g["paused_until"] and "Paused" in g["paused_reason"]
+        assert send().status_code == 423  # stays paused
+        with SessionLocal() as db:
+            assert db.scalar(select(Notification).where(Notification.kind == "send_paused")) is not None
+        assert client.post("/gmail/resume").json()["paused_until"] is None
+
+        # paused by the user: a scheduled email waits instead of going out
+        assert client.post("/gmail/pause").json()["paused_until"]
+        with SessionLocal() as db:
+            em = db.scalar(select(Email).where(Email.sequence_id == seq["id"], Email.step == 1))
+            mailer.send_due(db, em.scheduled_for + timedelta(seconds=1))
+            db.refresh(em)
+            assert em.status == "scheduled" and "Paused by you" in em.error
+        client.post("/gmail/resume")
+
+        # a teammate demoted to viewer can't have their scheduled emails sent
+        with SessionLocal() as db:
+            em = db.scalar(select(Email).where(Email.sequence_id == seq["id"], Email.step == 1))
+            m = db.get(WorkspaceMember, (em.workspace_id, em.user_id))
+            m.role = "viewer"
+            db.get(GmailAccount, em.user_id).next_send_at = None
+            db.commit()
+            mailer.send_due(db, em.scheduled_for + timedelta(seconds=1))
+            db.refresh(em)
+            assert em.status == "cancelled" and "no longer an editor" in em.error
+            m.role = "owner"
+            db.commit()
+    finally:
+        with SessionLocal() as db:
+            if old is None:
+                db.delete(db.get(ConfigKV, "sending"))
+            else:
+                db.get(ConfigKV, "sending").value = old
+            db.commit()
+
+
+def test_follow_up_date_and_quote_stripping():
+    from datetime import date
+
+    from app.services.gmail import strip_quoted
+    from app.services.notes import follow_up_date
+
+    sat = date(2026, 10, 31)
+    assert follow_up_date("The team is looking into it and will update you next week.", sat) == date(2026, 11, 5)
+    assert follow_up_date("Let me get back to you", sat) == date(2026, 11, 7)
+    assert follow_up_date("We'll pass on this one, not a fit", sat) is None
+    assert follow_up_date("Great, thanks!", sat) is None
+    assert strip_quoted("Will update you next week. Best On Sat, 31 Oct 2026 at 01:15, Anow") == \
+        "Will update you next week."

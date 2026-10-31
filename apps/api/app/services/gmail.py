@@ -84,15 +84,24 @@ def _plain(payload: dict) -> str:
     return html
 
 
+QUOTE_INLINE = re.compile(
+    r"\s*(?:On\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s.{0,80}?\d{1,2}:\d{2}|On\s.{0,120}?\swrote:"
+    r"|-{2,}\s*Original Message|From:\s.{0,80}?Sent:).*$", re.S | re.I)
+SIGN_OFF = re.compile(r"\s*\b(best|thanks|many thanks|regards|kind regards|best regards|cheers|thank you)[,!.]?\s*$", re.I)
+
+
 def strip_quoted(text: str) -> str:
-    """Drop the quoted history under a reply ("On ... wrote:" and "> " lines) so each message reads on its own."""
+    """Drop the quoted history under a reply ("On ... wrote:", "> " lines, or the same squashed onto one line
+    as in Gmail snippets) and a bare closing word, so each message reads on its own."""
     out = []
     for line in text.replace("\r\n", "\n").split("\n"):
         if re.match(r"^On .+wrote:\s*$", line.strip()) or line.strip().startswith("-----Original Message"):
             break
         if not line.startswith(">"):
             out.append(line)
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+    t = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+    t = QUOTE_INLINE.sub("", t).strip()
+    return SIGN_OFF.sub("", t).strip() or t
 
 
 def build_mime(*, sender: str, sender_name: str, to: str, subject: str, text: str, html: str | None = None,

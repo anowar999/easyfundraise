@@ -32,10 +32,11 @@ from ..models import (
     Sequence,
     User,
     Workspace,
+    WorkspaceMember,
 )
-from . import ai
+from . import ai, follow_up
 from .entitlements import consume, limit, usage
-from .gmail import GmailRevoked, build_mime, client_for
+from .gmail import GmailRevoked, build_mime, client_for, strip_quoted
 from .outreach import next_send_slot
 
 log = logging.getLogger("easyfundraise.mailer")
@@ -104,6 +105,54 @@ def pixel_html(text: str, token: str) -> str:
             f'<img src="{base}/t/o/{token}.gif" width="1" height="1" alt="" style="display:none">')
 
 
+SAFETY = {"paused": False, "burst_max": 25, "burst_window_minutes": 10, "burst_pause_minutes": 60, "max_recipients": 10}
+FOREVER = datetime(2100, 1, 1, tzinfo=UTC)
+
+
+def safety(db: Session) -> dict:
+    """Admin-configurable send guard rails (config key 'sending'), with safe defaults for anything missing."""
+    c = cfg(db, "sending", {})
+    return {k: c.get(k, v) for k, v in SAFETY.items()}
+
+
+def sent_recently(db: Session, user_id, now: datetime, minutes: int) -> int:
+    return db.scalar(select(func.count()).select_from(Email).where(
+        Email.user_id == user_id, Email.status == "sent", Email.sent_at > now - timedelta(minutes=minutes))) or 0
+
+
+def send_block(db: Session, ws_id, user_id, acc: GmailAccount | None, now: datetime) -> str:
+    """Why nothing may leave this user's Gmail right now ('' = clear). Checked again for every single email at
+    the moment it goes out, so a stale schedule, a removed teammate or a runaway loop can't send."""
+    s = safety(db)
+    if s["paused"]:
+        return "Sending is paused for everyone by the EasyFundraise team"
+    if acc is None or acc.status != "connected":
+        return "Gmail not connected"
+    if acc.paused_until and acc.paused_until > now:
+        return acc.paused_reason or "Sending is paused"
+    m = db.get(WorkspaceMember, (ws_id, user_id))
+    if m is None or m.role not in ("owner", "editor"):
+        return "Sender is no longer an editor of this workspace"
+    return ""
+
+
+def trip_burst(db: Session, ws_id, user_id, acc: GmailAccount, now: datetime) -> str:
+    """More than burst_max emails from one mailbox inside the window looks like a runaway or misuse: stop this
+    mailbox for a while and tell its owner. Returns the reason, or '' when within the limit."""
+    s = safety(db)
+    if sent_recently(db, user_id, now, int(s["burst_window_minutes"])) < int(s["burst_max"]):
+        return ""
+    acc.paused_until = now + timedelta(minutes=int(s["burst_pause_minutes"]))
+    acc.paused_reason = (f"Paused: {s['burst_max']}+ emails in {s['burst_window_minutes']} minutes. "
+                         "Resume in Settings if this was you.")
+    log.warning("send burst: paused user %s until %s", user_id, acc.paused_until)
+    notify(db, ws_id, user_id, "send_paused", "Sending paused for your safety",
+           f"{s['burst_max']} or more emails went out from your Gmail in {s['burst_window_minutes']} minutes. "
+           "If this wasn't you, disconnect Gmail and change your password. Otherwise resume in Settings.",
+           "/app/settings#gmail")
+    return acc.paused_reason
+
+
 def _reschedule(em: Email, now: datetime, tz: str, reason: str) -> None:
     em.scheduled_for = next_send_slot(now + timedelta(hours=12), tz)
     em.error = reason
@@ -157,8 +206,19 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
         return 0
 
     acc = db.get(GmailAccount, user.id)
-    if acc is None or acc.status != "connected":
-        _reschedule(em, now, tz, "Gmail not connected")
+    if block := send_block(db, ws.id, user.id, acc, now):  # send safety: re-checked for every email
+        if block.startswith("Sender is no longer"):
+            em.status, em.error = "cancelled", block
+        elif acc is not None and acc.paused_until and acc.paused_until > now and acc.paused_until < FOREVER:
+            em.scheduled_for, em.error = acc.paused_until + timedelta(minutes=1), block
+        else:
+            _reschedule(em, now, tz, block)
+        return 0
+    if len([a for a in f"{em.to_email},{em.cc}".split(",") if a.strip()]) > int(safety(db)["max_recipients"]):
+        em.status, em.error = "failed", "Too many recipients for one email"
+        return 0
+    if block := trip_burst(db, ws.id, user.id, acc, now):
+        em.scheduled_for, em.error = acc.paused_until + timedelta(minutes=1), block
         return 0
     # A one-off email the founder wrote and sent from a tracker card (often a reply in an ongoing conversation):
     # the daily cap still counts it, but cold-outreach pacing and the per-firm cap don't hold it back.
@@ -303,8 +363,11 @@ def handle_reply(db: Session, em: Email, msg, now: datetime) -> None:
     _stop(db, em, "replied")
     if card:
         card.last_contacted_at = now
-        db.add(CardEvent(workspace_id=ws.id, card_id=card.id, kind="reply", body=msg.snippet[:500],
-                         meta={"kind": kind, "signals": res.get("signals", []), "gmail_id": msg.id}))
+        text = strip_quoted(msg.snippet)
+        meta = {"kind": kind, "signals": res.get("signals", []), "gmail_id": msg.id}
+        if kind != "opt_out" and (d := follow_up.from_reply(db, card, em.user_id, text, now)):
+            meta["follow_up"] = d.isoformat()
+        db.add(CardEvent(workspace_id=ws.id, card_id=card.id, kind="reply", body=text[:500], meta=meta))
     if kind == "opt_out":  # MAIL-07
         if not excluded(db, ws.id, primary(em.to_email)):
             db.add(Exclusion(workspace_id=ws.id, kind="email", value=primary(em.to_email).lower(), reason="opt_out"))

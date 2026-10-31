@@ -498,6 +498,9 @@ class GmailAccount(Base):
     status: Mapped[str] = mapped_column(String(16), default="connected")  # connected | revoked
     mode: Mapped[str] = mapped_column(String(8), default="google")  # google | fake (dev/test only)
     next_send_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # MAIL-06 pacing
+    # Send safety: nothing leaves this mailbox until then (paused by the user, or automatically on a burst)
+    paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    paused_reason: Mapped[str] = mapped_column(Text, default="")
     connected_at: Mapped[datetime] = created()
 
 

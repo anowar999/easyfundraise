@@ -66,7 +66,7 @@ export default function CardPage() {
       refresh();
     },
   });
-  // Check Gmail for messages with this investor and log new ones on the timeline (quietly on open, at most every 10 min)
+  // Check Gmail for messages with this investor and log new ones on the timeline. Only when the founder asks.
   const sync = useMutation({
     mutationFn: (force: boolean) => api<{ new: number; connected: boolean; has_email: boolean; skipped?: boolean }>(`/funnel/${id}/mail/sync?force=${force}`, { method: "POST" }),
     onSuccess: (r, force) => {
@@ -78,10 +78,6 @@ export default function CardPage() {
     },
     onError: (e, force) => force && toast(errText(e), "err"),
   });
-  useEffect(() => {
-    sync.mutate(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
   const del = useMutation({
     mutationFn: () => api(`/funnel/${id}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -362,6 +358,11 @@ export default function CardPage() {
                       e.body
                     )}
                   </div>
+                  {typeof e.meta?.follow_up === "string" && (
+                    <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-300/60 px-2 py-0.5 text-xs text-amber-900">
+                      <Bell size={11} /> Follow-up set for {fmtDate(e.meta.follow_up, { weekday: "short", day: "numeric", month: "short" })}
+                    </div>
+                  )}
                 </li>
               ))}
             </ol>

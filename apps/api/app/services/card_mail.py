@@ -3,14 +3,14 @@ then send it as a reply in that thread (now, or at a set time) from the founder'
 
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from email.utils import getaddresses
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import CardEvent, CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Workspace
-from . import ai, outreach
+from . import ai, follow_up, outreach
 from .agent import instructions, shareable_profile
 from .gmail import FullMessage, client_for
 
@@ -72,7 +72,7 @@ def sync(db: Session, card: FunnelCard, acc: GmailAccount, addr: str) -> int:
         select(CardEvent).where(CardEvent.card_id == card.id, CardEvent.kind.in_(["reply", "email"])))}
     known |= set(db.scalars(select(Email.gmail_message_id).where(  # sent from the app: already logged by the mailer
         Email.workspace_id == card.workspace_id, Email.gmail_message_id.in_([m.id for m in msgs]))))
-    me, added = acc.email.lower(), 0
+    me, added, newest_in = acc.email.lower(), 0, None
     for m in msgs:
         if m.id in known:
             continue
@@ -90,6 +90,12 @@ def sync(db: Session, card: FunnelCard, acc: GmailAccount, addr: str) -> int:
             ev.created_at = m.at  # the timeline shows it when it happened, not when it was found
         db.add(ev)
         added += 1
+        if kind == "reply":
+            newest_in = (m, ev)
+    if newest_in is not None and newest_in[0] is msgs[-1]:
+        # their new message is the latest word in the conversation: chase when they said they'd come back
+        if d := follow_up.from_reply(db, card, acc.user_id, newest_in[0].text, datetime.now(UTC)):
+            newest_in[1].meta = {**newest_in[1].meta, "follow_up": d.isoformat()}
     return added
 
 
