@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Computed,
     Date,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -52,6 +54,10 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     signature: Mapped[str] = mapped_column(Text, default="")
+    # §10.5: {"<kind>": {"in_app": bool, "email": bool}, "quiet_hours": ["22:00", "07:00"], "brief_time": "08:00"}
+    notify_prefs: Mapped[dict] = mapped_column(JSONB, default=dict)
+    totp_secret_enc: Mapped[str] = mapped_column(Text, default="")  # AUTH-08 admin MFA
+    last_brief_on: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = created()
     updated_at: Mapped[datetime] = updated()
 
@@ -62,7 +68,10 @@ class AuthSession(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     user_agent: Mapped[str] = mapped_column(Text, default="")
+    ip: Mapped[str] = mapped_column(String(64), default="")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    mfa_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = created()
     user: Mapped[User] = relationship()
 
@@ -74,6 +83,10 @@ class Workspace(Base):
     agent_name: Mapped[str] = mapped_column(String(60), default="Raise")
     tier_code: Mapped[str] = mapped_column(ForeignKey("tiers.code"), default="trial")
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    tracking_enabled: Mapped[bool] = mapped_column(Boolean, default=True)  # TRK-01 per-workspace opt-out
+    # AGT-08 consent level: "approved_sequences" (auto-send approved) | "ask_every_send"
+    consent_level: Mapped[str] = mapped_column(String(24), default="approved_sequences")
+    automations: Mapped[dict] = mapped_column(JSONB, default=dict)  # §10.4 toggles, missing key = on
     created_at: Mapped[datetime] = created()
     updated_at: Mapped[datetime] = updated()
 
@@ -101,6 +114,8 @@ class Tier(Base):
     limits: Mapped[dict] = mapped_column(JSONB, default=dict)
     features: Mapped[dict] = mapped_column(JSONB, default=dict)
     sort: Mapped[int] = mapped_column(Integer, default=0)
+    stripe_price_monthly: Mapped[str] = mapped_column(String(80), default="")
+    stripe_price_annual: Mapped[str] = mapped_column(String(80), default="")
     visible: Mapped[bool] = mapped_column(Boolean, default=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = updated()
@@ -372,6 +387,7 @@ class Exclusion(Base):
     workspace_id: Mapped[uuid.UUID] = ws_fk()
     kind: Mapped[str] = mapped_column(String(10))  # email | domain | firm | linkedin
     value: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(String(20), default="manual")  # manual | opt_out | bounced | rejection
     created_at: Mapped[datetime] = created()
     __table_args__ = (UniqueConstraint("workspace_id", "kind", "value"),)
 
@@ -391,28 +407,230 @@ class Sequence(Base):
     workspace_id: Mapped[uuid.UUID] = ws_fk()
     investor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("investors.id", ondelete="CASCADE"))
     card_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("funnel_cards.id", ondelete="SET NULL"))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))  # sender
     persona: Mapped[str] = mapped_column(String(32), default="momentum")
-    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft | approved | stopped | done
+    engine: Mapped[str] = mapped_column(String(32), default="template")  # template | claude model id
+    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft | approved | stopped | replied | done
     created_at: Mapped[datetime] = created()
     updated_at: Mapped[datetime] = updated()
     emails: Mapped[list["Email"]] = relationship(order_by="Email.step", cascade="all, delete-orphan")
 
 
 class Email(Base):
+    """Every outbound email: sequence steps (§9.3) and broadcast messages (round updates §9.5, IR updates §12)."""
+
     __tablename__ = "emails"
     id: Mapped[uuid.UUID] = pk()
     workspace_id: Mapped[uuid.UUID] = ws_fk()
-    sequence_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sequences.id", ondelete="CASCADE"), index=True)
-    step: Mapped[int] = mapped_column(Integer)  # 1..3
+    sequence_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sequences.id", ondelete="CASCADE"), index=True)
+    broadcast_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("broadcasts.id", ondelete="CASCADE"), index=True)
+    card_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("funnel_cards.id", ondelete="SET NULL"))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))  # sender
+    to_email: Mapped[str] = mapped_column(Text, default="")
+    step: Mapped[int] = mapped_column(Integer, default=1)  # 1..3 for sequences
     hook: Mapped[str] = mapped_column(String(32), default="")
     subject: Mapped[str] = mapped_column(Text)
     body: Mapped[str] = mapped_column(Text)
     facts: Mapped[list] = mapped_column(JSONB, default=list)  # [{text, source}] "Why I wrote this"
-    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|scheduled|sent|cancelled
-    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|scheduled|sending|sent|cancelled|failed
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     gmail_thread_id: Mapped[str] = mapped_column(Text, default="")
     gmail_message_id: Mapped[str] = mapped_column(Text, default="")
+    rfc_message_id: Mapped[str] = mapped_column(Text, default="")  # MAIL-02 In-Reply-To / References
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str] = mapped_column(Text, default="")
+    # Tracking (§9.4)
+    open_token: Mapped[str | None] = mapped_column(String(40), unique=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    open_count: Mapped[int] = mapped_column(Integer, default=0)
+    replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reply_kind: Mapped[str] = mapped_column(String(16), default="")  # positive|neutral|negative|auto|bounce|opt_out
+    bounced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = updated()
+
+
+class EmailEvent(Base):
+    __tablename__ = "email_events"
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    email_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("emails.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # open | reply | bounce | click
+    meta: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = created()
+
+
+class GmailAccount(Base):
+    """MAIL-01 / AUTH-03: the user's own mailbox. Tokens are AES-256-GCM encrypted at rest."""
+
+    __tablename__ = "gmail_accounts"
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320))
+    refresh_token_enc: Mapped[str] = mapped_column(Text, default="")
+    access_token_enc: Mapped[str] = mapped_column(Text, default="")
+    access_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scopes: Mapped[str] = mapped_column(Text, default="")
+    history_id: Mapped[str] = mapped_column(String(40), default="")
+    status: Mapped[str] = mapped_column(String(16), default="connected")  # connected | revoked
+    mode: Mapped[str] = mapped_column(String(8), default="google")  # google | fake (dev/test only)
+    next_send_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # MAIL-06 pacing
+    connected_at: Mapped[datetime] = created()
+
+
+class Broadcast(Base):
+    """§9.5 round updates (FOMO) and §12 investor updates. One Email row per recipient."""
+
+    __tablename__ = "broadcasts"
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    kind: Mapped[str] = mapped_column(String(16))  # round_update | investor_update
+    template: Mapped[str] = mapped_column(String(32), default="")
+    title: Mapped[str] = mapped_column(Text, default="")
+    inputs: Mapped[dict] = mapped_column(JSONB, default=dict)  # commitments / metrics / wins / asks
+    audience: Mapped[dict] = mapped_column(JSONB, default=dict)  # {stages, statuses, exclude_card_ids, card_ids}
+    follow_up: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft | scheduled | done | cancelled
+    created_at: Mapped[datetime] = created()
+    updated_at: Mapped[datetime] = updated()
+    emails: Mapped[list["Email"]] = relationship(cascade="all, delete-orphan")
+
+
+# ---------- agent (§9.1) ----------
+
+
+class AgentMemory(Base):
+    """AGT-07: summarised facts the agent keeps for a workspace; user can view/delete."""
+
+    __tablename__ = "agent_memory"
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    kind: Mapped[str] = mapped_column(String(16), default="fact")  # fact | preference | worked | raise
+    text: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = created()
+
+
+class ChatMessage(Base):
+    """AGT-05 chat history. `actions` holds tool proposals that need a click before they are applied."""
+
+    __tablename__ = "agent_chat"
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(10))  # user | assistant
+    text: Mapped[str] = mapped_column(Text, default="")
+    actions: Mapped[list] = mapped_column(JSONB, default=list)  # [{id, type, label, args, state}]
+    created_at: Mapped[datetime] = created()
+
+
+class MeetingBrief(Base):
+    __tablename__ = "meeting_briefs"
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    card_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("funnel_cards.id", ondelete="CASCADE"), index=True)
+    content: Mapped[dict] = mapped_column(JSONB)
+    engine: Mapped[str] = mapped_column(String(32), default="template")
+    created_at: Mapped[datetime] = created()
+
+
+class Feedback(Base):
+    """§9.8 thumbs up/down on agent artefacts: learning signals."""
+
+    __tablename__ = "agent_feedback"
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    target: Mapped[str] = mapped_column(String(16))  # email | brief | suggestion | chat
+    target_id: Mapped[str] = mapped_column(String(64))
+    rating: Mapped[int] = mapped_column(Integer)  # 1 | -1
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = created()
+
+
+# ---------- data room (§14) ----------
+
+
+class DataRoom(Base):
+    __tablename__ = "data_rooms"
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True)
+    slug: Mapped[str] = mapped_column(String(80), unique=True)
+    published: Mapped[bool] = mapped_column(Boolean, default=False)
+    access: Mapped[str] = mapped_column(String(10), default="magic")  # public | password | email | magic
+    password_hash: Mapped[str] = mapped_column(Text, default="")
+    indexable: Mapped[bool] = mapped_column(Boolean, default=False)  # DR-05
+    content: Mapped[dict] = mapped_column(JSONB, default=dict)  # {hero, sections:[{id,type,title,body,items}]}
+    versions: Mapped[list] = mapped_column(JSONB, default=list)  # DR-04 last N snapshots
+    updated_at: Mapped[datetime] = updated()
+
+
+class DataRoomDoc(Base):
+    __tablename__ = "data_room_docs"
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    label: Mapped[str] = mapped_column(Text)
+    filename: Mapped[str] = mapped_column(Text)
+    content_type: Mapped[str] = mapped_column(String(120), default="application/pdf")
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    gated: Mapped[bool] = mapped_column(Boolean, default=True)  # needs a viewer identity to download
+    created_at: Mapped[datetime] = created()
+
+
+class DataRoomLink(Base):
+    """DR-02 per-investor magic link."""
+
+    __tablename__ = "data_room_links"
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    token: Mapped[str] = mapped_column(String(40), unique=True)
+    card_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("funnel_cards.id", ondelete="CASCADE"))
+    label: Mapped[str] = mapped_column(Text, default="")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = created()
+
+
+class DataRoomView(Base):
+    """DR-03 analytics: one row per visit; sections holds seconds per section id."""
+
+    __tablename__ = "data_room_views"
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    card_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("funnel_cards.id", ondelete="SET NULL"), index=True)
+    link_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("data_room_links.id", ondelete="SET NULL"))
+    viewer_email: Mapped[str] = mapped_column(Text, default="")
+    seconds: Mapped[int] = mapped_column(Integer, default=0)
+    sections: Mapped[dict] = mapped_column(JSONB, default=dict)
+    downloads: Mapped[list] = mapped_column(JSONB, default=list)
+    started_at: Mapped[datetime] = created()
+    last_ping_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------- team & billing ----------
+
+
+class Invite(Base):
+    __tablename__ = "workspace_invites"
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    email: Mapped[str] = mapped_column(String(320))
+    role: Mapped[str] = mapped_column(String(16), default="editor")
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = created()
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True)
+    stripe_customer_id: Mapped[str] = mapped_column(String(80), default="")
+    stripe_subscription_id: Mapped[str] = mapped_column(String(80), default="")
+    tier_code: Mapped[str] = mapped_column(String(32), default="")
+    interval: Mapped[str] = mapped_column(String(8), default="month")
+    status: Mapped[str] = mapped_column(String(24), default="")  # active | past_due | canceled | ...
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = updated()
 
 

@@ -17,6 +17,20 @@ class Settings(BaseSettings):
     dev_login: bool = True
 
     session_days: int = 30
+    # AUTH-03: base64 32-byte key for AES-256-GCM token encryption. Empty = derived from secret_key (dev only).
+    token_key: str = ""
+    # MAIL-01: "google" sends through the Gmail API; "fake" records sends locally (dev/tests, never prod).
+    gmail_mode: str = "google"
+    # TRK-01: public base URL for the open pixel (dedicated subdomain in prod, the API itself in dev).
+    tracking_base_url: str = "http://localhost:3000/api"
+    # §9 AI layer. The Anthropic SDK reads ANTHROPIC_API_KEY itself; this only turns the AI paths on.
+    ai_enabled: bool = True
+    ai_model_frontier: str = "claude-opus-5-5"
+    ai_model_small: str = "claude-haiku-5-5"
+    # §6 billing
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    admin_mfa: bool = False  # AUTH-08: forced on in prod
     admin_emails: str = ""  # comma-separated; these users get is_admin on login
 
     @property
@@ -26,6 +40,14 @@ class Settings(BaseSettings):
     @property
     def admin_email_set(self) -> set[str]:
         return {e.strip().lower() for e in self.admin_emails.split(",") if e.strip()}
+
+    @property
+    def admin_mfa_required(self) -> bool:
+        return self.admin_mfa or self.is_prod
+
+    @property
+    def gmail_fake(self) -> bool:
+        return self.gmail_mode == "fake" and not self.is_prod
 
     @property
     def dev_login_enabled(self) -> bool:

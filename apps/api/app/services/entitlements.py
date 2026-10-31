@@ -16,13 +16,16 @@ DEFAULT_TIERS = [
                      workspaces=1, seats=1, trial_days=14),
          features=dict(contacts_visible=False, send=False, ai_engine="template", agent="read-only")),
     dict(code="starter", name="Starter", price_monthly=3900, price_annual=39000, sort=1,
-         limits=dict(searches_month=300, reveals_month=150, emails_day=20, workspaces=1, seats=1),
+         limits=dict(searches_month=300, reveals_month=150, emails_day=20, workspaces=1, seats=1,
+                     ai_tokens_month=400_000),
          features=dict(contacts_visible=True, send=True, ai_engine="template+small", agent="basic")),
     dict(code="pro", name="Pro", price_monthly=9900, price_annual=99000, sort=2,
-         limits=dict(searches_month=5000, reveals_month=600, emails_day=20, workspaces=3, seats=3),
+         limits=dict(searches_month=5000, reveals_month=600, emails_day=20, workspaces=3, seats=3,
+                     ai_tokens_month=4_000_000),
          features=dict(contacts_visible=True, send=True, ai_engine="frontier", agent="full", automations=True)),
     dict(code="top", name="Investor Relations", price_monthly=24900, price_annual=249000, sort=3,
-         limits=dict(searches_month=5000, reveals_month=1500, emails_day=20, workspaces=10, seats=10),
+         limits=dict(searches_month=5000, reveals_month=1500, emails_day=20, workspaces=10, seats=10,
+                     ai_tokens_month=12_000_000),
          features=dict(contacts_visible=True, send=True, ai_engine="frontier+research", agent="full+ir",
                        automations=True, newsletter=True)),
 ]
@@ -49,7 +52,9 @@ def limit(db: Session, ws: Workspace, metric: str) -> int | None:
 
 
 def _period(metric_period: str, now: datetime) -> str:
-    return {"all": "all", "month": now.strftime("%Y-%m"), "day": now.strftime("%Y-%m-%d")}[metric_period]
+    """Named periods ("all" | "month" | "day", UTC) or an explicit key such as a user-timezone date."""
+    named = {"all": "all", "month": now.strftime("%Y-%m"), "day": now.strftime("%Y-%m-%d")}
+    return named.get(metric_period, metric_period)
 
 
 def usage(db: Session, ws: Workspace, metric: str, period: str) -> int:
@@ -60,17 +65,17 @@ def usage(db: Session, ws: Workspace, metric: str, period: str) -> int:
     ).scalar() or 0
 
 
-def consume(db: Session, ws: Workspace, metric: str, period: str, cap: int | None) -> int:
+def consume(db: Session, ws: Workspace, metric: str, period: str, cap: int | None, amount: int = 1) -> int:
     """Atomically increments a usage counter, refusing if it would exceed cap. Returns the new count."""
     p = _period(period, datetime.now(UTC))
     row = db.execute(
         text("""
-            insert into usage_counters (workspace_id, metric, period, count) values (:w, :m, :p, 1)
-            on conflict (workspace_id, metric, period) do update set count = usage_counters.count + 1
-              where :cap is null or usage_counters.count < :cap
+            insert into usage_counters (workspace_id, metric, period, count) values (:w, :m, :p, :n)
+            on conflict (workspace_id, metric, period) do update set count = usage_counters.count + :n
+              where cast(:cap as integer) is null or usage_counters.count < :cap
             returning count
         """),
-        {"w": ws.id, "m": metric, "p": p, "cap": cap},
+        {"w": ws.id, "m": metric, "p": p, "cap": cap, "n": amount},
     ).first()
     if row is None or (cap is not None and row[0] > cap):
         db.rollback()

@@ -3,15 +3,19 @@ exclusion list (SEQ-06), user settings (timezone, signature)."""
 
 import io
 import re
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
+from sqlalchemy import text as sql_text
 
 from ..deps import Ctx, ctx
 from ..errors import ApiError
 from ..models import AgentInstruction, CompanyProfile, Exclusion, Tier
+from ..services import ai
 from ..services.entitlements import tier, trial_expired, usage
+from ..services.mailer import sent_metric, user_day
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 
@@ -40,25 +44,38 @@ def get_workspace(c: Ctx = Depends(ctx)):
         "id": str(c.ws_id), "name": c.workspace.name, "agent_name": c.workspace.agent_name, "role": c.role,
         "tier": {"code": t.code, "name": t.name, "limits": t.limits, "features": t.features},
         "trial_ends_at": c.workspace.trial_ends_at, "trial_expired": trial_expired(c.workspace),
+        "tracking_enabled": c.workspace.tracking_enabled, "consent_level": c.workspace.consent_level,
+        "automations": {k: (c.workspace.automations or {}).get(k, True) for k in AUTOMATIONS},
+        "ai": ai.model_for(c.db, c.workspace, "draft") is not None,
+        "ai_tokens_month": usage(c.db, c.workspace, "ai_tokens", "month"),
         "usage": {
             "searches_total": usage(c.db, c.workspace, "searches", "all"),
             "searches_month": usage(c.db, c.workspace, "searches", "month"),
             "reveals_month": usage(c.db, c.workspace, "reveals", "month"),
-            "emails_today": usage(c.db, c.workspace, "emails", "day"),
+            "emails_today": usage(c.db, c.workspace, sent_metric(c.user.id), user_day(c.user, datetime.now(UTC))),
         },
     }
+
+
+AUTOMATIONS = ("positive_reply", "rejection_suggestion", "ghosting_suggestion", "call_brief")
 
 
 class WorkspacePatch(BaseModel):
     name: str | None = Field(None, max_length=200)
     agent_name: str | None = Field(None, max_length=60)
+    tracking_enabled: bool | None = None
+    consent_level: str | None = Field(None, pattern="^(approved_sequences|ask_every_send)$")
+    automations: dict[str, bool] | None = None
 
 
 @router.patch("")
 def patch_workspace(body: WorkspacePatch, c: Ctx = Depends(ctx)):
     c.require_editor()
     for k, v in body.model_dump(exclude_none=True).items():
-        setattr(c.workspace, k, v.strip())
+        if k == "automations":
+            v = {**(c.workspace.automations or {}), **{a: bool(x) for a, x in v.items() if a in AUTOMATIONS}}
+        setattr(c.workspace, k, v.strip() if isinstance(v, str) else v)
+    c.audit("workspace.update", str(c.ws_id), after=body.model_dump(exclude_none=True))
     c.db.commit()
     return {"ok": True}
 
@@ -145,7 +162,15 @@ async def upload_deck(file: UploadFile, c: Ctx = Depends(ctx)):
     p = _profile(c)
     p.deck_filename, p.deck_text = (file.filename or "deck.pdf")[:200], text[:200_000]
     c.db.commit()
-    return {"suggested": extract_profile(text), "pages_text_chars": len(text)}
+    from ..services import agent
+
+    vocab = [r[0] for r in c.db.execute(sql_text(
+        "select ind from investors, unnest(industries) ind group by ind order by count(*) desc limit 80")).all()]
+    suggested = agent.ai_profile(c.db, c.workspace, text, vocab)
+    c.db.commit()
+    if suggested:
+        return {"suggested": suggested, "engine": "ai", "pages_text_chars": len(text)}
+    return {"suggested": extract_profile(text), "engine": "template", "pages_text_chars": len(text)}
 
 
 # ---------- Agent instructions ----------
@@ -214,6 +239,7 @@ class UserPatch(BaseModel):
     timezone: str | None = Field(None, max_length=64)
     signature: str | None = Field(None, max_length=2000)
     name: str | None = Field(None, max_length=200)
+    notify_prefs: dict | None = None  # §10.5
 
 
 @router.patch("/me")
@@ -226,6 +252,8 @@ def patch_me(body: UserPatch, c: Ctx = Depends(ctx)):
         except Exception as e:
             raise ApiError(422, "EF-VAL-001", "Unknown timezone") from e
     for k, v in body.model_dump(exclude_none=True).items():
+        if k == "notify_prefs":
+            v = {**(c.user.notify_prefs or {}), **v}
         setattr(c.user, k, v)
     c.db.commit()
     return {"ok": True}

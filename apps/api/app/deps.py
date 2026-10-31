@@ -26,11 +26,11 @@ def _hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def create_session(db: Session, response: Response, user: User, user_agent: str = "") -> None:
+def create_session(db: Session, response: Response, user: User, user_agent: str = "", ip: str = "") -> None:
     """AUTH-07: opaque token in an httpOnly, SameSite=Lax cookie; only its hash is stored."""
     s = get_settings()
     token = secrets.token_urlsafe(32)
-    db.add(AuthSession(token_hash=_hash(token), user_id=user.id, user_agent=user_agent[:500],
+    db.add(AuthSession(token_hash=_hash(token), user_id=user.id, user_agent=user_agent[:500], ip=ip[:64],
                        expires_at=now() + timedelta(days=s.session_days)))
     db.commit()
     response.set_cookie(COOKIE, token, max_age=s.session_days * 86400, httponly=True, samesite="lax",
@@ -56,17 +56,25 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
         raise ApiError(401, "EF-AUTH-002", "Session expired")
     if sess.user.suspended_at:
         raise ApiError(403, "EF-AUTH-003", "Account suspended")
-    # 30-day rolling session
-    if sess.expires_at - now() < timedelta(days=get_settings().session_days - 1):
+    # 30-day rolling session; last-seen for the device list (written at most every 10 minutes)
+    if sess.expires_at - now() < timedelta(days=get_settings().session_days - 1) or not sess.last_seen_at \
+            or sess.last_seen_at < now() - timedelta(minutes=10):
         sess.expires_at = now() + timedelta(days=get_settings().session_days)
+        sess.last_seen_at = now()
         db.commit()
     request.state.user_email = sess.user.email
+    request.state.session = sess
     return sess.user
 
 
-def admin_user(user: User = Depends(current_user)) -> User:
+def admin_user(request: Request, user: User = Depends(current_user)) -> User:
+    """AUTH-08: admins need a TOTP check on this session (12h) when MFA is required."""
     if not user.is_admin:
         raise ApiError(403, "EF-AUTH-010", "Admin only")
+    if get_settings().admin_mfa_required:
+        sess = request.state.session
+        if not sess.mfa_at or sess.mfa_at < now() - timedelta(hours=12):
+            raise ApiError(401, "EF-AUTH-011", "Two-factor check required", "", {"mfa": True})
     return user
 
 

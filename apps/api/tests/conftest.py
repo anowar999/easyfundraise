@@ -3,6 +3,8 @@ import os
 os.environ.setdefault("EF_DATABASE_URL", "postgresql+psycopg://ef:ef@localhost:5432/easyfundraise_test")
 os.environ["EF_ENV"] = "dev"
 os.environ["EF_DEV_LOGIN"] = "true"
+os.environ["EF_GMAIL_MODE"] = "fake"
+os.environ["EF_AI_ENABLED"] = "false"  # AI paths are tested with a stub client (test_agent.py)
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

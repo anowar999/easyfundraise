@@ -26,6 +26,12 @@ def test_sequence_draft_limits_and_lint(client):
     r = client.post(f"/sequences/{seq['id']}/approve")
     assert r.status_code == 409 and r.json()["needs_signature"]
     client.patch("/workspace/me", json={"signature": "Sam\nDocAI"})
+    r = client.post(f"/sequences/{seq['id']}/approve")
+    assert r.status_code == 409 and r.json()["needs_reveal"]  # sending needs the contact (ASP-01 credit)
+    client.post(f"/investors/{seq['investor_id']}/reveal")
+    r = client.post(f"/sequences/{seq['id']}/approve")
+    assert r.status_code == 409 and r.json()["needs_gmail"]
+    client.get("/gmail/connect", follow_redirects=False)  # fake mailbox in tests
     r = client.post(f"/sequences/{seq['id']}/approve").json()
     assert r["status"] == "approved"
     london = [datetime.fromisoformat(e["scheduled_for"]).astimezone(ZoneInfo("Europe/London")) for e in r["emails"]]

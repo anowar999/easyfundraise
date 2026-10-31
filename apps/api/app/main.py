@@ -6,12 +6,26 @@ from fastapi.exceptions import RequestValidationError
 
 from .config import get_settings
 from .errors import ApiError, api_error_handler, problem, unhandled_error_handler
-from .routers import admin, auth, funnel, investors, notifications, sequences, workspace
+from .routers import (
+    admin,
+    agent,
+    auth,
+    billing,
+    broadcasts,
+    dataroom,
+    funnel,
+    investors,
+    notifications,
+    outreach,
+    sequences,
+    team,
+    workspace,
+)
 
 logging.basicConfig(level=logging.INFO)
 settings = get_settings()
 
-app = FastAPI(title="EasyFundraise API", version="0.1.0",
+app = FastAPI(title="EasyFundraise API", version="0.2.0",
               docs_url=None if settings.is_prod else "/docs", openapi_url=None if settings.is_prod else "/openapi.json")
 
 
@@ -51,7 +65,8 @@ app.add_exception_handler(RequestValidationError, validation_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
 
 for r in (auth.router, workspace.router, investors.router, investors.public, funnel.router, notifications.router,
-          sequences.router, admin.router):
+          sequences.router, admin.router, outreach.router, outreach.public, agent.router, dataroom.router,
+          dataroom.public, broadcasts.router, team.router, billing.router):
     app.include_router(r)
 
 

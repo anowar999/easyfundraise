@@ -15,13 +15,17 @@ from ..models import (
     AuditLog,
     ConfigKV,
     DataAccessEvent,
+    Email,
     EngTask,
     ErrorRecord,
     FunnelCard,
+    GmailAccount,
     Investor,
     RemovalRequest,
+    Subscription,
     SuppressedInvestor,
     Tier,
+    UsageCounter,
     User,
     Workspace,
     WorkspaceMember,
@@ -54,6 +58,14 @@ def overview(db: Session = Depends(get_db)):
             DataAccessEvent.kind == "reveal", DataAccessEvent.created_at >= week)),
         "searches_7d": db.scalar(select(func.count()).select_from(DataAccessEvent).where(
             DataAccessEvent.kind == "search", DataAccessEvent.created_at >= week)),
+        "emails_sent_7d": db.scalar(select(func.count()).select_from(Email).where(Email.sent_at >= week)),
+        "replies_7d": db.scalar(select(func.count()).select_from(Email).where(Email.replied_at >= week)),
+        "gmail_connected": db.scalar(select(func.count()).select_from(GmailAccount).where(GmailAccount.status == "connected")),
+        "ai_tokens_month": db.scalar(select(func.coalesce(func.sum(UsageCounter.count), 0)).where(
+            UsageCounter.metric == "ai_tokens", UsageCounter.period == datetime.now(UTC).strftime("%Y-%m"))),
+        "mrr_cents": sum((t.price_annual // 12 if sub.interval == "year" else t.price_monthly)
+                         for sub, t in db.execute(select(Subscription, Tier).join(Tier, Tier.code == Subscription.tier_code)
+                                                  .where(Subscription.status.in_(["active", "trialing", "past_due"]))).all()),
         "open_errors": db.scalar(select(func.count()).select_from(ErrorRecord).where(ErrorRecord.status.in_(["new", "triaged"]))),
         "open_removal_requests": db.scalar(select(func.count()).select_from(RemovalRequest).where(RemovalRequest.status == "open")),
         "top_revealers_7d": [{"user": u, "count": n} for u, n in db.execute(
@@ -131,7 +143,8 @@ def patch_workspace(wid: str, body: WorkspaceAction, request: Request, db: Sessi
 
 def t_out(t: Tier) -> dict:
     return {"code": t.code, "name": t.name, "price_monthly": t.price_monthly, "price_annual": t.price_annual,
-            "limits": t.limits, "features": t.features, "sort": t.sort, "visible": t.visible, "version": t.version}
+            "limits": t.limits, "features": t.features, "sort": t.sort, "visible": t.visible, "version": t.version,
+            "stripe_price_monthly": t.stripe_price_monthly, "stripe_price_annual": t.stripe_price_annual}
 
 
 @router.get("/tiers")
@@ -147,6 +160,8 @@ class TierIn(BaseModel):
     features: dict[str, bool | str]
     sort: int = 0
     visible: bool = True
+    stripe_price_monthly: str = Field("", max_length=80)
+    stripe_price_annual: str = Field("", max_length=80)
 
 
 @router.put("/tiers/{code}")

@@ -1,8 +1,6 @@
-"""§9.3 Outreach sequences: draft (template engine), edit, lint, approve & schedule, WhatsApp nudge (SEQ-07).
-
-Sending through Gmail (MAIL-01/02) is not wired yet: approved emails are queued as `scheduled` with the slot
-computed in the investor's timezone; the Gmail sender worker picks them up once Gmail OAuth is connected.
-"""
+"""§9.3 Outreach sequences: draft (Claude with a fact pack, or the template engine), edit, regenerate, lint,
+approve & schedule, WhatsApp nudge (SEQ-07). Approved emails are queued as `scheduled` in the investor's local
+send window; the worker sends them from the founder's Gmail (services/mailer.py)."""
 
 import uuid
 from datetime import UTC, datetime
@@ -13,8 +11,8 @@ from sqlalchemy import select
 
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
-from ..models import AgentInstruction, CompanyProfile, Email, FunnelCard, Investor, Sequence
-from ..services import outreach
+from ..models import CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence
+from ..services import agent, outreach
 from ..services.entitlements import can, consume, limit
 from .investors import _exclusions, is_excluded
 
@@ -23,9 +21,11 @@ router = APIRouter(prefix="/sequences", tags=["sequences"])
 
 def s_out(s: Sequence, inv: Investor | None = None, signature: str = "") -> dict:
     return {"id": str(s.id), "investor_id": str(s.investor_id), "status": s.status, "persona": s.persona,
+            "engine": s.engine, "card_id": str(s.card_id) if s.card_id else None,
             "investor": {"name": inv.name, "firm": inv.current_firm or inv.company} if inv else None,
             "emails": [{"id": str(e.id), "step": e.step, "hook": e.hook, "subject": e.subject, "body": e.body,
                         "facts": e.facts, "status": e.status, "scheduled_for": e.scheduled_for,
+                        "sent_at": e.sent_at, "opened": e.open_count, "reply": e.reply_kind, "error": e.error,
                         "issues": outreach.lint(e.subject, e.body, e.step, signature)} for e in s.emails]}
 
 
@@ -45,15 +45,15 @@ def draft(body: DraftIn, c: Ctx = Depends(ctx)):
     if not can(c.db, c.workspace, "send"):  # trial: up to N sample drafts
         consume(c.db, c.workspace, "sample_drafts", "all", limit(c.db, c.workspace, "sample_drafts"))
     prof = c.db.get(CompanyProfile, c.ws_id)
-    instr = c.db.scalar(select(AgentInstruction.text).where(AgentInstruction.workspace_id == c.ws_id)
-                        .order_by(AgentInstruction.version.desc())) or ""
     card = c.db.scalar(select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.investor_id == inv.id,
                                                 FunnelCard.deleted_at.is_(None)))
-    seq = Sequence(workspace_id=c.ws_id, investor_id=inv.id, card_id=card.id if card else None, persona=body.persona)
+    emails, engine = agent.draft_sequence(c.db, c.workspace, inv, prof, body.persona, c.user.signature)
+    seq = Sequence(workspace_id=c.ws_id, investor_id=inv.id, card_id=card.id if card else None, persona=body.persona,
+                   user_id=c.user.id, engine=engine)
     c.db.add(seq)
     c.db.flush()
-    for e in outreach.draft_sequence(inv, prof, body.persona, instr, c.user.signature):
-        c.db.add(Email(workspace_id=c.ws_id, sequence_id=seq.id, **e))
+    for e in emails:
+        c.db.add(Email(workspace_id=c.ws_id, sequence_id=seq.id, user_id=c.user.id, **e))
     c.db.commit()
     c.db.refresh(seq)
     return s_out(seq, inv, c.user.signature)
@@ -99,6 +99,29 @@ def edit_email(sid: str, eid: str, body: EmailPatch, c: Ctx = Depends(ctx)):
     return {"issues": outreach.lint(em.subject, em.body, em.step, c.user.signature)}
 
 
+class RegenIn(BaseModel):
+    persona: str = Field("momentum", pattern="^(momentum|warm-intro|technical-founder|humble-expert)$")
+
+
+@router.post("/{sid}/regenerate")
+def regenerate(sid: str, body: RegenIn, c: Ctx = Depends(ctx)):
+    """SEQ-05 "Change the approach": redraft unsent emails with another persona."""
+    c.require_editor()
+    s = _get(c, sid)
+    if s.status != "draft":
+        raise ApiError(409, "EF-SEQ-006", "Only drafts can be regenerated")
+    inv = c.db.get(Investor, s.investor_id)
+    emails, engine = agent.draft_sequence(c.db, c.workspace, inv, c.db.get(CompanyProfile, c.ws_id), body.persona,
+                                          c.user.signature)
+    by_step = {e["step"]: e for e in emails}
+    for em in s.emails:
+        e = by_step[em.step]
+        em.hook, em.subject, em.body, em.facts = e["hook"], e["subject"], e["body"], e["facts"]
+    s.persona, s.engine = body.persona, engine
+    c.db.commit()
+    return s_out(s, inv, c.user.signature)
+
+
 @router.post("/{sid}/approve")
 def approve(sid: str, c: Ctx = Depends(ctx)):
     """SEQ-05: Approve & schedule. Lint must pass; slots land in the investor's local send window."""
@@ -114,20 +137,34 @@ def approve(sid: str, c: Ctx = Depends(ctx)):
         raise ApiError(422, "EF-SEQ-004", "Fix the highlighted issues before scheduling", "",
                        {"issues": {str(k): v for k, v in problems.items() if v}})
     inv = c.db.get(Investor, s.investor_id)
+    card = c.db.get(FunnelCard, s.card_id) if s.card_id else None
+    to = (card.email if card and card.email else "") or (inv.email if c.db.get(Reveal, (c.ws_id, inv.id)) else "")
+    if not to:
+        raise ApiError(409, "EF-SEQ-005", "Reveal this investor's email first",
+                       "Reveal the contact on their profile (uses one credit) or add an email on the funnel card.",
+                       {"needs_reveal": True})
+    acc = c.db.get(GmailAccount, c.user.id)
+    if acc is None or acc.status != "connected":
+        raise ApiError(409, "EF-SEQ-007", "Connect Gmail to send", "Emails go out from your own Gmail.",
+                       {"needs_gmail": True})
     outreach.schedule(s.emails, datetime.now(UTC), inv.timezone)
-    s.status = "approved"
+    s.status, s.user_id = "approved", c.user.id
     if s.card_id is None:
         card = FunnelCard(workspace_id=c.ws_id, investor_id=inv.id, name=inv.name, firm=inv.current_firm or inv.company,
                           source="Database", stage=1, tags=[], investor_timezone=inv.timezone)
         c.db.add(card)
         c.db.flush()
         s.card_id = card.id
+    for em in s.emails:
+        em.to_email, em.card_id, em.user_id = to, s.card_id, c.user.id
+    c.audit("sequence.approve", str(s.id))
     c.db.commit()
     return s_out(s, inv, c.user.signature)
 
 
 @router.post("/{sid}/stop")
 def stop(sid: str, c: Ctx = Depends(ctx)):
+    c.require_editor()
     s = _get(c, sid)
     s.status = "stopped"
     for e in s.emails:

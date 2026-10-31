@@ -1,6 +1,7 @@
 """AUTH-01/02/07: Google sign-in (openid email profile only at signup), sessions, dev login."""
 
 import secrets
+import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
@@ -13,10 +14,11 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
-from ..deps import create_session, current_user, destroy_session
+from ..deps import COOKIE, _hash, client_ip, create_session, current_user, destroy_session
 from ..errors import ApiError
-from ..models import User, Workspace, WorkspaceMember
-from ..services.entitlements import limit
+from ..models import AuthSession, User, Workspace, WorkspaceMember
+from ..services.crypto import decrypt, encrypt, totp_ok, totp_secret
+from ..services.entitlements import limit, rate_limit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -86,7 +88,7 @@ def google_callback(request: Request, code: str = "", state: str = "", db: Sessi
     user = upsert_user(db, info["email"], info.get("name", ""), info.get("picture", ""), info.get("sub"))
     resp = RedirectResponse(f"{s.web_origin}/app")
     resp.delete_cookie("ef_oauth_state")
-    create_session(db, resp, user, request.headers.get("user-agent", ""))
+    create_session(db, resp, user, request.headers.get("user-agent", ""), client_ip(request))
     return resp
 
 
@@ -101,13 +103,68 @@ def dev_login(body: DevLogin, request: Request, response: Response, db: Session 
     if not get_settings().dev_login_enabled:
         raise ApiError(404, "EF-NF-001", "Not found")
     user = upsert_user(db, body.email, body.name, tz=body.timezone)
-    create_session(db, response, user, request.headers.get("user-agent", ""))
+    create_session(db, response, user, request.headers.get("user-agent", ""), client_ip(request))
     return {"ok": True}
 
 
 @router.post("/logout")
 def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     destroy_session(db, request, response)
+    return {"ok": True}
+
+
+@router.get("/sessions")
+def sessions(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """AUTH-07 device list."""
+    mine = _hash(request.cookies.get(COOKIE, ""))
+    rows = db.scalars(select(AuthSession).where(AuthSession.user_id == user.id, AuthSession.expires_at > datetime.now(UTC))
+                      .order_by(AuthSession.created_at.desc())).all()
+    return {"items": [{"id": str(s.id), "device": s.user_agent[:160], "ip": s.ip, "created_at": s.created_at,
+                       "last_seen_at": s.last_seen_at, "current": s.token_hash == mine} for s in rows]}
+
+
+@router.delete("/sessions/{sid}")
+def revoke_session(sid: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    s = db.get(AuthSession, uuid.UUID(sid))
+    if s is None or s.user_id != user.id:
+        raise ApiError(404, "EF-NF-001", "Not found")
+    db.delete(s)
+    db.commit()
+    return {"ok": True}
+
+
+# ---- AUTH-08 admin MFA (TOTP) ----
+
+
+@router.post("/mfa/setup")
+def mfa_setup(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not user.is_admin:
+        raise ApiError(403, "EF-AUTH-010", "Admin only")
+    if user.totp_secret_enc:
+        raise ApiError(409, "EF-AUTH-050", "Two-factor is already set up")
+    secret = totp_secret()
+    user.totp_secret_enc = encrypt(f"pending:{secret}")
+    db.commit()
+    return {"secret": secret, "otpauth": f"otpauth://totp/EasyFundraise:{user.email}?secret={secret}&issuer=EasyFundraise"}
+
+
+class MfaIn(BaseModel):
+    code: str
+
+
+@router.post("/mfa/verify")
+def mfa_verify(body: MfaIn, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rate_limit(db, f"mfa:{user.id}", 6, 300)
+    raw = decrypt(user.totp_secret_enc) if user.totp_secret_enc else ""
+    secret = raw.removeprefix("pending:")
+    if not secret or not totp_ok(secret, body.code):
+        raise ApiError(403, "EF-AUTH-051", "That code didn't work")
+    if raw.startswith("pending:"):
+        user.totp_secret_enc = encrypt(secret)
+    sess = db.scalar(select(AuthSession).where(AuthSession.token_hash == _hash(request.cookies.get(COOKIE, ""))))
+    if sess:
+        sess.mfa_at = datetime.now(UTC)
+    db.commit()
     return {"ok": True}
 
 
@@ -118,5 +175,8 @@ def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
     return {
         "id": str(user.id), "email": user.email, "name": user.name, "picture": user.picture,
         "timezone": user.timezone, "is_admin": user.is_admin, "signature": user.signature,
+        "notify_prefs": user.notify_prefs or {}, "mfa_enabled": bool(user.totp_secret_enc)
+        and not decrypt(user.totp_secret_enc).startswith("pending:"),
+        "mfa_required": user.is_admin and get_settings().admin_mfa_required,
         "workspaces": [{"id": str(w.id), "name": w.name, "role": r, "tier": w.tier_code} for w, r in rows],
     }
