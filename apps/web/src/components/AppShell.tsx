@@ -38,6 +38,9 @@ export type Me = {
   notify_prefs: Record<string, any>;
   mfa_enabled: boolean;
   mfa_required: boolean;
+  has_password?: boolean;
+  password_set_at?: string | null;
+  google_linked?: boolean;
 };
 
 function WorkspaceSwitcher({ me }: { me: Me }) {

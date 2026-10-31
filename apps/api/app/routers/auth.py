@@ -9,7 +9,7 @@ from urllib.parse import quote, urlencode
 import httpx
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,9 +17,9 @@ from ..config import get_settings
 from ..db import get_db
 from ..deps import COOKIE, _hash, client_ip, create_session, current_user, destroy_session
 from ..errors import ApiError
-from ..models import AuthSession, GmailAccount, User, Workspace, WorkspaceMember
+from ..models import AuditLog, AuthSession, GmailAccount, User, Workspace, WorkspaceMember
 from ..services.account_mail import read_sign_in_token, send_sign_in_link, sign_in_token, smtp_ready
-from ..services.crypto import decrypt, encrypt, totp_ok, totp_secret
+from ..services.crypto import decrypt, encrypt, password_hash, password_ok, totp_ok, totp_secret
 from ..services.entitlements import limit, rate_limit
 from ..services.gmail import SCOPES, store_tokens
 
@@ -177,6 +177,79 @@ def email_verify(request: Request, token: str = "", next: str = "/app", db: Sess
     return resp
 
 
+# ---------- optional password (for people who signed up with Google or an email link) ----------
+
+COMMON = {"password", "password1", "password123", "12345678", "123456789", "1234567890", "qwerty123", "letmein123",
+          "iloveyou", "admin1234", "welcome123", "easyfundraise"}
+_DUMMY = password_hash("not-a-real-password")  # equal-time check when the email has no password
+
+
+def password_problem(pw: str, email: str) -> str:
+    if len(pw) < 10:
+        return "Use at least 10 characters."
+    if pw.lower() in COMMON or pw.lower() == email.lower() or pw.lower() == email.split("@")[0].lower():
+        return "That password is too easy to guess."
+    if len(set(pw)) < 5:
+        return "Use a mix of different characters."
+    return ""
+
+
+class PasswordSet(BaseModel):
+    password: str = Field(max_length=200)
+    current_password: str = Field("", max_length=200)
+
+
+@router.post("/password")
+def set_password(body: PasswordSet, request: Request, response: Response, user: User = Depends(current_user),
+                 db: Session = Depends(get_db)):
+    """Set a password (or change it). Google and email-link sign-in keep working, and Gmail stays connected."""
+    rate_limit(db, f"pw-set:{user.id}", 5, 600)
+    if user.password_hash and not password_ok(body.current_password, user.password_hash):
+        raise ApiError(403, "EF-AUTH-061", "Your current password is wrong")
+    if msg := password_problem(body.password, user.email):
+        raise ApiError(422, "EF-AUTH-060", "Choose a stronger password", msg)
+    changed = bool(user.password_hash)
+    user.password_hash, user.password_set_at = password_hash(body.password), datetime.now(UTC)
+    db.add(AuditLog(actor_id=user.id, action="auth.password_change" if changed else "auth.password_set",
+                    target=user.email, ip=client_ip(request)))
+    if changed:  # sign out every other device: a changed password should lock out whoever had the old one
+        token = request.cookies.get(COOKIE, "")
+        for sess in db.scalars(select(AuthSession).where(AuthSession.user_id == user.id)):
+            if sess.token_hash != _hash(token):
+                db.delete(sess)
+    db.commit()
+    return {"ok": True, "has_password": True}
+
+
+@router.delete("/password")
+def remove_password(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    user.password_hash, user.password_set_at = "", None
+    db.add(AuditLog(actor_id=user.id, action="auth.password_remove", target=user.email, ip=client_ip(request)))
+    db.commit()
+    return {"ok": True, "has_password": False}
+
+
+class PasswordLogin(BaseModel):
+    email: EmailStr
+    password: str = Field(max_length=200)
+    next: str = "/app"
+
+
+@router.post("/password/login")
+def password_login(body: PasswordLogin, request: Request, response: Response, db: Session = Depends(get_db)):
+    rate_limit(db, f"pw-ip:{client_ip(request)}", 20, 600)
+    rate_limit(db, f"pw-email:{body.email.lower()}", 8, 900)
+    user = db.scalar(select(User).where(User.email == body.email.lower()))
+    ok = password_ok(body.password, user.password_hash if user and user.password_hash else _DUMMY)
+    if not (ok and user and user.password_hash):
+        raise ApiError(401, "EF-AUTH-062", "Email or password is incorrect",
+                       "Signed up with Google? Use Continue with Google, or set a password in Settings first.")
+    if user.suspended_at:
+        raise ApiError(403, "EF-AUTH-003", "Account suspended")
+    create_session(db, response, user, request.headers.get("user-agent", ""), client_ip(request))
+    return {"ok": True, "next": after_sign_in(db, user, False, safe_next(body.next))}
+
+
 class DevLogin(BaseModel):
     email: EmailStr
     name: str = ""
@@ -265,5 +338,7 @@ def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
         "notify_prefs": user.notify_prefs or {}, "mfa_enabled": bool(user.totp_secret_enc)
         and not decrypt(user.totp_secret_enc).startswith("pending:"),
         "mfa_required": user.is_admin and get_settings().admin_mfa_required,
+        "has_password": bool(user.password_hash), "password_set_at": user.password_set_at,
+        "google_linked": bool(user.google_sub),
         "workspaces": [{"id": str(w.id), "name": w.name, "role": r, "tier": w.tier_code} for w, r in rows],
     }

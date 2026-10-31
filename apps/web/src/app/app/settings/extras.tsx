@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Copy, Laptop, Mail, Pause, Play, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { CalendarDays, CheckCircle2, Copy, KeyRound, Laptop, Mail, Pause, Play, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useMe } from "@/components/AppShell";
 import { Field, ListSkeleton, errText, useToast } from "@/components/ui";
@@ -447,6 +447,112 @@ export function BillingPlans() {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+export function SignInMethods() {
+  const me = useMe();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [cur, setCur] = useState("");
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [err, setErr] = useState("");
+  const done = () => {
+    qc.invalidateQueries({ queryKey: ["me"] });
+    qc.invalidateQueries({ queryKey: ["sessions"] });
+    setOpen(false);
+    setCur("");
+    setPw("");
+    setPw2("");
+    setErr("");
+  };
+  const save = useMutation({
+    mutationFn: () => api("/auth/password", { method: "POST", json: { password: pw, current_password: cur } }),
+    onSuccess: () => {
+      toast(has ? "Password changed. Other devices were signed out." : "Password saved. You can now sign in with your email and password.");
+      done();
+    },
+    onError: (e) => setErr(errText(e)),
+  });
+  const remove = useMutation({
+    mutationFn: () => api("/auth/password", { method: "DELETE" }),
+    onSuccess: () => {
+      toast("Password removed");
+      done();
+    },
+    onError: (e) => toast(errText(e), "err"),
+  });
+  if (!me.data) return <ListSkeleton rows={2} />;
+  const has = !!me.data.has_password;
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErr("");
+    if (pw.length < 10) return setErr("Use at least 10 characters.");
+    if (pw !== pw2) return setErr("The two passwords don't match.");
+    save.mutate();
+  };
+  return (
+    <div className="space-y-3 text-sm">
+      <ul className="divide-y divide-line">
+        <li className="py-2 flex items-center gap-3">
+          <Mail size={18} className="text-muted shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium">Google</div>
+            <div className="text-xs text-muted">{me.data.google_linked ? `Linked to ${me.data.email}` : "Use Continue with Google on the sign-in page"}</div>
+          </div>
+          {me.data.google_linked && <CheckCircle2 size={18} className="text-green-600" />}
+        </li>
+        <li className="py-2 flex items-center gap-3">
+          <KeyRound size={18} className="text-muted shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium">Email and password</div>
+            <div className="text-xs text-muted">
+              {has
+                ? `Set${me.data.password_set_at ? ` on ${fmtDate(me.data.password_set_at, { day: "numeric", month: "short", year: "numeric" })}` : ""}. Sign in with ${me.data.email}.`
+                : "Not set. Add one to sign in without Google."}
+            </div>
+          </div>
+          {!open && (
+            <button className="btn-ghost btn-sm" onClick={() => setOpen(true)}>
+              {has ? "Change" : "Create password"}
+            </button>
+          )}
+        </li>
+      </ul>
+      {open && (
+        <form onSubmit={submit} className="rounded-xl border border-line p-3 space-y-3">
+          {has && (
+            <Field label="Current password">
+              <input className="input" type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} required />
+            </Field>
+          )}
+          <input type="email" autoComplete="username" value={me.data.email} readOnly hidden />
+          <Field label={has ? "New password" : "Password"}>
+            <input className="input" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} required minLength={10} />
+          </Field>
+          <Field label="Type it again">
+            <input className="input" type="password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} required />
+          </Field>
+          <p className="text-xs text-muted">At least 10 characters. Your Gmail connection and Google sign-in keep working.{has ? " Changing it signs out your other devices." : ""}</p>
+          {err && <p className="text-xs text-red-600" role="alert">{err}</p>}
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn-primary btn-sm" disabled={save.isPending}>
+              {save.isPending ? "Saving…" : has ? "Change password" : "Save password"}
+            </button>
+            <button type="button" className="btn-ghost btn-sm" onClick={done}>
+              Cancel
+            </button>
+            {has && (
+              <button type="button" className="btn-ghost btn-sm ml-auto text-red-600" onClick={() => confirm("Remove your password? You can still sign in with Google or an email link.") && remove.mutate()}>
+                Remove password
+              </button>
+            )}
+          </div>
+        </form>
+      )}
     </div>
   );
 }
