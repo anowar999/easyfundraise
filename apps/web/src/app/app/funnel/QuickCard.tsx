@@ -1,106 +1,64 @@
 "use client";
 
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { EyeOff, ExternalLink } from "lucide-react";
+import { ExternalLink, Star } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { Sheet, errText, useToast } from "@/components/ui";
+import { Avatar, Sheet, StatusBadge, errText, useToast } from "@/components/ui";
+import { api } from "@/lib/api";
 import type { Card, FunnelMeta } from "@/lib/types";
-import { StarPicker } from "./StarPicker";
-import { StatusNote, useCardChange } from "./StatusNote";
+import { CardSummary } from "./CardSummary";
+import { UpdatePanel } from "./UpdatePanel";
 
-const PRIORITY_HINT: Record<string, string> = { P1: "Top", P2: "High", P3: "Normal", P4: "Low" };
-
-/** Pop-up for a tracker card. Pick a new stage, status or priority, add a note, then press Save. */
+/** Pop-up for a tracker card: where it stands, then stage/status/priority/next contact and a note, saved together. */
 export function QuickCard({ card, meta, onClose }: { card: Card | null; meta?: FunnelMeta; onClose: () => void }) {
+  const qc = useQueryClient();
   const toast = useToast();
-  const [stage, setStage] = useState(0);
-  const [status, setStatus] = useState("");
-  const [priority, setPriority] = useState("");
-  const [star, setStar] = useState({ starred: false, star_reason: "" });
-  const [note, setNote] = useState("");
-  const [reason, setReason] = useState("");
-  useEffect(() => {
-    if (!card) return;
-    setStage(card.stage);
-    setStatus(card.status);
-    setPriority(card.priority);
-    setStar({ starred: card.starred, star_reason: card.star_reason });
-    setNote("");
-    setReason("");
-  }, [card?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const save = useCardChange(card?.id, (ch) => {
-    toast(ch.status === "Inactive" || ch.status === "Rejection" ? `${card!.name} marked ${ch.status === "Inactive" ? "inactive" : "rejected"} and hidden from your tracker` : "Saved");
-    onClose();
+  const star = useMutation({
+    mutationFn: (starred: boolean) => api(`/funnel/${card!.id}`, { method: "PATCH", json: { starred } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["funnel"] }),
+    onError: (e) => toast(errText(e), "err"),
   });
   if (!card) return null;
-
-  const change = {
-    ...(stage !== card.stage ? { stage } : {}),
-    ...(status !== card.status ? { status } : {}),
-    ...(priority !== card.priority ? { priority } : {}),
-    ...(star.starred !== card.starred || star.star_reason !== card.star_reason ? star : {}),
-  };
-  const dirty = Object.keys(change).length > 0 || note.trim() !== "" || reason !== "";
-  const submit = () => save.mutate({ change, note, reason: status === "Rejection" ? reason : "" }, { onError: (e) => toast(errText(e), "err") });
-  const pill = (active: boolean, was: boolean) => clsx("chip px-3 py-1.5 text-sm", active ? "bg-brand text-white border-brand" : was ? "border-brand/40 border-dashed" : "hover:border-brand");
-
   return (
-    <Sheet open onClose={onClose} title={card.name}>
+    <Sheet open onClose={onClose} title="Investor" wide>
       <div className="space-y-4">
-        {card.firm && <p className="text-sm text-muted -mt-2">{card.firm}</p>}
-        {card.stale && (
-          <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-300/60 px-3 py-2 text-sm text-amber-900">
-            <span className="w-2 h-2 rounded-full bg-amber-400" /> No update for {card.days_since_update} days. Add a note or set a next contact date.
+        <div className="flex items-start gap-3">
+          <Avatar name={card.name} size={48} />
+          <div className="flex-1 min-w-0">
+            <div className="text-lg font-semibold leading-tight truncate">{card.name}</div>
+            <div className="text-sm text-muted truncate">{card.firm || "—"}</div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span className="chip text-xs">{card.stage_label}</span>
+              <StatusBadge status={card.status} />
+              <span className="chip text-xs">{card.priority}</span>
+              {card.stale && (
+                <span className="chip text-xs border-amber-300 bg-amber-50 text-amber-800">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> quiet {card.days_since_update} days
+                </span>
+              )}
+            </div>
           </div>
-        )}
-        <StarPicker starred={star.starred} reason={star.star_reason} onSave={setStar} />
-        <div>
-          <label className="text-xs font-medium text-muted" htmlFor="qc-stage">
-            Stage
-          </label>
-          <select id="qc-stage" className="input mt-1" value={stage} onChange={(e) => setStage(Number(e.target.value))}>
-            {meta?.stages.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <div className="text-xs font-medium text-muted mb-1.5">Status</div>
-          <div className="flex flex-wrap gap-1.5">
-            {(meta?.statuses ?? ["Active", "Inactive", "Rejection", "Ghosting"]).map((s) => (
-              <button key={s} type="button" className={pill(status === s, card.status === s)} onClick={() => setStatus(s)}>
-                {s === "Rejection" ? "Rejected" : s}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <div className="text-xs font-medium text-muted mb-1.5">Priority</div>
-          <div className="flex flex-wrap gap-1.5">
-            {["P1", "P2", "P3", "P4"].map((p) => (
-              <button key={p} type="button" className={pill(priority === p, card.priority === p)} onClick={() => setPriority(p)}>
-                {p} <span className="opacity-70">· {PRIORITY_HINT[p]}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <StatusNote status={status} note={note} setNote={setNote} reason={reason} setReason={setReason} />
-        {status === "Rejection" && card.status !== "Rejection" && !reason && <p className="text-xs text-danger -mt-2">Pick a reason if you can. It makes the pattern report useful.</p>}
-        <div className="flex flex-wrap gap-2 pt-2 border-t border-line">
-          <button className="btn-primary" disabled={!dirty || save.isPending} onClick={submit}>
-            {save.isPending ? "Saving…" : "Save changes"}
+          <button
+            type="button"
+            onClick={() => star.mutate(!card.starred)}
+            className={clsx("p-2 rounded-full border transition-colors", card.starred ? "border-amber-300 bg-amber-50" : "border-line hover:border-amber-300")}
+            aria-pressed={card.starred}
+            title={card.starred ? `Star investor${card.star_reason ? `: ${card.star_reason}` : ""}` : "Mark as star investor"}
+          >
+            <Star size={18} className={card.starred ? "fill-amber-400 text-amber-500" : "text-muted"} />
           </button>
-          {card.status !== "Inactive" && status !== "Inactive" && (
-            <button className="btn-ghost" onClick={() => setStatus("Inactive")} title="Select Inactive, then Save">
-              <EyeOff size={16} /> Hide (mark inactive)
-            </button>
-          )}
-          <Link href={`/app/funnel/${card.id}`} className="btn-ghost ml-auto">
-            <ExternalLink size={16} /> Open full card
+        </div>
+
+        <CardSummary card={card} />
+
+        <div className="rounded-2xl border border-line p-4">
+          <UpdatePanel card={card} meta={meta} onSaved={(closing) => closing && onClose()} />
+        </div>
+
+        <div className="flex justify-end">
+          <Link href={`/app/funnel/${card.id}`} className="btn-ghost btn-sm">
+            <ExternalLink size={15} /> Open full card
           </Link>
         </div>
       </div>

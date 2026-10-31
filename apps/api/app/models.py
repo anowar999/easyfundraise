@@ -451,6 +451,7 @@ class Email(Base):
     card_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("funnel_cards.id", ondelete="SET NULL"))
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))  # sender
     to_email: Mapped[str] = mapped_column(Text, default="")
+    cc: Mapped[str] = mapped_column(Text, default="")  # reply-all on a card's Gmail thread: everyone else on it
     step: Mapped[int] = mapped_column(Integer, default=1)  # 1..3 for sequences
     hook: Mapped[str] = mapped_column(String(32), default="")
     subject: Mapped[str] = mapped_column(Text)
