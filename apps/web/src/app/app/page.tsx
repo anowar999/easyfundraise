@@ -1,8 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, CalendarClock, CalendarDays, ChevronRight, FileText, Flame, Snowflake, Sparkles, Upload } from "lucide-react";
+import { ArrowRight, ArrowUp, Bot, CalendarClock, CalendarDays, ChevronRight, FileText, Flame, Snowflake, Sparkles, Upload } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
+import { askAgent } from "@/components/AgentChat";
 import { PageHeader, useMe } from "@/components/AppShell";
 import { CountryTag, InvestorActions } from "@/components/InvestorRow";
 import { Avatar, ErrorState, FitScore, ListSkeleton } from "@/components/ui";
@@ -24,6 +26,60 @@ type Home = {
   calendar_connected: boolean;
   meetings: { title: string; start: string; link?: string; tracker_card: { card_id: string; name: string; firm: string } | null }[];
 };
+
+const ASK_IDEAS = ["How many investors are in my outreach?", "Find 10 seed investors in my sector", "What's missing from my data room?"];
+
+/** Your Raise Agent, front and centre: type anything and it does it across the site. */
+function AgentBox({ name }: { name: string }) {
+  const [text, setText] = useState("");
+  const go = (t: string) => {
+    if (!t.trim()) return;
+    askAgent(t.trim());
+    setText("");
+  };
+  return (
+    <div className="card p-4 md:p-5 mb-4 border-brand/30 bg-gradient-to-br from-brand/[0.06] to-transparent">
+      <div className="flex items-center gap-2 font-semibold">
+        <span className="grid place-items-center w-8 h-8 rounded-full bg-brand text-white">
+          <Bot size={17} />
+        </span>
+        {name}
+      </div>
+      <form
+        className="mt-3 flex items-end gap-2 rounded-2xl border border-line bg-card px-3 py-2 focus-within:border-brand"
+        onSubmit={(e) => {
+          e.preventDefault();
+          go(text);
+        }}
+      >
+        <textarea
+          rows={1}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              go(text);
+            }
+          }}
+          placeholder="Tell me how I can help you"
+          aria-label={`Ask ${name}`}
+          className="flex-1 resize-none bg-transparent py-1.5 text-[15px] focus-visible:outline-none"
+        />
+        <button type="submit" disabled={!text.trim()} aria-label="Send" className="grid place-items-center w-9 h-9 rounded-full bg-brand text-white disabled:opacity-40">
+          <ArrowUp size={18} />
+        </button>
+      </form>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {ASK_IDEAS.map((t) => (
+          <button key={t} type="button" onClick={() => go(t)} className="chip text-xs hover:border-brand hover:text-brand">
+            {t}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /** Best matches for the company profile, as cards. Shown once the profile (or deck) is in. */
 function Matches() {
@@ -105,6 +161,7 @@ export default function HomePage() {
       <PageHeader title={`${greet}${me.data ? `, ${me.data.name.split(" ")[0]}` : ""}`} sub="Here's where your raise stands today." />
       {q.isLoading && <ListSkeleton rows={3} />}
       {q.error && <ErrorState error={q.error} retry={() => q.refetch()} />}
+      <AgentBox name={q.data?.agent_name && !["Raise", "Raise Agent"].includes(q.data.agent_name) ? q.data.agent_name : "Your Raise Agent"} />
       {q.data && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <section className="lg:col-span-2 space-y-4">

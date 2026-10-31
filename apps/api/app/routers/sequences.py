@@ -56,7 +56,8 @@ def draft(body: DraftIn, c: Ctx = Depends(ctx)):
         c.db.add(Email(workspace_id=c.ws_id, sequence_id=seq.id, user_id=c.user.id, **e))
     c.db.commit()
     c.db.refresh(seq)
-    return s_out(seq, inv, c.user.signature)
+    auto = try_auto_send(c, seq) if auto_send_on(c.workspace) else None
+    return {**s_out(seq, inv, c.user.signature), "auto": auto}
 
 
 def _get(c: Ctx, sid: str) -> Sequence:
@@ -70,8 +71,13 @@ def _get(c: Ctx, sid: str) -> Sequence:
 def list_sequences(c: Ctx = Depends(ctx)):
     rows = c.db.execute(select(Sequence, Investor).join(Investor).where(Sequence.workspace_id == c.ws_id)
                         .order_by(Sequence.created_at.desc()).limit(100)).all()
-    return {"items": [{"id": str(s.id), "status": s.status, "investor": {"id": str(i.id), "name": i.name,
-                       "firm": i.current_firm or i.company}, "created_at": s.created_at} for s, i in rows]}
+    return {"auto_send": auto_send_on(c.workspace),
+            "items": [{"id": str(s.id), "status": s.status, "investor": {"id": str(i.id), "name": i.name,
+                       "firm": i.current_firm or i.company}, "created_at": s.created_at,
+                       "blocker": blocker(c, s) if s.status == "draft" else None,
+                       "sent": sum(e.status == "sent" for e in s.emails),
+                       "next_at": min((e.scheduled_for for e in s.emails if e.status == "scheduled"), default=None)}
+                      for s, i in rows]}
 
 
 @router.get("/{sid}")
@@ -126,13 +132,8 @@ class ApproveIn(BaseModel):
     confirm: bool = False  # the founder saw who, from which mailbox and when, and said yes
 
 
-@router.post("/{sid}/approve")
-def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
-    """SEQ-05: Approve & schedule. Lint must pass; slots land in the investor's local send window.
-    Without confirm=true nothing is scheduled: the reply (409 needs_confirm) carries the exact sender, recipient
-    and send times so the founder confirms before anything can go out from their Gmail."""
-    c.require_editor()
-    s = _get(c, sid)
+def _ready(c: Ctx, s: Sequence) -> tuple[Investor, str, GmailAccount]:
+    """Everything that must hold before a sequence may be scheduled. Raises the ApiError that names the blocker."""
     if not can(c.db, c.workspace, "send"):
         raise ApiError(402, "EF-TIER-030", "Upgrade to send emails", "Trial accounts can draft but not send.",
                        {"upgrade": True})
@@ -153,13 +154,19 @@ def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
     if acc is None or acc.status != "connected":
         raise ApiError(409, "EF-SEQ-007", "Connect Gmail to send", "Emails go out from your own Gmail.",
                        {"needs_gmail": True})
-    outreach.schedule(s.emails, datetime.now(UTC), inv.timezone)
-    if not (body and body.confirm):
-        preview = {"from": acc.email, "to": to, "investor": inv.name, "timezone": inv.timezone,
-                   "emails": [{"step": e.step, "subject": e.subject, "scheduled_for": e.scheduled_for.isoformat()}
-                              for e in sorted(s.emails, key=lambda e: e.step)]}
-        c.db.rollback()
-        raise ApiError(409, "EF-SEQ-010", "Confirm sending", "", {"needs_confirm": True, "preview": preview})
+    return inv, to, acc
+
+
+def blocker(c: Ctx, s: Sequence) -> str | None:
+    """Why this draft can't be scheduled yet, in plain words (None when it's ready)."""
+    try:
+        _ready(c, s)
+    except ApiError as e:
+        return e.title
+    return None
+
+
+def _schedule(c: Ctx, s: Sequence, inv: Investor, to: str) -> None:
     s.status, s.user_id = "approved", c.user.id
     if s.card_id is None:
         card = FunnelCard(workspace_id=c.ws_id, investor_id=inv.id, name=inv.name, firm=inv.current_firm or inv.company,
@@ -170,8 +177,70 @@ def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
     for em in s.emails:
         em.to_email, em.card_id, em.user_id = to, s.card_id, c.user.id
     c.audit("sequence.approve", str(s.id))
+
+
+def auto_send_on(ws) -> bool:
+    """Auto-send is opt-in: a missing key means off (unlike the §10.4 automations)."""
+    return (ws.automations or {}).get("auto_send") is True
+
+
+def try_auto_send(c: Ctx, s: Sequence) -> dict:
+    """Workspace has auto-send on: schedule a fresh draft straight away when nothing blocks it."""
+    try:
+        inv, to, _ = _ready(c, s)
+    except ApiError as e:
+        return {"scheduled": False, "reason": e.title}
+    outreach.schedule(s.emails, datetime.now(UTC), inv.timezone)
+    _schedule(c, s, inv, to)
+    c.db.commit()
+    return {"scheduled": True, "reason": ""}
+
+
+@router.post("/{sid}/approve")
+def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
+    """SEQ-05: Approve & schedule. Lint must pass; slots land in the investor's local send window.
+    Without confirm=true nothing is scheduled: the reply (409 needs_confirm) carries the exact sender, recipient
+    and send times so the founder confirms before anything can go out from their Gmail."""
+    c.require_editor()
+    s = _get(c, sid)
+    inv, to, acc = _ready(c, s)
+    outreach.schedule(s.emails, datetime.now(UTC), inv.timezone)
+    if not (body and body.confirm):
+        preview = {"from": acc.email, "to": to, "investor": inv.name, "timezone": inv.timezone,
+                   "emails": [{"step": e.step, "subject": e.subject, "scheduled_for": e.scheduled_for.isoformat()}
+                              for e in sorted(s.emails, key=lambda e: e.step)]}
+        c.db.rollback()
+        raise ApiError(409, "EF-SEQ-010", "Confirm sending", "", {"needs_confirm": True, "preview": preview})
+    _schedule(c, s, inv, to)
     c.db.commit()
     return s_out(s, inv, c.user.signature)
+
+
+@router.post("/send-all")
+def send_all(body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
+    """Approve every draft on the outreach list in one go. Without confirm=true this only reports who is ready,
+    who is blocked and from which mailbox, so the founder confirms before anything is scheduled."""
+    c.require_editor()
+    drafts = c.db.scalars(select(Sequence).where(Sequence.workspace_id == c.ws_id, Sequence.status == "draft")
+                          .order_by(Sequence.created_at)).all()
+    ready, skipped, sender = [], [], ""
+    for s in drafts:
+        try:
+            inv, to, acc = _ready(c, s)
+        except ApiError as e:
+            skipped.append({"id": str(s.id), "name": c.db.get(Investor, s.investor_id).name, "reason": e.title})
+            continue
+        sender = acc.email
+        ready.append((s, inv, to))
+    if not (body and body.confirm):
+        return {"needs_confirm": True, "from": sender, "skipped": skipped,
+                "ready": [{"id": str(s.id), "name": inv.name, "to": to} for s, inv, to in ready]}
+    now = datetime.now(UTC)
+    for s, inv, to in ready:
+        outreach.schedule(s.emails, now, inv.timezone)
+        _schedule(c, s, inv, to)
+    c.db.commit()
+    return {"scheduled": len(ready), "skipped": skipped}
 
 
 @router.post("/{sid}/stop")

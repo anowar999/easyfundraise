@@ -24,6 +24,11 @@ const PROMPTS = [
 
 /** AGT-05 "Your Raise Agent": side panel on desktop, full screen on phones. It can act across the site;
  *  card moves, drafts and publishing wait for a tap, and nothing is ever sent from chat. */
+export const ASK_EVENT = "raise-agent:ask";
+
+/** Opens Your Raise Agent with a question, from anywhere on the page. */
+export const askAgent = (text: string) => window.dispatchEvent(new CustomEvent(ASK_EVENT, { detail: text }));
+
 export function AgentChat() {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
@@ -59,6 +64,18 @@ export function AgentChat() {
     onError: (e) => toast(errText(e), "err"),
   });
   const clear = useMutation({ mutationFn: () => api("/agent/chat", { method: "DELETE" }), onSuccess: () => qc.invalidateQueries({ queryKey: ["chat"] }) });
+
+  // The home page's "How can I help?" box hands its question over to this chat.
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      const t = (e as CustomEvent<string>).detail?.trim();
+      if (!t) return;
+      setOpen(true);
+      send.mutate(t);
+    };
+    window.addEventListener(ASK_EVENT, onAsk);
+    return () => window.removeEventListener(ASK_EVENT, onAsk);
+  }, [send.mutate]);
 
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });

@@ -7,12 +7,12 @@ import Link from "next/link";
 import { useState } from "react";
 import { PageHeader } from "@/components/AppShell";
 import { Empty, ErrorState, ListSkeleton } from "@/components/ui";
+import { OutreachList } from "./OutreachList";
 import { api, fmtDate } from "@/lib/api";
 
 type Row = { key: string; sent: number; opened: number; replied: number; positive: number; bounced: number; open_rate: number; reply_rate: number };
 type Recent = { id: string; to: string; card_id: string | null; subject: string; step: number; status: string; sent_at: string | null; scheduled_for: string | null; opened: number; reply: string; error: string };
 type Stats = { total: Row; queued: number; by_step: Row[]; by_hook: Row[]; by_persona: Row[]; by_hour: Row[]; recent: Recent[] };
-type Seqs = { items: { id: string; status: string; investor: { id: string; name: string; firm: string }; created_at: string }[] };
 type Gmail = { connected: boolean; email?: string; sent_today?: number; daily_cap?: number };
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -60,9 +60,8 @@ function Breakdown({ title, rows, label }: { title: string; rows: Row[]; label: 
 const STATUS: Record<string, string> = { sent: "Sent", scheduled: "Scheduled", failed: "Not sent" };
 
 export default function Outreach() {
-  const [tab, setTab] = useState<"activity" | "sequences">("activity");
+  const [tab, setTab] = useState<"list" | "activity">("list");
   const s = useQuery<Stats>({ queryKey: ["outreach-stats"], queryFn: () => api("/outreach/stats") });
-  const seqs = useQuery<Seqs>({ queryKey: ["sequences"], queryFn: () => api("/sequences"), enabled: tab === "sequences" });
   const g = useQuery<Gmail>({ queryKey: ["gmail"], queryFn: () => api("/gmail") });
   if (s.isLoading) return <ListSkeleton rows={4} />;
   if (s.error) return <ErrorState error={s.error} retry={() => s.refetch()} />;
@@ -87,13 +86,15 @@ export default function Outreach() {
         <Tile label="Interested" value={d.total.positive} sub={d.total.bounced ? `${d.total.bounced} bounced` : "positive replies"} />
       </div>
       <div className="flex gap-1 mb-3 border-b border-line">
-        {(["activity", "sequences"] as const).map((t) => (
+        {(["list", "activity"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={clsx("px-3 py-2 text-sm -mb-px border-b-2", tab === t ? "border-brand font-medium" : "border-transparent text-muted")}>
-            {t === "activity" ? "Activity" : "Sequences"}
+            {t === "activity" ? "Activity" : "Outreach list"}
           </button>
         ))}
       </div>
-      {tab === "activity" ? (
+      {tab === "list" ? (
+        <OutreachList />
+      ) : (
         <div className="grid md:grid-cols-[1fr_340px] gap-4">
           <div className="card divide-y divide-line">
             {d.recent.length === 0 && <Empty icon={<Send />} title="No emails yet" body="Draft a sequence from any investor profile. Approved emails show up here." />}
@@ -128,21 +129,6 @@ export default function Outreach() {
             <Breakdown title="By opening hook" rows={d.by_hook} label={(k) => k.replace(/-/g, " ")} />
             <Breakdown title="By approach" rows={d.by_persona} label={(k) => k.replace(/-/g, " ")} />
           </div>
-        </div>
-      ) : (
-        <div className="card divide-y divide-line">
-          {seqs.isLoading && <ListSkeleton rows={3} />}
-          {seqs.data?.items.length === 0 && <Empty title="No sequences yet" body="Open an investor and tap Draft emails." />}
-          {seqs.data?.items.map((x) => (
-            <Link key={x.id} href={`/app/sequences/${x.id}`} className="p-3 flex items-center gap-3 hover:bg-surface">
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{x.investor.name}</div>
-                <div className="text-xs text-muted truncate">{x.investor.firm}</div>
-              </div>
-              <span className="chip capitalize">{x.status}</span>
-              <span className="text-xs text-muted w-16 text-right">{fmtDate(x.created_at)}</span>
-            </Link>
-          ))}
         </div>
       )}
     </>

@@ -76,7 +76,8 @@ TOOLS = [
        {"title": S, "due": S, "card_id": S}, ["title", "due"]),
     _t("remember", "Save a durable fact about the company, the raise or what works.",
        {"text": S, "kind": {"type": "string", "enum": ["fact", "preference", "worked", "raise"]}}, ["text"]),
-    _t("list_email_sequences", "Email sequences already drafted, with status, optionally for one investor.",
+    _t("list_email_sequences", "The outreach list: every investor added to outreach (each has a drafted or live email "
+       "sequence), with counts by status. Use this for any question about outreach.",
        {"investor_id": S}),
     _t("propose_email", "Propose drafting a personalised 3-email sequence to an investor. The founder taps to draft "
        "it, then reviews and confirms before anything is sent.", {"investor_id": S}, ["investor_id"]),
@@ -158,6 +159,8 @@ def overview(c: Ctx) -> dict:
         "calls_soon": [x.name for x in b["calls"]], "going_cold": [x.name for x in b["cold"]][:10],
         "tracker_by_stage": {STAGES[k - 1]: v for k, v in sorted(stages.items())},
         "shortlist": c.db.scalar(select(func.count()).select_from(ShortlistItem).where(ShortlistItem.workspace_id == c.ws_id)),
+        "outreach_list": dict(c.db.execute(select(Sequence.status, func.count()).where(
+            Sequence.workspace_id == c.ws_id, Sequence.status != "stopped").group_by(Sequence.status)).all()),
         "profile_complete": profile_complete(p),
         "data_room": {"complete_pct": comp["pct"], "missing": [m["label"] for m in comp["missing"]],
                       "published": room.published, "access": room.access},
@@ -333,8 +336,13 @@ def run(c: Ctx, name: str, args: dict, actions: list) -> str:  # noqa: C901 - on
             Sequence.workspace_id == c.ws_id)
         if _uuid(args.get("investor_id")):
             q = q.where(Sequence.investor_id == _uuid(args["investor_id"]))
-        return json.dumps([{"sequence_id": str(s.id), "investor": n, "status": s.status, "drafted": str(s.created_at.date())}
-                           for s, n in db.execute(q.order_by(Sequence.created_at.desc()).limit(20))])
+        rows = db.execute(q.where(Sequence.status != "stopped").order_by(Sequence.created_at.desc())).all()
+        counts: dict[str, int] = {}
+        for sq, _ in rows:
+            counts[sq.status] = counts.get(sq.status, 0) + 1
+        return json.dumps({"in_outreach": len(rows), "by_status": counts,  # draft = not sent yet, approved = scheduled/sending
+                           "items": [{"sequence_id": str(sq.id), "investor": n, "status": sq.status,
+                                      "drafted": str(sq.created_at.date())} for sq, n in rows[:20]]})
 
     if name == "propose_email":
         inv = _investor(c, args.get("investor_id"))
