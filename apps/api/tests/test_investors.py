@@ -34,6 +34,8 @@ def test_similar_and_company_lookup(client):
     ada = next(x for x in client.get("/investors", params={"q": "Ada"}).json()["items"])
     sims = client.get(f"/investors/{ada['id']}/similar").json()["items"]
     assert ada["id"] not in [s["id"] for s in sims]
+    scores = [s["fit"]["score"] for s in sims]
+    assert scores == sorted(scores, reverse=True)  # best match first
     found = client.get("/investors/lookup/company", params={"name": "Medibot"}).json()
     assert [x["name"] for x in found["investors"]] == ["Ada Seed"]
     assert found["investors"][0]["evidence"]["round"] == "Seed"

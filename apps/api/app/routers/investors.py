@@ -358,11 +358,14 @@ def similar(iid: str, c: Ctx = Depends(ctx)):
     if not inv.industries:
         return {"items": []}
     rows = c.db.execute(text(SIMILAR_SQL), {"id": inv.id, "inds": inv.industries, "itype": inv.investor_type,
-                                            "n": 12}).all()
+                                            "n": 40}).all()
     ids = [r.id for r in rows]
-    invs = {i.id: i for i in c.db.scalars(select(Investor).where(Investor.id.in_(ids)))}
+    invs = list(c.db.scalars(select(Investor).where(Investor.id.in_(ids))))
     prof = c.db.get(CompanyProfile, c.ws_id)
-    return {"items": [card(invs[i], fit(invs[i], prof)) for i in ids if i in invs]}
+    # Pull a wider pool of lookalikes, then show the best matches for this founder first.
+    scored = sorted(((fit(i, prof), i) for i in invs), key=lambda x: -x[0]["score"])[:12]
+    fids, sids, oids = _funnel_ids(c), _shortlist_ids(c), _outreach_ids(c)
+    return {"items": [card(i, f, i.id in fids, i.id in sids, i.id in oids) for f, i in scored]}
 
 
 RESEARCH_TTL = timedelta(days=30)
