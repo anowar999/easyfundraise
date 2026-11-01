@@ -343,7 +343,20 @@ function SearchInner() {
           )}
         </div>
         <aside className="hidden lg:block">
-          <div className="card px-4 py-1 sticky top-6 max-h-[calc(100dvh-3rem)] overflow-y-auto">{filterPanel}</div>
+          <div className="card px-4 py-1 sticky top-6 max-h-[calc(100dvh-3rem)] overflow-y-auto">
+            <div className="flex items-center justify-between gap-2 pt-3 pb-2 border-b border-line">
+              <h2 className="flex items-center gap-2 font-semibold">
+                <SlidersHorizontal size={17} className="text-brand" /> Filters
+                {activeCount > 0 && <span className="rounded-full bg-brand/10 text-brand text-xs px-2 py-0.5">{activeCount}</span>}
+              </h2>
+              {activeCount > 0 && (
+                <button className="text-xs text-muted hover:text-brand" onClick={reset}>
+                  Clear all
+                </button>
+              )}
+            </div>
+            {filterPanel}
+          </div>
         </aside>
       </div>
       <Sheet open={open} onClose={() => setOpen(false)} title="Filters">
