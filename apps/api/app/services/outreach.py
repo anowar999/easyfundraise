@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from ..models import CompanyProfile, Investor
 from .fit import sector_overlap
 
-LIMITS = {1: 120, 2: 80, 3: 60}
+LIMITS = {1: 110, 2: 75, 3: 55}  # word limits including the opt-out line
 SUBJECT_MAX_WORDS = 7
 DEFAULT_DAYS = {1: 0, 2: 4, 3: 10}
 OPT_OUT = "If this isn't relevant, reply 'no' and I won't follow up."
@@ -69,8 +69,6 @@ def draft_sequence(inv: Investor, p: CompanyProfile | None, persona: str = "mome
     f = _facts(inv, p)
     company, one, traction = _pitch(p)
     fn = first_name(inv.name)
-    round_size = _shareable(p, "round_size")
-    stage = (p.stage if p else "") or "seed"
     facts1: list[dict] = []
 
     # E1 — personalised hook (>=2 personalisation facts when available, SEQ-03)
@@ -83,8 +81,8 @@ def draft_sequence(inv: Investor, p: CompanyProfile | None, persona: str = "mome
         opener = f"Your work with {f['portfolio'][0]} is why I'm writing."
         facts1.append({"text": f"Portfolio: {f['portfolio'][0]}", "source": f["source"] or "directory"})
     elif f["thesis"]:
-        opener = f"Your focus on {f['thesis'][:90].lower()} caught my eye."
-        facts1.append({"text": "Investment thesis", "source": f["source"]})
+        opener = f"Your focus on {f['thesis'][:90].lower()} is why I'm writing."
+        facts1.append({"text": "Thesis", "source": f["source"]})
     fit_line = ""
     if f["sectors"]:
         fit_line = f"We're building in {f['sectors'][0]}, which sits squarely in {f['firm'] or 'your'} focus."
@@ -94,14 +92,13 @@ def draft_sequence(inv: Investor, p: CompanyProfile | None, persona: str = "mome
         pitch += f" {traction}."
         facts1.append({"text": "Traction (shareable)", "source": "Company Profile"})
     ask = {
-        "momentum": f"We're raising our {stage} round{' of ' + round_size if round_size else ''} and moving quickly. "
-                    "Open to a 20-minute call this week or next?",
+        "momentum": "Open to a 20-minute call this week or next?",
         "warm-intro": "Would you be open to a short call? Happy to send the deck first.",
         "technical-founder": "Happy to walk you through the product and architecture on a 20-minute call.",
         "humble-expert": "I'd value 20 minutes of your perspective, even if the timing isn't right.",
     }.get(persona, "Open to a 20-minute call?")
     e1 = "\n\n".join(x for x in [f"Hi {fn},", " ".join(x for x in [opener, fit_line] if x), pitch, ask, OPT_OUT] if x)
-    subj1 = f"{company} x {f['firm']}" if f["firm"] else f"{company}: {stage} round"
+    subj1 = f"{company} x {f['firm']}" if f["firm"] else f"{company} for {fn}"
 
     # E2 — new angle: insight / thesis echo (not "just checking in")
     facts2: list[dict] = []
@@ -112,9 +109,9 @@ def draft_sequence(inv: Investor, p: CompanyProfile | None, persona: str = "mome
         hook_line = f"Read about {f['news'][0]['headline'].rstrip('.')}, which connects to what we do."
         facts2.append({"text": f["news"][0]["headline"], "source": f["news"][0].get("url", f["source"])})
     else:
-        hook_line = f"One thing we've learned building {company}: customers buy speed, not features."
+        hook_line = f"One more thought on why {company} matters: {one[0].lower() + one[1:] if one else 'the problem we solve is growing'}."
     e2 = "\n\n".join([f"Hi {fn},", hook_line,
-                      f"{traction + '. ' if traction else ''}Worth a quick look at the deck?", OPT_OUT])
+                      f"{traction + '. ' if traction else ''}Happy to send a short overview, or find 20 minutes?", OPT_OUT])
     subj2 = f"Quick update from {company}"
 
     # E3 — last touch / ask-for-advice

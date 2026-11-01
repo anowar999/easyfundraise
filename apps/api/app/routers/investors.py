@@ -308,7 +308,8 @@ def profile(iid: str, c: Ctx = Depends(ctx)):
     c.access("profile", inv.id)
     c.db.commit()
     return {
-        **card(inv, fit(inv, prof), funnel is not None, c.db.get(ShortlistItem, (c.ws_id, inv.id)) is not None),
+        **card(inv, fit(inv, prof), funnel is not None, c.db.get(ShortlistItem, (c.ws_id, inv.id)) is not None,
+               inv.id in _outreach_ids(c)),
         "funnel_card_id": str(funnel.id) if funnel else None,
         "excluded": is_excluded(inv, _exclusions(c)),
         "about": inv.about, "investment_thesis": inv.investment_thesis, "focus_sectors": inv.focus_sectors,
@@ -445,12 +446,13 @@ def company_lookup(name: str = Query(min_length=2, max_length=200), c: Ctx = Dep
         Investor.enrichment["recent_investments_12mo"].astext.ilike(f"%{n}%"),
     )).limit(25)).all()
     prof = c.db.get(CompanyProfile, c.ws_id)
+    sids, oids = _shortlist_ids(c), _outreach_ids(c)
     items = []
     for i in rows:
         e = i.enrichment or {}
         deal = next((d for d in (e.get("recent_investments_12mo") or [])
                      if isinstance(d, dict) and n in str(d.get("company", "")).lower()), None)
-        items.append({**card(i, fit(i, prof)), "evidence": deal or {"company": name, "source": "portfolio listing"}})
+        items.append({**card(i, fit(i, prof), False, i.id in sids, i.id in oids), "evidence": deal or {"company": name, "source": "portfolio listing"}})
     similar_items: list[dict] = []
     if rows:
         inds = sorted({x for i in rows for x in i.industries})[:12]
@@ -459,7 +461,6 @@ def company_lookup(name: str = Query(min_length=2, max_length=200), c: Ctx = Dep
                                                    Investor.industries.overlap(inds), ~Investor.id.in_(seen))
                             .order_by(Investor.enriched.desc(), Investor.seed_fit.desc().nulls_last()).limit(200)).all()
         scored = sorted(((fit(i, prof), i) for i in cand), key=lambda x: -x[0]["score"])[:10]
-        sids, oids = _shortlist_ids(c), _outreach_ids(c)
         similar_items = [card(i, f, False, i.id in sids, i.id in oids) for f, i in scored]
     c.access("search", None, company_lookup=name, results=len(items))
     c.db.commit()

@@ -59,8 +59,9 @@ def shareable_profile(p: CompanyProfile | None) -> dict:
     return out
 
 
-def fact_pack(inv: Investor, p: CompanyProfile | None) -> list[dict]:
-    """Numbered facts the model may cite. Anything not here must not appear in an email."""
+def fact_pack(inv: Investor, p: CompanyProfile | None, for_email: bool = False) -> list[dict]:
+    """Numbered facts the model may cite. Anything not here must not appear in an email. for_email leaves out
+    cheque size and stage facts: cold emails never talk about investing or ticket sizes."""
     e = inv.enrichment or {}
     src = (e.get("sources") or ["investor profile"])[0]
     facts: list[dict] = []
@@ -74,7 +75,7 @@ def fact_pack(inv: Investor, p: CompanyProfile | None) -> list[dict]:
         add(f"Thesis: {inv.investment_thesis[:280]}", src)
     for r in (e.get("recent_investments_12mo") or [])[:3]:
         if isinstance(r, dict) and r.get("company"):
-            add(f"Recently invested in {r['company']}" + (f" ({r['round']})" if r.get("round") else "")
+            add(f"Recently backed {r['company']}" + (f" ({r['round']})" if r.get("round") else "")
                 + (f", {r['date']}" if r.get("date") else ""), r.get("source_url") or src)
     port = e.get("notable_portfolio") or inv.portfolio_sample
     if isinstance(port, str):
@@ -91,11 +92,43 @@ def fact_pack(inv: Investor, p: CompanyProfile | None) -> list[dict]:
         hits = sector_overlap(p.sectors, inv)
         if hits:
             add(f"Sector overlap with the founder's company: {', '.join(hits)}", "fit score")
+    if for_email:
+        return facts
     if inv.focus_stages:
         add(f"Invests at: {inv.focus_stages}", src)
     if inv.typical_check_size:
         add(f"Typical check: {inv.typical_check_size}", src)
     return facts
+
+
+EMAIL_COMPANY_FIELDS = ("company_name", "one_liner", "sectors", "geography", "traction", "business_model")
+
+# Cold emails are about the investor, our problem and solution, and a short call: never money.
+MONEY_TALK = re.compile(r"\b(invest\w*|tickets?|cheques?|check[- ]sizes?|round sizes?|valuation|allocation|"
+                        r"term sheets?|raising|fundrais\w*)\b|[€$£]\s?\d|\b\d+(?:[.,]\d+)?\s?(?:k|m|mn|bn)\b|"
+                        r"\b(?:eur|usd|gbp)\b", re.I)
+
+EMAIL_RULES = (
+    "What every email must be:\n"
+    "- About THEM first: open with something specific to this person (their thesis in their own words, a portfolio "
+    "company, a recent backing, news or a hook), so it's obvious we know who they are. Never a stock opener "
+    "('I hope this finds you well', 'I came across your profile', 'I'm reaching out').\n"
+    "- Then our value proposition: the specific problem we solve and how, in plain words, tied to why it matters to "
+    "them. Use only the company fields given.\n"
+    "- Then the ask: one short call (or 'happy to send a short overview'). One ask only.\n"
+    "- Short and human: plain words, no buzzwords, no exclamation marks.\n"
+    "- Never mention money: no 'invest', 'investment', 'investing', 'raising', 'round', 'ticket', 'cheque', "
+    "'check size', valuation, amounts or currencies, and never say the round 'fits their range'.\n"
+    "- Written fresh for this one person: vary the opening line, structure and wording; nothing should read like a "
+    "template another investor would also get.\n")
+
+
+def email_company(p: CompanyProfile | None) -> dict:
+    return {k: v for k, v in shareable_profile(p).items() if k in EMAIL_COMPANY_FIELDS}
+
+
+def money_talk(*texts: str) -> bool:
+    return any(MONEY_TALK.search(t or "") for t in texts)
 
 
 # ---------------- sequences (SEQ-01..05) ----------------
@@ -107,14 +140,13 @@ SEQ_SCHEMA = {
         "properties": {
             "step": {"type": "integer", "enum": [1, 2, 3]},
             "hook": {"type": "string", "enum": ["traction-first", "insight-first", "portfolio-adjacent", "thesis-echo",
-                                                "social-proof", "deadline-allocation", "ask-for-advice", "breakup"]},
+                                                "social-proof", "problem-story", "ask-for-advice", "breakup"]},
             "subject": {"type": "string"}, "body": {"type": "string"},
             "fact_ids": {"type": "array", "items": {"type": "string"}}}}}},
 }
 
 PERSONA_GUIDE = {
-    "momentum": "Parallel process, real deadlines, lead with traction and specifics, short and confident, truthful "
-                "scarcity only if given as a fact, one clear next step.",
+    "momentum": "Lead with traction and specifics, short and confident, one clear next step.",
     "warm-intro": "Warm and referral-led; reference the mutual connection only if it is a provided fact.",
     "technical-founder": "Concrete product and technical depth; plain words; offer a product walkthrough.",
     "humble-expert": "Curious and respectful; ask for perspective; still specific about what the company does.",
@@ -123,21 +155,33 @@ PERSONA_GUIDE = {
 
 def ai_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | None, persona: str,
                 signature: str) -> tuple[list[dict], str] | None:
-    facts = fact_pack(inv, p)
-    company = shareable_profile(p)
+    facts = fact_pack(inv, p, for_email=True)
+    company = email_company(p)
     system = (
-        "Write a 3-email cold outreach sequence from a founder to one investor. E1 is the hook, E2 a genuinely new "
-        "angle (never 'just checking in'), E3 a last touch (ask-for-advice or breakup). Each email uses a different "
-        "hook family. Hard limits: E1 <= 110 words, E2 <= 70, E3 <= 50 (body only, before the signature). Subject <= 6 "
-        "words, no ALL CAPS, no clickbait. E1 must use at least 2 investor facts, E2 and E3 at least 1. Use only the "
-        "investor facts and company fields provided; cite fact ids you used. No links, no attachments, no greeting "
-        "other than 'Hi <first name>,'. Do not add a signature or an opt-out line; they are appended later.\n"
+        "Write a 3-email cold outreach sequence from a founder to one investor.\n" + EMAIL_RULES +
+        "The three emails must each be different, never a reworded copy:\n"
+        "- E1: about them, then our problem and solution, then the ask for a short call.\n"
+        "- E2 (a follow-up a few days later): a genuinely new angle, e.g. a concrete customer problem story, a proof "
+        "point from traction, or a different fact about them. Never 'just checking in' or 'following up on my email'.\n"
+        "- E3 (last touch): very short; ask for their advice or a pointer to someone better placed, or close the loop "
+        "politely.\n"
+        "Each email uses a different hook family. Hard limits: E1 <= 90 words, E2 <= 60, E3 <= 40 (body only, before "
+        "the signature). Subject <= 6 words, specific to them, no ALL CAPS, no clickbait. E1 uses at least 2 investor "
+        "facts, E2 and E3 at least 1. Use only the investor facts and company fields provided; cite fact ids you used. "
+        "No links, no attachments, no greeting other than 'Hi <first name>,'. Do not add a signature or an opt-out "
+        "line; they are appended later.\n"
         f"Persona: {persona}. {PERSONA_GUIDE.get(persona, '')}"
     )
     user = json.dumps({"investor_first_name": outreach.first_name(inv.name), "investor_facts": facts,
                        "company": company, "founder_instructions": instructions(db, ws.id)[:2000],
                        "what_worked_before": memory_text(db, ws.id, 10)}, default=str)
-    out, engine = ai.json_call(db, ws, "draft", system, user, SEQ_SCHEMA, max_tokens=6000)
+    out, engine = None, ""
+    for _ in range(2):  # one retry if the model talks money anyway
+        out, engine = ai.json_call(db, ws, "draft", system, user, SEQ_SCHEMA, max_tokens=6000)
+        if not out or not money_talk(*[e.get("subject", "") + " " + e.get("body", "") for e in out.get("emails", [])]):
+            break
+        out = None
+        user += "\nYour last draft talked about money or investing. Rewrite every email without any of that."
     if not out or len(out.get("emails", [])) != 3:
         return None
     by_id = {f["id"]: f for f in facts}
@@ -179,20 +223,25 @@ def write_email(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | N
                 angle: str = "", research: dict | None = None) -> dict:
     """One personalised first email plus three subject-line ideas, to copy into Gmail or send from outreach.
     Ends with the founder's signature; the opt-out line is added only when it's sent through outreach."""
-    facts = fact_pack(inv, p)
+    facts = fact_pack(inv, p, for_email=True)
     system = (
-        "Write one cold email from a founder to an investor, personalised to this investor. Open with 'Hi <first "
-        "name>,'. Under 110 words before the signature. Use at least 2 investor facts (cite their ids) and only the "
-        "facts and company fields given; never invent names, numbers or portfolio companies. Plain words, one clear "
-        "ask (a short call or a look at the deck). No links, no signature, no opt-out line. Also give 3 different "
-        "subject lines, each 6 words or fewer, no ALL CAPS, no clickbait."
+        "Write one cold email from a founder to an investor, personalised to this investor.\n" + EMAIL_RULES +
+        "Open with 'Hi <first name>,'. Under 90 words before the signature. Use at least 2 investor facts (cite their "
+        "ids) and only the facts and company fields given; never invent names, numbers or portfolio companies. No "
+        "links, no signature, no opt-out line. Also give 3 different subject lines, each 6 words or fewer, specific "
+        "to them, no ALL CAPS, no clickbait."
     )
     user = json.dumps({"investor_first_name": outreach.first_name(inv.name), "investor_facts": facts,
-                       "recent_research": research or {}, "company": shareable_profile(p),
+                       "recent_research": research or {}, "company": email_company(p),
                        "founder_angle": angle[:500], "founder_instructions": instructions(db, ws.id)[:2000]}, default=str)
     out, engine = ai.json_call(db, ws, "draft", system, user, EMAIL_SCHEMA, max_tokens=3000)
     if not out:
         out, engine = ai.small_json(db, ws, system, user, EMAIL_SCHEMA, max_tokens=1500), "claude"
+    if out and money_talk(out.get("body", ""), *out.get("subjects", [])):
+        out, engine = ai.json_call(db, ws, "draft", system, user + "\nYour last draft talked about money or investing. "
+                                   "Rewrite it without any of that.", EMAIL_SCHEMA, max_tokens=3000)
+        if out and money_talk(out.get("body", ""), *out.get("subjects", [])):
+            out = None
     subjects = [" ".join(x.split()[:outreach.SUBJECT_MAX_WORDS]) for x in (out or {}).get("subjects", []) if x.strip()]
     if out and out.get("body", "").strip() and subjects:
         by_id = {f["id"]: f for f in facts}

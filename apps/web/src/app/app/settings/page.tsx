@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { PageHeader, useMe } from "@/components/AppShell";
 import { Field, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
+import { SettingsNav } from "./SettingsNav";
 import { AgentMemoryList, BillingPlans, Devices, GmailSection, NewWorkspace, NotificationPrefs, OutreachSettings, Positioning, SignInMethods, Team } from "./extras";
 
 type Profile = { company_name: string; one_liner: string; sectors: string[]; stage: string; geography: string; round_size: string; instrument: string; traction: string; business_model: string; investor_types: string[]; looking_for: string; shareable: Record<string, boolean>; deck_filename: string };
@@ -13,7 +14,7 @@ type WS = { name: string; agent_name: string; tier: { code: string; name: string
 
 function Section({ id, title, sub, children }: { id: string; title: string; sub?: string; children: React.ReactNode }) {
   return (
-    <section id={id} className="card p-4 md:p-6 scroll-mt-20">
+    <section id={id} className="card p-4 md:p-6 scroll-mt-32 md:scroll-mt-20 lg:scroll-mt-6">
       <h2 className="font-semibold">{title}</h2>
       {sub && <p className="text-sm text-muted mt-0.5">{sub}</p>}
       <div className="mt-4">{children}</div>
@@ -300,7 +301,9 @@ export default function Settings() {
   return (
     <>
       <PageHeader title="Settings" />
-      <div className="space-y-4 max-w-3xl">
+      <SettingsNav variant="chips" />
+      <div className="lg:grid lg:grid-cols-[minmax(0,48rem)_15rem] lg:gap-6 items-start">
+      <div className="space-y-4 min-w-0">
         <Section id="company" title="Company profile" sub="Used to rank investors by fit and to personalise emails. Only fields marked OK are used in emails.">
           <CompanyProfile />
         </Section>
@@ -343,6 +346,8 @@ export default function Settings() {
         <Section id="plan" title="Plan & usage">
           <Plan />
         </Section>
+      </div>
+      <SettingsNav variant="side" />
       </div>
     </>
   );

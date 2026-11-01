@@ -11,7 +11,7 @@ from ..errors import not_found
 from ..models import CompanyProfile, Investor, ShortlistItem
 from ..services.fit import fit
 from .funnel import CardIn, create_card
-from .investors import _funnel_ids, card
+from .investors import _funnel_ids, _outreach_ids, card
 
 router = APIRouter(prefix="/shortlist", tags=["shortlist"])
 
@@ -31,8 +31,8 @@ def list_shortlist(c: Ctx = Depends(ctx)):
     rows = c.db.execute(select(Investor, ShortlistItem.created_at).join(
         ShortlistItem, ShortlistItem.investor_id == Investor.id).where(
         ShortlistItem.workspace_id == c.ws_id, ~Investor.suppressed).order_by(ShortlistItem.created_at.desc())).all()
-    prof, fids = c.db.get(CompanyProfile, c.ws_id), _funnel_ids(c)
-    return {"items": [{**card(i, fit(i, prof), i.id in fids, True), "added_at": at} for i, at in rows]}
+    prof, fids, oids = c.db.get(CompanyProfile, c.ws_id), _funnel_ids(c), _outreach_ids(c)
+    return {"items": [{**card(i, fit(i, prof), i.id in fids, True, i.id in oids), "added_at": at} for i, at in rows]}
 
 
 @router.put("/{iid}")
