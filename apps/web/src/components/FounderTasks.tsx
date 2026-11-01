@@ -16,7 +16,7 @@ export function TopTasks() {
     <div className="card p-4">
       <div className="flex items-center justify-between">
         <h2 className="font-semibold flex items-center gap-2">
-          <ListTodo size={18} className="text-brand" /> My top 3
+          <ListTodo size={18} className="text-brand" /> My top 3 priorities
           {!!q.data?.due_today && <span className="rounded-full bg-pink-600 text-white text-[11px] px-2 py-0.5">{q.data.due_today} due today</span>}
         </h2>
         <Link href="/app/tasks" className="text-xs text-brand">
