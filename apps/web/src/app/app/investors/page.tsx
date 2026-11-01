@@ -2,7 +2,7 @@
 
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowRight, Building2, ChevronDown, ChevronLeft, ChevronRight, ListPlus, Lock, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { ArrowRight, Building2, Heart, ChevronDown, ChevronLeft, ChevronRight, Lock, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
@@ -301,7 +301,7 @@ function SearchInner() {
           All investors{first && tab === "search" ? ` · ${first.total.toLocaleString()}` : ""}
         </button>
         <Link href="/app/shortlist" className="chip px-3 py-1.5 text-sm whitespace-nowrap">
-          <ListPlus size={14} /> Shortlist{shortlist.data?.items.length ? ` · ${shortlist.data.items.length}` : ""}
+          <Heart size={14} className="text-rose-500" /> Shortlist{shortlist.data?.items.length ? ` · ${shortlist.data.items.length}` : ""}
         </Link>
         <Link href="/app/investors/lookup" className="chip px-3 py-1.5 text-sm whitespace-nowrap">
           <Building2 size={14} /> Who invested in…

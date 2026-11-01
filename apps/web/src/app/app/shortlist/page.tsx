@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, ListPlus, Search, Trash2 } from "lucide-react";
+import { ArrowRight, Heart, Search, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { PageHeader } from "@/components/AppShell";
@@ -62,7 +62,7 @@ export default function ShortlistPage() {
       />
       {items.length === 0 ? (
         <Empty
-          icon={<ListPlus size={28} />}
+          icon={<Heart size={28} />}
           title="Your shortlist is empty"
           body="Browse investors and tap + on anyone worth a look. They'll wait here until you're ready to reach out."
           action={

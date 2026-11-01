@@ -202,6 +202,24 @@ export function errText(e: unknown): string {
   return "Something went wrong";
 }
 
+/** Hover / keyboard-focus tooltip, anchored to the right edge so it never runs off the screen from row-end icons. */
+export function Tip({ text, children, align = "right" }: { text: string; children: ReactNode; align?: "right" | "center" }) {
+  return (
+    <span className="relative inline-flex group/tip">
+      {children}
+      <span
+        role="tooltip"
+        className={clsx(
+          "pointer-events-none absolute bottom-full mb-2 z-40 w-max max-w-[240px] rounded-lg bg-ink px-2.5 py-1.5 text-xs font-medium leading-snug text-surface shadow-lg opacity-0 transition-opacity duration-150 group-hover/tip:opacity-100 group-hover/tip:delay-200 group-focus-within/tip:opacity-100",
+          align === "right" ? "right-0" : "left-1/2 -translate-x-1/2",
+        )}
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block">
