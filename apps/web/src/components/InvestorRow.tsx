@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { BadgeCheck, Check, Heart, MailPlus } from "lucide-react";
+import { BadgeCheck, Heart, MailCheck, MailPlus } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
@@ -76,56 +76,49 @@ export function ShortlistButton({
   );
 }
 
-/** Adds the investor to outreach: drafts a personalised 3-email sequence in the background. Nothing is sent from here. */
-export function OutreachButton({
-  inv,
-  size = "md",
-}: {
-  inv: Pick<InvestorCard, "id" | "name" | "in_outreach">;
-  size?: "md" | "lg";
-}) {
+/** Adds the investor to the email outreach list: drafts a personalised 3-email sequence. Nothing is sent from here.
+ *  The button turns green straight away (drafting can take a few seconds with AI) and a toast confirms it. */
+export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "id" | "name" | "in_outreach">; size?: "md" | "lg" }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [on, setOn] = useState(Boolean(inv.in_outreach));
   const m = useMutation({
-    mutationFn: () =>
-      api<{ id: string; auto: { scheduled: boolean; reason: string } | null }>(
-        "/sequences",
-        { method: "POST", json: { investor_id: inv.id } },
-      ),
-    onSuccess: (r) => {
+    mutationFn: () => api<{ id: string; auto: { scheduled: boolean; reason: string } | null }>("/sequences", { method: "POST", json: { investor_id: inv.id } }),
+    onMutate: () => {
       setOn(true);
+      toast(`Adding ${inv.name} to your email outreach list. Drafting their emails…`);
+    },
+    onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["sequences"] });
       qc.invalidateQueries({ queryKey: ["home"] });
       toast(
         r.auto?.scheduled
-          ? `${inv.name} added to outreach. Auto-send is on, so their emails are scheduled.`
+          ? `✓ ${inv.name} is in your email outreach list. Auto-send is on, so their emails are scheduled.`
           : r.auto
-            ? `${inv.name} added to outreach. Not sent yet: ${r.auto.reason.toLowerCase()}.`
-            : `${inv.name} added to outreach. Emails drafted for you to review before anything is sent.`,
+            ? `✓ ${inv.name} is in your email outreach list. Not sent yet: ${r.auto.reason.toLowerCase()}.`
+            : `✓ ${inv.name} is in your email outreach list. Emails are drafted for you to review before anything is sent.`,
       );
     },
-    onError: (e) =>
-      toast(
-        e instanceof ApiError && e.problem.upgrade
-          ? "You've used your sample drafts. Upgrade to draft more."
-          : errText(e),
-        "err",
-      ),
+    onError: (e) => {
+      setOn(false);
+      toast(e instanceof ApiError && e.problem.upgrade ? "You've used your sample drafts. Upgrade to draft more." : errText(e), "err");
+    },
   });
   if (on)
     return (
-      <Tip text="In your email outreach list. Open Outreach">
+      <Tip text={m.isPending ? "Adding to your email outreach list…" : "In your email outreach list. Open Outreach"}>
         <Link
           href="/app/outreach"
-          onClick={(e) => e.stopPropagation()}
-          aria-label={`${inv.name} is in your outreach list`}
-          className={clsx(
-            iconBtn(size),
-            "bg-emerald-600 border-emerald-600 text-white",
-          )}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (m.isPending) e.preventDefault();
+          }}
+          aria-label={`${inv.name} is in your email outreach list`}
+          aria-busy={m.isPending}
+          className={clsx(iconBtn(size), "relative bg-emerald-600 border-emerald-600 text-white")}
         >
-          <Check size={17} />
+          <MailCheck size={17} className={clsx(m.isPending && "opacity-40")} />
+          {m.isPending && <span className="absolute inset-0 rounded-full border-2 border-white/80 border-t-transparent animate-spin" aria-hidden />}
         </Link>
       </Tip>
     );
@@ -138,13 +131,8 @@ export function OutreachButton({
           e.stopPropagation();
           m.mutate();
         }}
-        disabled={m.isPending}
         aria-label={`Add ${inv.name} to your email outreach list`}
-        className={clsx(
-          iconBtn(size),
-          "border-line bg-card text-ink hover:border-brand hover:text-brand hover:bg-brand/5",
-          m.isPending && "animate-pulse",
-        )}
+        className={clsx(iconBtn(size), "border-line bg-card text-ink hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-500/10")}
       >
         <MailPlus size={17} />
       </button>

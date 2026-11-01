@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { EmailWriter } from "@/components/EmailWriter";
-import { CountryTag, InvestorActions, ShortlistButton } from "@/components/InvestorRow";
+import { CountryTag, InvestorActions, OutreachButton, ShortlistButton } from "@/components/InvestorRow";
 import { Avatar, Badge, ErrorState, FitScore, ListSkeleton, Locked, errText, useToast } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
 import type { Fit, InvestorCard } from "@/lib/types";
@@ -263,6 +263,7 @@ export default function InvestorProfile() {
               <div className="flex items-center gap-2 shrink-0">
                 <FitScore score={p.fit.score} />
                 <ShortlistButton inv={p} size="lg" />
+                <OutreachButton inv={p} size="lg" />
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5">

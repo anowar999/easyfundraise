@@ -125,7 +125,8 @@ def draft_reply(db: Session, ws: Workspace, card: FunnelCard, thread: list[FullM
         "You write a short email from a founder to an investor, as a reply on top of their existing email thread. "
         "Read the thread and continue it naturally: acknowledge anything the investor asked, then give a concise "
         "update and one clear next step. Under 150 words. Use only facts from the thread, the company profile and "
-        "the founder's notes; never invent numbers or names. Open with 'Hi <first name>,'. No sign-off or signature."
+        "the founder's notes; never invent numbers or names. Don't bring up investing, the round or their ticket size "
+        "unless the investor asked about it in the thread. Open with 'Hi <first name>,'. No sign-off or signature."
     )
     user = json.dumps({"investor": {"name": card.name, "firm": card.firm, "stage": card.stage},
                        "thread_oldest_first": [{"from": m.sender, "text": m.text[:1500]} for m in thread[-6:]],

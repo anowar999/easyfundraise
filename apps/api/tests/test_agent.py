@@ -78,6 +78,21 @@ def test_ai_draft_falls_back_when_lint_fails(client, stub):
     assert seq["engine"] == "template"
 
 
+def test_money_talk_is_redrafted_then_falls_back(client, stub):
+    set_tier(client, "pro")
+    money = json.loads(json.dumps(GOOD))
+    money["emails"][0]["body"] = ("Hi Ada,\n\nThe round sits in the range of your EUR 350-500K first tickets, so one "
+                                  "short call should tell us both quickly whether it fits.")
+    s = stub([money, GOOD])
+    seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
+    assert len(s.calls) == 2 and seq["engine"] != "template"  # redrafted once, clean the second time
+    assert all("ticket" not in e["body"].lower() for e in seq["emails"])
+    stub([money, money])
+    seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
+    assert seq["engine"] == "template"
+    assert not any(w in e["body"].lower() for e in seq["emails"] for w in ("invest", "ticket", "round of", "raising"))
+
+
 def test_template_tier_never_calls_model(client, stub):
     s = stub([])
     set_tier(client, "trial")
