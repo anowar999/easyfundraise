@@ -18,14 +18,15 @@ export type Playbook = {
   money_warning: boolean;
 };
 
-const EXAMPLES = [
-  "230m people ask ChatGPT health questions every week and hit a dead end. We connect them to a real doctor in minutes.",
-  "We launch to 1m users with 1,500 doctors, on an AI model built from 875k consultations.",
-  "4.6bn people have no access to basic healthcare.",
-];
+export type Suggest = { angles: Angle[]; special_line: string; quick_update: string; source: "deck" | "profile" | "generic"; prompts: { label: string; text: string; send?: boolean }[] };
 
 export function usePlaybook() {
   return useQuery<Playbook>({ queryKey: ["playbook"], queryFn: () => api("/outreach/playbook") });
+}
+
+/** Examples for this founder, picked by AI from their own uploaded deck (neutral wording when there's no deck). */
+export function useSuggest() {
+  return useQuery<Suggest>({ queryKey: ["playbook-suggest"], queryFn: () => api("/outreach/playbook/suggest"), staleTime: 10 * 60_000 });
 }
 
 function useRefresh() {
@@ -42,6 +43,7 @@ export function QuickUpdate({ compact = false }: { compact?: boolean }) {
   const toast = useToast();
   const refresh = useRefresh();
   const q = usePlaybook();
+  const sg = useSuggest();
   const [text, setText] = useState("");
   useEffect(() => {
     if (q.data) setText(q.data.quick_update);
@@ -72,7 +74,7 @@ export function QuickUpdate({ compact = false }: { compact?: boolean }) {
           if (dirty) save.mutate(text);
         }}
       >
-        <input className="input flex-1" maxLength={300} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. We just signed our third hospital partner" aria-label="Quick update" />
+        <input className="input flex-1" maxLength={300} value={text} onChange={(e) => setText(e.target.value)} placeholder={sg.data?.quick_update ? `e.g. ${sg.data.quick_update.replace(/^e\.g\.\s*/i, "")}` : "A short piece of recent news"} aria-label="Quick update" />
         <div className="flex gap-2">
           <button className="btn-primary flex-1 sm:flex-none" disabled={!dirty || save.isPending}>
             {save.isPending ? "Saving…" : q.data?.unsent ? `Save and add to ${q.data.unsent} unsent` : "Save"}
@@ -93,16 +95,29 @@ export function PlaybookEditor() {
   const toast = useToast();
   const refresh = useRefresh();
   const q = usePlaybook();
+  const sg = useSuggest();
   const [angles, setAngles] = useState<Angle[]>([]);
   const [special, setSpecial] = useState("");
   const [shuffle, setShuffle] = useState(true);
+  const [drafted, setDrafted] = useState(false);
+  const fromDeck = sg.data && sg.data.source !== "generic" ? sg.data : null;
+  const fill = (s: Suggest) => {
+    setAngles(s.angles.map((a) => ({ ...a })));
+    setSpecial(s.special_line);
+    setDrafted(true);
+  };
   useEffect(() => {
     if (q.data) {
       setAngles(q.data.angles);
       setSpecial(q.data.special_line);
       setShuffle(q.data.shuffle);
+      setDrafted(false);
     }
   }, [q.data]);
+  // Nothing saved yet: start from what the agent picked out of the deck (unsaved until they press Save).
+  useEffect(() => {
+    if (q.data && fromDeck && !q.data.active) fill(fromDeck);
+  }, [q.data, fromDeck]);
   const save = useMutation({
     mutationFn: () => api<Playbook>("/outreach/playbook", { method: "PUT", json: { angles, special_line: special, shuffle } }),
     onSuccess: (r) => {
@@ -124,6 +139,20 @@ export function PlaybookEditor() {
   const set = (i: number, k: keyof Angle, v: string) => setAngles((a) => a.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
   return (
     <div className="space-y-3">
+      {(drafted || fromDeck) && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {drafted && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 text-brand px-2.5 py-1 font-medium">
+              <Sparkles size={12} /> Drafted from your {fromDeck?.source === "deck" ? "deck" : "company profile"}. Edit anything, then save.
+            </span>
+          )}
+          {fromDeck && !drafted && (
+            <button type="button" className="btn-ghost btn-sm" onClick={() => fill(fromDeck)}>
+              <Sparkles size={13} /> Draft again from my {fromDeck.source === "deck" ? "deck" : "profile"}
+            </button>
+          )}
+        </div>
+      )}
       <div className="grid gap-3 md:grid-cols-3">
         {angles.map((a, i) => (
           <div key={i} className="rounded-xl border border-line p-3 bg-surface/40">
@@ -131,7 +160,7 @@ export function PlaybookEditor() {
               <span className="grid place-items-center size-6 rounded-full bg-brand/10 text-brand text-xs font-bold shrink-0">{i + 1}</span>
               <input className="input h-8 text-sm font-semibold" maxLength={60} value={a.label} onChange={(e) => set(i, "label", e.target.value)} aria-label={`Email ${i + 1} focus`} />
             </div>
-            <textarea className="textarea min-h-28 text-sm" maxLength={600} value={a.message} onChange={(e) => set(i, "message", e.target.value)} placeholder={EXAMPLES[i]} aria-label={`Email ${i + 1} key message`} />
+            <textarea className="textarea min-h-28 text-sm" maxLength={600} value={a.message} onChange={(e) => set(i, "message", e.target.value)} placeholder={sg.data?.angles[i]?.message ?? ""} aria-label={`Email ${i + 1} key message`} />
           </div>
         ))}
       </div>
@@ -139,7 +168,7 @@ export function PlaybookEditor() {
         <label className="label flex items-center gap-1.5" htmlFor="special-line">
           <Sparkles size={13} className="text-brand" /> Special line, used once in one of the three emails
         </label>
-        <input id="special-line" className="input" maxLength={300} value={special} onChange={(e) => setSpecial(e.target.value)} placeholder="We were selected by EWOR (top 0.1% of founders), 10x more competitive than Y Combinator." />
+        <input id="special-line" className="input" maxLength={300} value={special} onChange={(e) => setSpecial(e.target.value)} placeholder={sg.data?.special_line || "One standout fact: an accelerator, an award, a notable customer or advisor."} />
       </div>
       <label className="flex items-start gap-2 text-sm cursor-pointer">
         <input type="checkbox" className="mt-0.5 accent-[var(--brand)]" checked={shuffle} onChange={(e) => setShuffle(e.target.checked)} />

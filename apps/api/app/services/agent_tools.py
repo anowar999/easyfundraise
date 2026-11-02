@@ -98,7 +98,7 @@ TOOLS = [
     _t("get_email_playbook", "The founder's email playbook: what emails 1, 2 and 3 focus on (each with a key "
        "message), the special line that goes in one email, the quick update, and how many unsent emails there are."),
     _t("set_email_playbook", "Change the email playbook (applied now). Each email has a focus label and a key message "
-       "in the founder's words, e.g. email1 {label: 'Problem', message: '230m people ...'}. Only pass what the "
+       "in the founder's words, e.g. email1 {label: 'Problem', message: '<the founder's words>'}. Only pass what the "
        "founder asked to change. special_line goes in one of the three emails, picked at random per investor. "
        "shuffle (default on) deals the three angles in a random order per investor. New drafts use it at once; "
        "offer propose_redraft for drafts that already exist.",

@@ -14,6 +14,7 @@ class Stub:
     def __init__(self, replies):
         self.replies, self.calls = list(replies), []
         self.beta = NS(messages=NS(create=self.create))
+        self.messages = NS(create=self.create)
 
     def create(self, **kw):
         self.calls.append(kw)

@@ -3,19 +3,20 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, MessageSquare, Sparkles, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openAgent } from "@/components/AgentChat";
+import { useSuggest } from "@/components/EmailPlaybook";
 import { errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 
 type Action = { id: string; type: string; label: string; state: "pending" | "applied"; href?: string };
 type Msg = { id: string; text: string; actions: Action[] };
 
-const EXAMPLES = [
-  "Email 1 should be problem focused: 230m people ask ChatGPT health questions every week…",
-  "Use this line in one email: we were selected by EWOR",
-  "Quick update: we just signed our third hospital partner",
-  "Who in my outreach list hasn't been sent anything yet?",
+const FALLBACK = [
+  { label: "Email 1 should be problem focused: …", text: "Email 1 should be problem focused: " },
+  { label: "Use this line in one email: …", text: "Use this line in one email: " },
+  { label: "Quick update: …", text: "Quick update: " },
+  { label: "Who in my outreach list hasn't been sent anything yet?", text: "Who in my outreach list hasn't been sent anything yet?", send: true },
 ];
 
 /** "Ask your Raise Agent" bar on top of Outreach: set what emails 1-3 focus on, add a quick update, redraft drafts,
@@ -24,10 +25,12 @@ export function OutreachAgent() {
   const qc = useQueryClient();
   const toast = useToast();
   const [text, setText] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
   const [reply, setReply] = useState<Msg | null>(null);
   const [narrow, setNarrow] = useState(false);
   useEffect(() => setNarrow(window.innerWidth < 640), []);
-  const examples = EXAMPLES;
+  // Examples come from this founder's own deck, so they make sense for any company.
+  const examples = useSuggest().data?.prompts ?? FALLBACK;
 
   const refresh = () => {
     for (const k of ["playbook", "sequences", "sequence", "outreach-stats", "chat"]) qc.invalidateQueries({ queryKey: [k] });
@@ -67,6 +70,7 @@ export function OutreachAgent() {
         <input
           className="flex-1 min-w-0 bg-transparent text-[15px] outline-none placeholder:text-muted py-1.5"
           placeholder={narrow ? "Tell your outreach agent…" : "Tell your outreach agent: what email 1, 2, 3 should say, a quick update, who to redraft…"}
+          ref={inputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           aria-label="Ask your Raise Agent about outreach"
@@ -79,8 +83,18 @@ export function OutreachAgent() {
       {!reply && !ask.isPending && (
         <div className="mt-2 flex gap-1.5 overflow-x-auto scrollbar-none sm:flex-wrap">
           {examples.map((x) => (
-            <button key={x} type="button" className="chip whitespace-nowrap px-2.5 py-1 text-xs bg-card hover:border-brand" onClick={() => submit(x)}>
-              {x}
+            <button
+              key={x.label}
+              type="button"
+              className="chip whitespace-nowrap px-2.5 py-1 text-xs bg-card hover:border-brand"
+              title={x.send ? undefined : "Put this in the box to edit before asking"}
+              onClick={() => {
+                if (x.send) return submit(x.text);
+                setText(x.text);
+                inputRef.current?.focus();
+              }}
+            >
+              {x.label}
             </button>
           ))}
         </div>
