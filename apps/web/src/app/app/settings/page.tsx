@@ -7,6 +7,7 @@ import { PageHeader, useMe } from "@/components/AppShell";
 import { Field, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { SettingsNav } from "./SettingsNav";
+import { PlaybookEditor, QuickUpdate } from "@/components/EmailPlaybook";
 import { AgentMemoryList, BillingPlans, Devices, GmailSection, NewWorkspace, NotificationPrefs, OutreachSettings, Positioning, SignInMethods, Team } from "./extras";
 
 type Profile = { company_name: string; one_liner: string; sectors: string[]; stage: string; geography: string; round_size: string; instrument: string; traction: string; business_model: string; investor_types: string[]; looking_for: string; shareable: Record<string, boolean>; deck_filename: string };
@@ -312,6 +313,14 @@ export default function Settings() {
         </Section>
         <Section id="exclusions" title="Exclusion list" sub="We never draft or send to these.">
           <Exclusions />
+        </Section>
+        <Section id="playbook" title="Email playbook" sub="What emails 1, 2 and 3 focus on, in your words. Each investor gets them in a different order, reworded for them.">
+          <div className="space-y-5">
+            <PlaybookEditor />
+            <div className="pt-4 border-t border-line">
+              <QuickUpdate />
+            </div>
+          </div>
         </Section>
         <Section id="account" title="Signature & timezone">
           <Account />

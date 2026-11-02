@@ -1,13 +1,14 @@
 "use client";
 
 import clsx from "clsx";
-import { Bell, Bot, Brain, Building2, CreditCard, KeyRound, Laptop, Layers, Mail, PenLine, Send, ShieldOff, Target, Users } from "lucide-react";
+import { Bell, BookOpen, Bot, Brain, Building2, CreditCard, KeyRound, Laptop, Layers, Mail, PenLine, Send, ShieldOff, Target, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export const SECTIONS = [
   { id: "company", label: "Company profile", icon: Building2 },
   { id: "agent", label: "Agent instructions", icon: Bot },
   { id: "exclusions", label: "Exclusion list", icon: ShieldOff },
+  { id: "playbook", label: "Email playbook", icon: BookOpen },
   { id: "account", label: "Signature & timezone", icon: PenLine },
   { id: "gmail", label: "Gmail", icon: Mail },
   { id: "outreach", label: "Sending & automations", icon: Send },

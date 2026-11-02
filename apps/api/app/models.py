@@ -96,6 +96,8 @@ class Workspace(Base):
     # AGT-08 consent level: "approved_sequences" (auto-send approved) | "ask_every_send"
     consent_level: Mapped[str] = mapped_column(String(24), default="approved_sequences")
     automations: Mapped[dict] = mapped_column(JSONB, default=dict)  # §10.4 toggles, missing key = on
+    # Founder's email playbook: what emails 1-3 focus on, a special line and a quick update (services/playbook.py)
+    email_playbook: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = created()
     updated_at: Mapped[datetime] = updated()
 

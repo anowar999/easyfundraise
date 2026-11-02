@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from ..models import CompanyProfile, Investor
 from .fit import sector_overlap
 
-LIMITS = {1: 110, 2: 75, 3: 55}  # word limits including the opt-out line
+LIMITS = {1: 110, 2: 85, 3: 70}  # word limits including the opt-out line (a "Quick update:" line is extra)
 SUBJECT_MAX_WORDS = 7
 DEFAULT_DAYS = {1: 0, 2: 4, 3: 10}
 OPT_OUT = "If this isn't relevant, reply 'no' and I won't follow up."
@@ -64,8 +64,9 @@ def _pitch(p: CompanyProfile | None) -> tuple[str, str, str]:
 
 
 def draft_sequence(inv: Investor, p: CompanyProfile | None, persona: str = "momentum",
-                   instructions: str = "", signature: str = "") -> list[dict]:
-    """Returns three emails [{step, hook, subject, body, facts}] that each use a different hook family."""
+                   instructions: str = "", signature: str = "", plan: dict | None = None) -> list[dict]:
+    """Returns three emails [{step, hook, subject, body, facts}] that each use a different hook family.
+    plan (from the founder's email playbook) puts their key message for each step in, in the founder's words."""
     f = _facts(inv, p)
     company, one, traction = _pitch(p)
     fn = first_name(inv.name)
@@ -120,11 +121,16 @@ def draft_sequence(inv: Investor, p: CompanyProfile | None, persona: str = "mome
                       "A name or a 'no' both help.", OPT_OUT])
     subj3 = "Closing the loop"
 
+    if plan and any(x["message"] or x["special"] for x in plan.values()):
+        e1, e2, e3 = _playbook_bodies(fn, " ".join(x for x in [opener, fit_line] if x), pitch, ask, plan, (e1, e2, e3))
+
     out = []
     for step, hook, subj, body, facts in [(1, "thesis-echo" if f["thesis"] else "portfolio-adjacent", subj1, e1, facts1),
                                           (2, "insight-first", subj2, e2, facts2),
                                           (3, "ask-for-advice", subj3, e3, [])]:
-        body = trim_to(body, LIMITS[step])
+        if plan and plan[step].get("angle_no"):
+            hook = f"playbook-{plan[step]['angle_no']}"
+        body = trim_to(body, LIMITS[step], tuple(x for x in [(plan or {}).get(step, {}).get("special")] if x))
         if signature:
             body = f"{body}\n\n{signature}"
         out.append(dict(step=step, hook=hook, subject=" ".join(subj.split()[:SUBJECT_MAX_WORDS]), body=body,
@@ -132,11 +138,30 @@ def draft_sequence(inv: Investor, p: CompanyProfile | None, persona: str = "mome
     return out
 
 
-def trim_to(body: str, max_words: int) -> str:
-    """Drop the least important middle paragraph until within limit (greeting, ask and opt-out are kept)."""
+def _playbook_bodies(fn: str, about: str, pitch: str, ask: str, plan: dict, default: tuple) -> tuple:
+    """Template bodies built around the founder's own key messages (no AI to rephrase them)."""
+    asks = {1: ask, 2: "Happy to send a short overview, or find 20 minutes?",
+            3: "If now isn't the moment, who else should I talk to? A name or a 'no' both help."}
+    out = []
+    for step in (1, 2, 3):
+        x = plan[step]
+        if not x["message"] and not x["special"]:
+            out.append(default[step - 1])
+            continue
+        lead = about if step == 1 else ""
+        main = x["message"] or (pitch if step == 1 else "")
+        out.append("\n\n".join(y for y in [f"Hi {fn},", lead, main, x["special"], asks[step], OPT_OUT] if y))
+    return tuple(out)
+
+
+def trim_to(body: str, max_words: int, keep: tuple[str, ...] = ()) -> str:
+    """Drop the least important middle paragraph until within limit (greeting, ask, opt-out and `keep` stay)."""
     paras = body.split("\n\n")
     while words("\n\n".join(paras)) > max_words and len(paras) > 3:
-        paras.pop(len(paras) // 2)
+        middle = [i for i in range(1, len(paras) - 2) if paras[i] not in keep]
+        if not middle:
+            break
+        paras.pop(min(middle, key=lambda i: abs(i - len(paras) // 2)))
     return "\n\n".join(paras)
 
 
@@ -144,6 +169,7 @@ def lint(subject: str, body: str, step: int, signature: str = "") -> list[str]:
     """SEQ-02 / SEQ-08 pre-send linter. Returns problems (empty = OK)."""
     issues = []
     b = body.replace(signature, "") if signature else body
+    b = "\n\n".join(x for x in b.split("\n\n") if not x.strip().startswith("Quick update:"))
     if words(b) > LIMITS[step]:
         issues.append(f"Email {step} is {words(b)} words; limit is {LIMITS[step]}.")
     if words(subject) > SUBJECT_MAX_WORDS:

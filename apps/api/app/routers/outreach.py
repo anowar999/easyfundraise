@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,8 @@ from ..db import get_db
 from ..deps import Ctx, ctx
 from ..errors import ApiError
 from ..models import Email, EmailEvent, FunnelCard, GmailAccount, Sequence
+from ..services import playbook
+from ..services.agent import money_talk
 from ..services.calendar import SCOPE as CAL_SCOPE
 from ..services.calendar import connected as calendar_connected
 from ..services.entitlements import usage
@@ -198,3 +201,86 @@ def stats(days: int = 90, c: Ctx = Depends(ctx)):
                     "scheduled_for": e.scheduled_for, "opened": e.open_count, "reply": e.reply_kind, "error": e.error}
                    for e, name in recent],
     }
+
+
+# ---------------- email playbook + quick update ----------------
+
+
+def playbook_out(c: Ctx) -> dict:
+    pb = playbook.get(c.workspace)
+    texts = [a["message"] for a in pb["angles"]] + [pb["special_line"], pb["quick_update"]]
+    return {**pb, "active": playbook.active(pb), "unsent": len(playbook.unsent(c.db, c.ws_id)),
+            "money_warning": money_talk(*texts)}
+
+
+class AngleIn(BaseModel):
+    label: str = Field("", max_length=60)
+    message: str = Field("", max_length=playbook.MAX_MESSAGE)
+
+
+class PlaybookIn(BaseModel):
+    angles: list[AngleIn] | None = Field(None, max_length=3)
+    special_line: str | None = Field(None, max_length=playbook.MAX_SPECIAL)
+    shuffle: bool | None = None
+
+
+@router.get("/outreach/playbook")
+def get_playbook(c: Ctx = Depends(ctx)):
+    return playbook_out(c)
+
+
+@router.put("/outreach/playbook")
+def put_playbook(body: PlaybookIn, c: Ctx = Depends(ctx)):
+    """Email 1-3 focus and key messages, and the special line. Used by every new draft and redraft."""
+    c.require_editor()
+    pb = playbook.get(c.workspace)
+    before = dict(pb)
+    if body.angles is not None:
+        for i, a in enumerate(body.angles[:3]):
+            pb["angles"][i] = {"label": a.label.strip() or playbook.DEFAULT_LABELS[i], "message": a.message.strip()}
+    if body.special_line is not None:
+        pb["special_line"] = body.special_line.strip()
+    if body.shuffle is not None:
+        pb["shuffle"] = body.shuffle
+    playbook.save(c.workspace, pb)
+    c.audit("playbook.update", str(c.ws_id), before={"angles": before["angles"]}, after={"angles": pb["angles"]})
+    c.db.commit()
+    return playbook_out(c)
+
+
+class QuickUpdateIn(BaseModel):
+    text: str = Field("", max_length=playbook.MAX_UPDATE)
+    apply: bool = True  # also put it in the next unsent email of every sequence
+
+
+@router.put("/outreach/quick-update")
+def put_quick_update(body: QuickUpdateIn, c: Ctx = Depends(ctx)):
+    """A short recent update. New drafts carry it; apply=true also writes it into the next email still to go out
+    on every sequence (replacing an older update). Clearing the text takes it out again."""
+    c.require_editor()
+    playbook.set_update(c.workspace, body.text)
+    changed = playbook.apply_update(c.db, c.workspace, c.user.signature) if body.apply else 0
+    c.audit("playbook.quick_update", str(c.ws_id), after={"text": body.text.strip(), "emails": changed})
+    c.db.commit()
+    return {**playbook_out(c), "changed": changed}
+
+
+def redraft_all(c: Ctx, cap: int = 25) -> dict:
+    """Redraft every sequence that is still a draft (nothing scheduled or sent) with the current playbook."""
+    from .sequences import RegenIn, regenerate
+
+    rows = c.db.scalars(select(Sequence).where(Sequence.workspace_id == c.ws_id, Sequence.status == "draft")
+                        .order_by(Sequence.created_at.desc()).limit(cap)).all()
+    for s in rows:
+        regenerate(str(s.id), RegenIn(persona=s.persona if s.persona in ("momentum", "warm-intro", "technical-founder",
+                                                                          "humble-expert") else "momentum"), c)
+    return {"redrafted": len(rows)}
+
+
+@router.post("/outreach/playbook/redraft")
+def redraft(c: Ctx = Depends(ctx)):
+    c.require_editor()
+    out = redraft_all(c)
+    c.audit("playbook.redraft", str(c.ws_id), after=out)
+    c.db.commit()
+    return {**out, **playbook_out(c)}
