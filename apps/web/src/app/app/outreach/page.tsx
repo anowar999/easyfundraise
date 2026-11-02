@@ -2,11 +2,13 @@
 
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Mail, Send } from "lucide-react";
+import { BookOpen, ChevronDown, Mail, Send, Shuffle } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
+import { PlaybookEditor, QuickUpdate, usePlaybook } from "@/components/EmailPlaybook";
 import { Empty, ErrorState, ListSkeleton } from "@/components/ui";
+import { OutreachAgent } from "./OutreachAgent";
 import { OutreachList } from "./OutreachList";
 import { api, fmtDate } from "@/lib/api";
 
@@ -59,10 +61,49 @@ function Breakdown({ title, rows, label }: { title: string; rows: Row[]; label: 
 
 const STATUS: Record<string, string> = { sent: "Sent", scheduled: "Scheduled", failed: "Not sent" };
 
+/** Email playbook summary with the quick update always to hand; opens into the full editor. */
+function PlaybookCard() {
+  const q = usePlaybook();
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("playbook")) setOpen(true);
+  }, []);
+  const pb = q.data;
+  const filled = pb?.angles.filter((a) => a.message.trim()) ?? [];
+  return (
+    <div className="card p-3 md:p-4 mb-4">
+      <button className="w-full flex items-center gap-2 text-left" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <BookOpen size={16} className="text-brand shrink-0" />
+        <span className="font-semibold text-sm">Email playbook</span>
+        <span className="text-xs text-muted truncate flex-1 min-w-0">
+          {filled.length
+            ? `${pb!.angles.map((a, i) => `${i + 1}. ${a.label}`).join(" · ")}${pb!.special_line ? " · special line" : ""}`
+            : "Tell your agent what emails 1, 2 and 3 should focus on"}
+        </span>
+        {pb?.shuffle && filled.length > 1 && (
+          <span className="hidden sm:inline-flex chip shrink-0">
+            <Shuffle size={11} /> shuffled per investor
+          </span>
+        )}
+        <ChevronDown size={16} className={clsx("text-muted shrink-0 transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="mt-3 pt-3 border-t border-line">
+          <PlaybookEditor />
+        </div>
+      )}
+      <div className="mt-3 pt-3 border-t border-line">
+        <QuickUpdate compact />
+      </div>
+    </div>
+  );
+}
+
 export default function Outreach() {
   const [tab, setTab] = useState<"list" | "activity">("list");
   const s = useQuery<Stats>({ queryKey: ["outreach-stats"], queryFn: () => api("/outreach/stats") });
   const g = useQuery<Gmail>({ queryKey: ["gmail"], queryFn: () => api("/gmail") });
+  const pb = usePlaybook();
   if (s.isLoading) return <ListSkeleton rows={4} />;
   if (s.error) return <ErrorState error={s.error} retry={() => s.refetch()} />;
   const d = s.data!;
@@ -79,6 +120,8 @@ export default function Outreach() {
           )
         }
       />
+      <OutreachAgent />
+      <PlaybookCard />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         <Tile label="Sent (90 days)" value={d.total.sent} sub={`${d.queued} scheduled`} />
         <Tile label="Open rate" value={pct(d.total.open_rate)} sub="a hint, not proof" />
@@ -126,7 +169,7 @@ export default function Outreach() {
           </div>
           <div className="space-y-4">
             <Breakdown title="By email in the sequence" rows={d.by_step} label={(k) => (k === "update" ? "Updates" : `Email ${k}`)} />
-            <Breakdown title="By opening hook" rows={d.by_hook} label={(k) => k.replace(/-/g, " ")} />
+            <Breakdown title="By angle" rows={d.by_hook} label={(k) => (k.startsWith("playbook-") ? `Playbook: ${pb.data?.angles[Number(k.slice(9)) - 1]?.label ?? k}` : k.replace(/-/g, " "))} />
             <Breakdown title="By approach" rows={d.by_persona} label={(k) => k.replace(/-/g, " ")} />
           </div>
         </div>

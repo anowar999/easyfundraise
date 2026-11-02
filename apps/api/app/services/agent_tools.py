@@ -95,6 +95,23 @@ TOOLS = [
     _t("list_email_sequences", "The outreach list: every investor added to outreach (each has a drafted or live email "
        "sequence), with counts by status. Use this for any question about outreach.",
        {"investor_id": S}),
+    _t("get_email_playbook", "The founder's email playbook: what emails 1, 2 and 3 focus on (each with a key "
+       "message), the special line that goes in one email, the quick update, and how many unsent emails there are."),
+    _t("set_email_playbook", "Change the email playbook (applied now). Each email has a focus label and a key message "
+       "in the founder's words, e.g. email1 {label: 'Problem', message: '230m people ...'}. Only pass what the "
+       "founder asked to change. special_line goes in one of the three emails, picked at random per investor. "
+       "shuffle (default on) deals the three angles in a random order per investor. New drafts use it at once; "
+       "offer propose_redraft for drafts that already exist.",
+       {"email1": {"type": "object", "properties": {"label": S, "message": S}},
+        "email2": {"type": "object", "properties": {"label": S, "message": S}},
+        "email3": {"type": "object", "properties": {"label": S, "message": S}},
+        "special_line": S, "shuffle": B}),
+    _t("set_quick_update", "Save a short recent update (applied now), e.g. 'We just signed our 3rd NHS trust'. New "
+       "drafts carry it, and with apply_to_unsent (default true) it is also written into the next email still to go "
+       "out on every sequence, replacing an older update. Empty text clears it.",
+       {"text": S, "apply_to_unsent": B}, ["text"]),
+    _t("propose_redraft", "Offer to redraft every outreach draft that hasn't been approved yet with the current "
+       "playbook. The founder taps to run it. Scheduled and sent emails are not touched."),
     _t("propose_email", "Propose drafting a personalised 3-email sequence to an investor. The founder taps to draft "
        "it, then reviews and confirms before anything is sent.", {"investor_id": S}, ["investor_id"]),
     _t("propose_send", "Offer to open an existing drafted sequence on its confirm screen, where the founder checks "
@@ -486,6 +503,9 @@ def run(c: Ctx, name: str, args: dict, actions: list) -> str:  # noqa: C901 - on
                            "items": [{"sequence_id": str(sq.id), "investor": n, "status": sq.status,
                                       "drafted": str(sq.created_at.date())} for sq, n in rows[:20]]})
 
+    if name in ("get_email_playbook", "set_email_playbook", "set_quick_update", "propose_redraft"):
+        return _playbook_tool(c, name, args, actions)
+
     if name == "propose_email":
         inv = _investor(c, args.get("investor_id"))
         if not inv:
@@ -613,6 +633,54 @@ CARD_NUM = re.compile(r"(?:\b(?:tracker|investor|card|no\.?|number)\s*#?\s*|#)(\
 QUOTED = re.compile(r"[\"“”'‘’](.+)[\"“”'‘’]", re.S)
 STATUS_WORDS = {"active": "Active", "inactive": "Inactive", "ghosting": "Ghosting", "ghosted": "Ghosting",
                 "rejected": "Rejection", "rejection": "Rejection", "passed": "Rejection"}
+
+
+def _playbook_tool(c: Ctx, name: str, args: dict, actions: list) -> str:
+    from . import playbook
+
+    ws = c.workspace
+    pb = playbook.get(ws)
+    drafts = c.db.scalar(select(func.count()).select_from(Sequence).where(Sequence.workspace_id == c.ws_id,
+                                                                          Sequence.status == "draft"))
+    if name == "get_email_playbook":
+        return json.dumps({**pb, "unsent_emails": len(playbook.unsent(c.db, c.ws_id)), "drafts_not_approved": drafts},
+                          default=str)
+    if name == "set_email_playbook":
+        changed = []
+        for i in range(3):
+            a = args.get(f"email{i + 1}")
+            if isinstance(a, dict) and (a.get("label") or a.get("message") is not None):
+                cur = pb["angles"][i]
+                pb["angles"][i] = {"label": (a.get("label") or cur["label"]).strip()[:60],
+                                   "message": (a["message"] if a.get("message") is not None else cur["message"]).strip()
+                                   [:playbook.MAX_MESSAGE]}
+                changed.append(f"email {i + 1}")
+        if args.get("special_line") is not None:
+            pb["special_line"] = str(args["special_line"]).strip()[:playbook.MAX_SPECIAL]
+            changed.append("special line")
+        if isinstance(args.get("shuffle"), bool):
+            pb["shuffle"] = args["shuffle"]
+            changed.append("shuffle " + ("on" if args["shuffle"] else "off"))
+        if not changed:
+            return "Nothing to change."
+        playbook.save(ws, pb)
+        c.audit("playbook.update", str(c.ws_id), after={"via": "agent", "changed": changed})
+        _act(actions, "playbook", f"Email playbook: updated {', '.join(changed)}", href="/app/outreach?playbook=1")
+        return json.dumps({"saved": changed, "playbook": playbook.get(ws), "drafts_not_approved": drafts})
+    if name == "set_quick_update":
+        playbook.set_update(ws, str(args.get("text", "")))
+        n = playbook.apply_update(c.db, ws, c.user.signature) if args.get("apply_to_unsent", True) is not False else 0
+        txt = playbook.get(ws)["quick_update"]
+        c.audit("playbook.quick_update", str(c.ws_id), after={"via": "agent", "text": txt, "emails": n})
+        label = ("Quick update saved" + (f", added to {n} unsent email{'s' if n != 1 else ''}" if n else "") if txt
+                 else "Quick update cleared")
+        _act(actions, "playbook", label, href="/app/outreach")
+        return json.dumps({"quick_update": txt, "unsent_emails_changed": n})
+    if not drafts:
+        return "There are no unapproved drafts to redraft."
+    _act(actions, "redraft", f"Redraft {drafts} unapproved draft{'s' if drafts != 1 else ''} with your playbook",
+         state="pending")
+    return f"Proposed redrafting {drafts} drafts. The founder taps to run it; nothing is sent."
 
 
 def _ref_in(c: Ctx, text: str) -> tuple[list[FunnelCard], str]:

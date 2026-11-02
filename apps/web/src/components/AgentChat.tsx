@@ -51,6 +51,8 @@ export function AgentChat() {
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["funnel"] });
       qc.invalidateQueries({ queryKey: ["card"] });
+      qc.invalidateQueries({ queryKey: ["playbook"] });
+      qc.invalidateQueries({ queryKey: ["sequences"] });
     },
     onError: (e) => toast(errText(e), "err"),
   });
@@ -61,6 +63,7 @@ export function AgentChat() {
       qc.invalidateQueries({ queryKey: ["funnel"] });
       if (r.card_id) qc.invalidateQueries({ queryKey: ["card", r.card_id] });
       qc.invalidateQueries({ queryKey: ["room"] });
+      qc.invalidateQueries({ queryKey: ["sequences"] });
       if (r.sequence_id) {
         setOpen(false);
         router.push(`/app/sequences/${r.sequence_id}?new=1`);
@@ -147,11 +150,11 @@ export function AgentChat() {
                           <span className="flex-1 text-xs">{a.label}</span>
                           {a.href ? (
                             <Link href={a.href} className="btn-ghost btn-sm" onClick={() => setOpen(false)}>
-                              {a.type === "open_sequence" ? "Review" : a.type === "tracker_filter" ? "Show" : "Open"}
+                              {a.type === "open_sequence" ? "Review" : a.type === "tracker_filter" ? "Show" : a.type === "playbook" ? "View" : "Open"}
                             </Link>
                           ) : a.state === "pending" ? (
                             <button className="btn-primary btn-sm" disabled={apply.isPending} onClick={() => apply.mutate({ m: m.id, a: a.id })}>
-                              Apply
+                              {a.type === "redraft" ? "Redraft" : "Apply"}
                             </button>
                           ) : (
                             <span className="text-xs text-green-600 flex items-center gap-1">
