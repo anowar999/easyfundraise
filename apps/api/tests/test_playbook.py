@@ -123,3 +123,27 @@ def test_lint_ignores_quick_update_words():
     body = "Hi Ada,\n\n" + "word " * 60 + "\n\nOpen to a call?\n\n" + outreach.OPT_OUT
     assert outreach.lint("Hi", body, 3)
     assert not outreach.lint("Hi", playbook.with_update("Hi Ada,\n\nShort.\n\n" + outreach.OPT_OUT, "x " * 40), 3)
+
+
+def test_suggestions_come_from_this_founders_deck(client, stub):  # noqa: F811
+    s = client.get("/outreach/playbook/suggest").json()  # no profile yet: neutral wording, nobody else's facts
+    assert s["source"] == "generic" and "EWOR" not in json.dumps(s) and "230m" not in json.dumps(s)
+    assert [p.get("send", False) for p in s["prompts"]] == [False, False, False, True]
+    client.put("/workspace/profile", json={"company_name": "LedgerLoop", "one_liner": "Close the books in a day for "
+                                           "SaaS finance teams", "traction": "40 SaaS customers, 3x usage in 2026"})
+    s = client.get("/outreach/playbook/suggest").json()  # no AI: built from the profile
+    assert s["source"] == "profile" and "LedgerLoop" in s["angles"][0]["message"] and "40 SaaS" in s["angles"][1]["message"]
+    set_tier(client, "pro")
+    deck = {"angles": [{"label": "Problem", "message": "Finance teams spend 9 days closing the books."},
+                       {"label": "Traction", "message": "40 SaaS customers and 3x usage this year."},
+                       {"label": "Why now", "message": "Every SaaS company now runs on usage billing."}],
+            "special_line": "Backed by a top-10 SaaS founder as advisor.", "quick_update": "We just went live with our 41st customer."}
+    st = stub([deck])
+    client.put("/workspace/profile", json={"company_name": "LedgerLoop", "one_liner": "Close the books in a day",
+                                           "business_model": "SaaS subscription"})  # profile changed: re-pick
+    s = client.get("/outreach/playbook/suggest").json()
+    assert s["source"] == "deck" and s["angles"][2]["label"] == "Why now" and len(st.calls) == 1
+    assert s["prompts"][0]["text"].endswith("Finance teams spend 9 days closing the books.")
+    assert client.get("/outreach/playbook/suggest").json()["source"] == "deck" and len(st.calls) == 1  # cached
+    client.put("/outreach/playbook", json={"special_line": "x"})
+    assert client.get("/outreach/playbook/suggest").json()["source"] == "deck" and len(st.calls) == 1  # still cached

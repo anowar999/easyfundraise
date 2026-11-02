@@ -229,6 +229,17 @@ def get_playbook(c: Ctx = Depends(ctx)):
     return playbook_out(c)
 
 
+@router.get("/outreach/playbook/suggest")
+def suggest_playbook(c: Ctx = Depends(ctx)):
+    """Examples for this founder, picked from their own deck: email 1-3 key messages, a special line, a quick
+    update, and example asks for the outreach agent bar."""
+    from ..models import CompanyProfile
+
+    s = playbook.suggest(c.db, c.workspace, c.db.get(CompanyProfile, c.ws_id))
+    c.db.commit()
+    return {**s, "prompts": playbook.prompts(s)}
+
+
 @router.put("/outreach/playbook")
 def put_playbook(body: PlaybookIn, c: Ctx = Depends(ctx)):
     """Email 1-3 focus and key messages, and the special line. Used by every new draft and redraft."""

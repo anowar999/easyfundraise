@@ -9,6 +9,7 @@
   in the next email still to go out on every live sequence, replacing an older update.
 """
 
+import json
 import random
 import re
 from datetime import UTC, datetime
@@ -38,7 +39,8 @@ def get(ws: Workspace) -> dict:
 
 
 def save(ws: Workspace, pb: dict) -> dict:
-    ws.email_playbook = {**pb, "angles": [dict(a) for a in pb["angles"]]}
+    keep = {k: v for k, v in (ws.email_playbook or {}).items() if k == "suggest"}
+    ws.email_playbook = {**keep, **pb, "angles": [dict(a) for a in pb["angles"]]}
     return get(ws)
 
 
@@ -132,3 +134,101 @@ def set_update(ws: Workspace, text: str) -> dict:
     pb["quick_update"] = text.strip()[:MAX_UPDATE]
     pb["quick_update_at"] = datetime.now(UTC).isoformat() if pb["quick_update"] else None
     return save(ws, pb)
+
+
+# ---------------- suggestions from the founder's own deck ----------------
+
+SUGGEST_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["angles", "special_line", "quick_update"],
+    "properties": {
+        "angles": {"type": "array", "items": {"type": "object", "additionalProperties": False,
+                                              "required": ["label", "message"],
+                                              "properties": {"label": {"type": "string"}, "message": {"type": "string"}}}},
+        "special_line": {"type": "string"}, "quick_update": {"type": "string"}},
+}
+
+GENERIC = {
+    "angles": [{"label": "Problem", "message": "The problem your customers face, with one number that shows how big it is."},
+               {"label": "Solution or traction", "message": "How you solve it, and your best proof: users, customers, "
+                                                            "growth or a pilot."},
+               {"label": "Market size or momentum", "message": "How big the market is, or why now is the moment."}],
+    "special_line": "",  # the screens show a neutral hint; only a deck gives a real one
+    "quick_update": "",
+}
+
+
+def _from_profile(p) -> dict:
+    """No AI: build examples from the company profile fields that came from the deck."""
+    if not p or not (p.one_liner or p.traction):
+        return {**GENERIC, "source": "generic"}
+    name = p.company_name or "We"
+    one = (p.one_liner or "").strip().rstrip(".")
+    angles = [dict(a) for a in GENERIC["angles"]]
+    if one:
+        angles[0]["message"] = f"{name}: {one}."
+    if p.traction:
+        angles[1]["message"] = p.traction.strip().rstrip(".") + "."
+    if p.business_model:
+        angles[2] = {"label": "Business model", "message": p.business_model.strip().rstrip(".") + "."}
+    return {"angles": angles, "special_line": "", "quick_update": "", "source": "profile"}
+
+
+def suggest(db: Session, ws: Workspace, p) -> dict:
+    """Email 1-3 key messages, a special line and a quick-update example, picked by AI from this founder's own deck
+    (cached until the profile changes). Falls back to the profile fields, then to neutral wording."""
+    from . import ai
+    from .agent import email_company, money_talk
+
+    key = f"{p.updated_at.isoformat() if p and p.updated_at else ''}:{len(p.deck_text) if p else 0}"
+    cached = (ws.email_playbook or {}).get("suggest") or {}
+    if cached.get("key") == key and cached.get("data"):
+        return cached["data"]
+    data = None
+    if p and (p.deck_text or p.one_liner):
+        system = (
+            f"{ai.SAFETY}\n\nFrom a startup's pitch deck, pick what its cold emails to investors should lead with. "
+            "Return exactly 3 angles, each a short focus label (1-3 words, e.g. Problem, Traction, Market size) and a "
+            "key message of 1-2 sentences in the founder's voice, using the deck's own strongest specific numbers and "
+            "names (never invent any). Angle 1 is the problem, angle 2 the solution or traction, angle 3 the market "
+            "size or why now. special_line is the single most impressive credential in the deck (an accelerator, "
+            "award, notable customer, partner or team pedigree), one sentence; empty if there is none. quick_update "
+            "is an example of a short recent-news line this founder might add, phrased as an example. Never mention "
+            "money: no investing, round, raise, ticket, valuation, revenue amounts or currencies.")
+        user = json.dumps({"company": email_company(p), "deck_text": (p.deck_text or "")[:20000]}, default=str)
+        out = ai.small_json(db, ws, system, user, SUGGEST_SCHEMA, max_tokens=1200)
+        if out and len(out.get("angles", [])) >= 3 and not money_talk(
+                *[a["message"] for a in out["angles"]], out.get("special_line", "")):
+            data = {"angles": [{"label": a["label"].strip()[:60], "message": a["message"].strip()[:MAX_MESSAGE]}
+                               for a in out["angles"][:3]],
+                    "special_line": out.get("special_line", "").strip()[:MAX_SPECIAL],
+                    "quick_update": out.get("quick_update", "").strip()[:MAX_UPDATE], "source": "deck"}
+    if data is None:
+        data = _from_profile(p)
+    if data["source"] != "generic" or not p:
+        ws.email_playbook = {**(ws.email_playbook or {}), "suggest": {"key": key, "data": data}}
+    return data
+
+
+def prompts(s: dict) -> list[dict]:
+    """Example asks for the outreach agent bar, built from this founder's suggestions. label is the chip text;
+    text goes into the box (full, for the founder to edit). send is true for a plain question."""
+    def short(t: str, n: int = 60) -> str:
+        t = t.strip()
+        return t if len(t) <= n else t[:n].rsplit(" ", 1)[0] + "…"
+
+    real = s.get("source") != "generic"
+    a = s["angles"][0]
+    lead = f"Email 1 should be {a['label'].lower()} focused: "
+    out = [{"label": lead + (short(a["message"]) if real else "…"), "text": lead + (a["message"] if real else "")}]
+    sp = s.get("special_line") or ""
+    lead = "Use this line in one email: "
+    out.append({"label": lead + (short(sp, 50) if sp else "…"), "text": lead + sp})
+    q = (s.get("quick_update") or "").removeprefix("Quick update:").strip()
+    q = re.sub(r"^e\.g\.\s*", "", q, flags=re.I)
+    lead = "Quick update: "
+    deck = s.get("source") == "deck" and q
+    out.append({"label": lead + (short(q, 50) if deck else "…"), "text": lead + (q if deck else "")})
+    ask = "Who in my outreach list hasn't been sent anything yet?"
+    out.append({"label": ask, "text": ask, "send": True})
+    return out
