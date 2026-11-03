@@ -214,3 +214,15 @@ def test_agent_reads_calendar_meetings(client, stub):
     result = s.calls[1]["messages"][-2]["content"][0]["content"]
     ev = json.loads(result)
     assert ev[0]["raise_related"] and ev[0]["tracker_card"]["name"] == "Jane Doe"
+
+
+def test_home_meetings_are_read_live_each_time(client):
+    assert client.get("/home/meetings").json()["connected"] is False
+    client.get("/gmail/connect?calendar=1", follow_redirects=False)  # fake mailbox + calendar in tests
+    r = client.get("/home/meetings").json()
+    assert r["connected"] and r["demo"] and r["meetings"] == []
+    card = client.post("/funnel", json={"name": "Jane Calendar", "firm": "Acme VC"}).json()
+    from datetime import UTC, datetime, timedelta
+    client.patch(f"/funnel/{card['id']}", json={"call_at": (datetime.now(UTC) + timedelta(days=2)).isoformat()})
+    r = client.get("/home/meetings").json()  # no cache: the new call shows on the next load
+    assert [m["title"] for m in r["meetings"]] == ["Call with Jane Calendar (Acme VC)"]

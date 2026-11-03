@@ -103,6 +103,30 @@ def act_reminder(rid: str, body: ReminderAction, c: Ctx = Depends(ctx)):
     return {"ok": True}
 
 
+@router.get("/home/meetings")
+def home_meetings(days: int = 7, c: Ctx = Depends(ctx)):
+    """Investor meetings read live from Google Calendar on every call (the Home card reloads it on each visit).
+    Other meetings are counted so an empty list is explainable."""
+    from ..models import GmailAccount
+    from ..services import calendar
+    from ..services.gmail import GmailRevoked
+
+    acc = c.db.get(GmailAccount, c.user.id)
+    out = {"connected": calendar.connected(acc), "demo": bool(acc and acc.mode == "fake"), "meetings": [],
+           "other": [], "error": "", "checked_at": datetime.now(UTC)}
+    if not out["connected"]:
+        return out
+    try:
+        evs = calendar.events(c, max(1, min(days, 30))) or []
+    except GmailRevoked:
+        return {**out, "error": "Google access expired. Reconnect your calendar."}
+    except Exception:  # Google hiccup
+        return {**out, "error": "Couldn't reach Google Calendar just now."}
+    out["meetings"] = [e for e in evs if e["raise_related"]][:8]
+    out["other"] = [{"title": e["title"], "start": e["start"]} for e in evs if not e["raise_related"]][:20]
+    return out
+
+
 @router.get("/home")
 def home(c: Ctx = Depends(ctx)):
     """Daily brief: follow-ups due, overdue, going cold, stage counts and next-best actions."""
