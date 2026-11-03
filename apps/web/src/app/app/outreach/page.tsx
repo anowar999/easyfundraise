@@ -7,7 +7,8 @@ import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { type ReactNode, useEffect, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
-import { PlaybookSheet, UpdateBox, usePlaybook } from "@/components/EmailPlaybook";
+import { PlaybookSheet, usePlaybook } from "@/components/EmailPlaybook";
+import { ProgressUpdateCard } from "@/components/ProgressUpdate";
 import { Empty, ErrorState, ListSkeleton } from "@/components/ui";
 import { OutreachAgent } from "./OutreachAgent";
 import { OutreachList } from "./OutreachList";
@@ -16,7 +17,7 @@ import { api, fmtDate } from "@/lib/api";
 
 type Row = { key: string; sent: number; opened: number; replied: number; positive: number; bounced: number; open_rate: number; reply_rate: number };
 type Recent = { id: string; to: string; card_id: string | null; subject: string; step: number; status: string; sent_at: string | null; scheduled_for: string | null; opened: number; reply: string; error: string };
-type Stats = { total: Row; queued: number; by_step: Row[]; by_hook: Row[]; by_persona: Row[]; by_hour: Row[]; recent: Recent[] };
+type Stats = { total: Row; queued: number; tracking?: { enabled: boolean; public: boolean }; by_step: Row[]; by_hook: Row[]; by_persona: Row[]; by_hour: Row[]; recent: Recent[] };
 type Gmail = { connected: boolean; email?: string; sent_today?: number; daily_cap?: number };
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -103,9 +104,6 @@ function PlaybookCard() {
       ) : (
         <p className="mt-2 text-xs text-muted">Set what emails 1, 2 and 3 focus on. Your agent fills them from your data room.</p>
       )}
-      <div className="mt-3 pt-3 border-t border-line">
-        <UpdateBox compact />
-      </div>
       <PlaybookSheet open={open} onClose={() => setOpen(false)} />
     </div>
   );
@@ -225,11 +223,17 @@ export default function Outreach() {
             <div className="text-sm font-semibold mb-2">Results <span className="text-xs text-muted font-normal">· last 90 days</span></div>
             <div className="grid grid-cols-2 gap-2">
               <Stat label="Sent" value={d.total.sent} sub={`${d.queued} scheduled`} />
-              <Stat label="Open rate" value={pct(d.total.open_rate)} sub="a hint, not proof" />
+              <Stat label="Open rate" value={d.tracking && !d.tracking.public ? "n/a" : pct(d.total.open_rate)} sub={d.tracking && !d.tracking.public ? "needs a public address" : "a hint, not proof"} />
               <Stat label="Reply rate" value={pct(d.total.reply_rate)} sub={`${d.total.replied} replies`} />
               <Stat label="Interested" value={d.total.positive} sub={d.total.bounced ? `${d.total.bounced} bounced` : "positive replies"} />
             </div>
+            {d.tracking && !d.tracking.public && (
+              <p className="mt-2 text-[11px] text-muted leading-snug">
+                Opens can&apos;t be counted while the app runs only on your computer: Gmail loads the tracking image from Google&apos;s servers, which can&apos;t reach it. They work on the live site. Replies are tracked either way.
+              </p>
+            )}
           </div>
+          <ProgressUpdateCard />
           <PlaybookCard />
         </aside>
       </div>

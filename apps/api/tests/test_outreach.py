@@ -144,6 +144,10 @@ def test_upcoming_scheduled_and_send_now(client):
     assert r.status_code == 409  # follow-ups wait for email 1
     r = client.post(f"/sequences/{seq['id']}/emails/{mine[0]['email_id']}/send-now").json()
     assert r["ok"]
+    again = client.post(f"/sequences/{seq['id']}/emails/{mine[0]['email_id']}/send-now")
+    assert again.status_code == 409  # no double send while it's on its way
+    first = next(x for x in client.get("/sequences/scheduled").json()["items"] if x["email_id"] == mine[0]["email_id"])
+    assert first["sending"] and not first["can_send_now"]
     from datetime import UTC, datetime
 
     from app.db import SessionLocal
@@ -152,3 +156,36 @@ def test_upcoming_scheduled_and_send_now(client):
         mailer.send_due(db, datetime.now(UTC))
     e1 = client.get(f"/sequences/{seq['id']}").json()["emails"][0]
     assert e1["status"] == "sent"
+    two = next(x for x in client.get("/sequences/scheduled").json()["items"] if x["email_id"] == mine[1]["email_id"])
+    assert not two["can_send_now"] and two["send_now_from"]  # a day after email 1, never minutes apart
+    assert client.post(f"/sequences/{seq['id']}/emails/{mine[1]['email_id']}/send-now").status_code == 409
+
+    # Round & progress update to everyone already emailed: a reply in their thread, kept clear of other emails.
+    text = "we closed our first 500k and signed two hospitals"
+    pv = client.post("/outreach/progress-update/preview", json={"text": text}).json()
+    assert pv["count"] == 1 and pv["recipients"][0]["moved"]  # email 1 went today, so not tomorrow
+    assert pv["sample"]["subject"] == f"Re: {e1['subject']}" and "We closed our first 500k" in pv["sample"]["body"]
+    assert pv["sample"]["body"].startswith("Hi Ada,")
+    when = datetime.fromisoformat(pv["recipients"][0]["scheduled_for"].replace("Z", "+00:00"))
+    local = when.astimezone(ZoneInfo(pv["recipients"][0]["timezone"]))
+    assert (local.hour, local.minute) == (8, 35) and local.weekday() < 5
+    assert (local.date() - datetime.now(UTC).astimezone(local.tzinfo).date()).days >= 2
+    pol = client.post("/outreach/progress-update/polish", json={"text": text}).json()
+    assert pol["text"].startswith("We closed")  # no AI in tests: tidied, facts kept
+    assert client.post("/outreach/progress-update/schedule", json={"text": text}).json()["scheduled"] == 1
+    ups = [x for x in client.get("/sequences/scheduled").json()["items"] if x["kind"] == "update"]
+    assert len(ups) == 1 and ups[0]["subject"] == f"Re: {e1['subject']}"
+    from sqlalchemy import select
+
+    from app.models import Email, GmailAccount
+    with SessionLocal() as db:
+        import uuid
+        upd = db.get(Email, uuid.UUID(ups[0]["email_id"]))
+        upd.scheduled_for = datetime.now(UTC)
+        for acc in db.scalars(select(GmailAccount)):
+            acc.next_send_at = None
+        db.commit()
+        mailer.send_due(db, datetime.now(UTC))
+        db.refresh(upd)
+        sent1 = db.scalar(select(Email).where(Email.sequence_id == uuid.UUID(seq["id"]), Email.step == 1))
+        assert upd.status == "sent" and upd.gmail_thread_id == sent1.gmail_thread_id  # same Gmail thread

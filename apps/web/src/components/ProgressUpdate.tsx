@@ -1,0 +1,153 @@
+"use client";
+
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { CalendarClock, Eye, Megaphone, Send, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { useSuggest } from "@/components/EmailPlaybook";
+import { Sheet, errText, useToast } from "@/components/ui";
+import { api } from "@/lib/api";
+
+type Recipient = { name: string; firm: string; to: string; timezone: string; scheduled_for: string; moved: boolean };
+type Preview = { count: number; moved: number; recipients: Recipient[]; sample: { to: string; subject: string; body: string } };
+
+const DRAFT_KEY = "ef-progress-update-draft";
+
+function at(iso: string, tz?: string) {
+  try {
+    return new Date(iso).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", ...(tz ? { timeZone: tz } : {}) });
+  } catch {
+    return new Date(iso).toLocaleString();
+  }
+}
+
+/** Write a round & progress update once, polish it with AI, preview it, and schedule it to every investor you've
+ *  already emailed: 08:35 their time, as a reply in your thread with them, never within a day of another email. */
+function Composer({ onDone }: { onDone: () => void }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const sg = useSuggest();
+  const [text, setText] = useState(() => {
+    try {
+      return localStorage.getItem(DRAFT_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const [pv, setPv] = useState<Preview | null>(null);
+  const keep = (t: string) => {
+    setText(t);
+    setPv(null);
+    try {
+      localStorage.setItem(DRAFT_KEY, t);
+    } catch {}
+  };
+  const polish = useMutation({
+    mutationFn: () => api<{ text: string; engine: string }>("/outreach/progress-update/polish", { method: "POST", json: { text } }),
+    onSuccess: (r) => {
+      keep(r.text);
+      toast(r.engine === "ai" ? "Polished. Check it still says what you mean." : "Tidied up (AI isn't available right now).");
+    },
+    onError: (e) => toast(errText(e), "err"),
+  });
+  const preview = useMutation({
+    mutationFn: () => api<Preview>("/outreach/progress-update/preview", { method: "POST", json: { text } }),
+    onSuccess: setPv,
+    onError: (e) => toast(errText(e), "err"),
+  });
+  const schedule = useMutation({
+    mutationFn: () => api<{ scheduled: number }>("/outreach/progress-update/schedule", { method: "POST", json: { text } }),
+    onSuccess: (r) => {
+      for (const k of ["upcoming", "outreach-stats"]) qc.invalidateQueries({ queryKey: [k] });
+      try {
+        localStorage.removeItem(DRAFT_KEY);
+      } catch {}
+      toast(`Update scheduled for ${r.scheduled} investor${r.scheduled === 1 ? "" : "s"}. See them under Scheduled emails.`);
+      onDone();
+    },
+    onError: (e) => toast(errText(e), "err"),
+  });
+  const ok = text.trim().length >= 3;
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted">
+        News about the round, momentum or progress. It goes to every investor you&apos;ve already emailed, as a reply in your thread with them.
+      </p>
+      <textarea
+        className="textarea min-h-40 leading-relaxed"
+        maxLength={1500}
+        value={text}
+        onChange={(e) => keep(e.target.value)}
+        placeholder={sg.data?.update_example ? `e.g. ${sg.data.update_example}` : "e.g. Half the round is committed and we close at the end of the month. We also signed our second hospital."}
+        aria-label="Round and progress update"
+      />
+      <div className="flex flex-wrap gap-2">
+        <button className="btn-ghost btn-sm" disabled={!ok || polish.isPending} onClick={() => polish.mutate()}>
+          <Sparkles size={13} /> {polish.isPending ? "Polishing…" : "Polish with AI"}
+        </button>
+        <button className="btn-ghost btn-sm" disabled={!ok || preview.isPending} onClick={() => preview.mutate()}>
+          <Eye size={13} /> {preview.isPending ? "Loading…" : "Preview"}
+        </button>
+      </div>
+
+      {pv && (
+        <div className="rounded-xl border border-line bg-surface/50 p-3 space-y-3">
+          <div>
+            <div className="text-xs text-muted">{pv.sample.to ? `What ${pv.sample.to} gets` : "What they get"}</div>
+            <div className="text-sm font-medium mt-1">{pv.sample.subject}</div>
+            <div className="text-sm whitespace-pre-wrap mt-2 leading-relaxed">{pv.sample.body}</div>
+          </div>
+          {pv.count > 0 && (
+            <div>
+              <div className="text-xs text-muted mb-1">
+                {pv.count} investor{pv.count === 1 ? "" : "s"}
+                {pv.moved ? `, ${pv.moved} moved 3 days later because another email reaches them within a day` : ""}
+              </div>
+              <ul className="max-h-48 overflow-auto divide-y divide-line text-xs">
+                {pv.recipients.map((r) => (
+                  <li key={r.to} className="flex gap-2 py-1.5">
+                    <span className="flex-1 min-w-0 truncate">
+                      {r.name}
+                      {r.firm ? <span className="text-muted">, {r.firm}</span> : null}
+                    </span>
+                    <span className={r.moved ? "text-warn" : "text-muted"}>{at(r.scheduled_for, r.timezone)} their time</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="rounded-xl border border-line p-3">
+        <div className="flex items-start gap-2 text-xs text-muted">
+          <CalendarClock size={14} className="shrink-0 mt-0.5 text-brand" />
+          <span>
+            Goes at 8:35am in each investor&apos;s time zone on the next weekday morning. If another email to them is scheduled the same day or the day either side, theirs moves 3 days later, so nobody gets two emails back to back.
+          </span>
+        </div>
+        <button className="btn-primary w-full mt-3" disabled={!ok || schedule.isPending} onClick={() => schedule.mutate()}>
+          <Send size={15} /> {schedule.isPending ? "Scheduling…" : pv ? `Schedule to all ${pv.count} previously emailed investors` : "Schedule to all previously emailed investors"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function ProgressUpdateCard() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="card p-3 md:p-4">
+      <div className="flex items-center gap-2">
+        <Megaphone size={16} className="text-brand shrink-0" />
+        <span className="font-semibold text-sm">Round & progress update</span>
+      </div>
+      <p className="mt-1 text-xs text-muted">Share news with every investor you&apos;ve already emailed, in the same thread.</p>
+      <button className="btn-primary btn-sm w-full mt-3" onClick={() => setOpen(true)}>
+        <Megaphone size={13} /> Send round &amp; progress update
+      </button>
+      <Sheet open={open} onClose={() => setOpen(false)} title="Send round & progress update" wide>
+        <Composer onDone={() => setOpen(false)} />
+      </Sheet>
+    </div>
+  );
+}

@@ -2,8 +2,9 @@
 approve & schedule, WhatsApp nudge (SEQ-07). Approved emails are queued as `scheduled` in the investor's local
 send window; the worker sends them from the founder's Gmail (services/mailer.py)."""
 
+import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
@@ -16,6 +17,8 @@ from ..models import CompanyProfile, Email, FunnelCard, GmailAccount, Investor, 
 from ..services import agent, ai, outreach, test_investors
 from ..services.entitlements import can, consume, limit
 from .investors import _exclusions, auto_reveal, is_excluded
+
+FOLLOW_UP_GAP = timedelta(hours=24)
 
 router = APIRouter(prefix="/sequences", tags=["sequences"])
 
@@ -149,12 +152,49 @@ def scheduled(c: Ctx = Depends(ctx)):
                         .join(Investor, Investor.id == Sequence.investor_id)
                         .where(Email.workspace_id == c.ws_id, Email.status == "scheduled", Sequence.status == "approved")
                         .order_by(Email.scheduled_for).limit(300)).all()
-    sent_first = {sid for (sid,) in c.db.execute(select(Email.sequence_id).where(
-        Email.workspace_id == c.ws_id, Email.step == 1, Email.status == "sent")).all()}
-    return {"items": [{"email_id": str(e.id), "sequence_id": str(s.id), "step": e.step, "subject": e.subject,
-                       "to": e.to_email, "scheduled_for": e.scheduled_for, "investor": inv.name,
-                       "firm": inv.current_firm or inv.company, "timezone": inv.timezone or "UTC",
-                       "can_send_now": e.step == 1 or s.id in sent_first} for e, s, inv in rows]}
+    now = datetime.now(UTC)
+    sent = {}  # (sequence, step) -> sent_at
+    for sid, step, at, subj in c.db.execute(select(Email.sequence_id, Email.step, Email.sent_at, Email.subject).where(
+            Email.workspace_id == c.ws_id, Email.sequence_id.is_not(None), Email.status == "sent")).all():
+        sent[(sid, step)] = (at, subj)
+
+    def ready(e: Email, s: Sequence) -> tuple[bool, datetime | None]:
+        """Send now: email 1 any time; a follow-up once the email before it went out at least a day ago."""
+        if e.scheduled_for and e.scheduled_for <= now:
+            return False, None  # already on its way
+        if e.step == 1:
+            return True, None
+        prev = sent.get((s.id, e.step - 1))
+        if not prev or not prev[0]:
+            return False, None
+        after = prev[0] + FOLLOW_UP_GAP
+        return after <= now, (after if after > now else None)
+
+    def subject(e: Email, s: Sequence) -> str:  # follow-ups go as a reply to email 1
+        first = sent.get((s.id, 1))
+        if e.step > 1 and first:
+            return "Re: " + re.sub(r"^\s*re:\s*", "", first[1], flags=re.I)
+        return e.subject
+
+    items = []
+    for e, s, inv in rows:
+        ok, after = ready(e, s)
+        items.append({"email_id": str(e.id), "sequence_id": str(s.id), "kind": "sequence", "step": e.step,
+                      "subject": subject(e, s), "to": e.to_email, "scheduled_for": e.scheduled_for, "investor": inv.name,
+                      "firm": inv.current_firm or inv.company, "timezone": inv.timezone or "UTC", "can_send_now": ok,
+                      "send_now_from": after, "sending": bool(e.scheduled_for and e.scheduled_for <= now)})
+    # Round & progress updates waiting to go out (sent as a reply in each investor's thread).
+    for e, card in c.db.execute(select(Email, FunnelCard).outerjoin(FunnelCard, FunnelCard.id == Email.card_id).where(
+            Email.workspace_id == c.ws_id, Email.status == "scheduled", Email.broadcast_id.is_not(None),
+            Email.hook == "update").limit(300)).all():
+        items.append({"email_id": str(e.id), "sequence_id": None, "card_id": str(card.id) if card else None,
+                      "kind": "update", "step": 0, "subject": e.subject, "to": e.to_email,
+                      "scheduled_for": e.scheduled_for, "investor": card.name if card else e.to_email,
+                      "firm": card.firm if card else "", "timezone": (card.investor_timezone if card else "") or "UTC",
+                      "can_send_now": False, "send_now_from": None,
+                      "sending": bool(e.scheduled_for and e.scheduled_for <= now)})
+    items.sort(key=lambda x: x["scheduled_for"] or now)
+    return {"items": items}
 
 
 @router.get("/{sid}")
@@ -346,9 +386,17 @@ def send_now(sid: str, eid: str, c: Ctx = Depends(ctx)):
     em = next((e for e in s.emails if str(e.id) == eid), None)
     if em is None or em.status != "scheduled" or s.status != "approved":
         raise ApiError(409, "EF-SEQ-011", "This email isn't scheduled")
-    if em.step > 1 and not any(e.step == 1 and e.status == "sent" for e in s.emails):
-        raise ApiError(409, "EF-SEQ-012", "Email 1 hasn't gone out yet", "Send email 1 first; follow-ups reply in its thread.")
     now = datetime.now(UTC)
+    if em.scheduled_for and em.scheduled_for <= now:
+        raise ApiError(409, "EF-SEQ-013", "This email is already on its way", "It goes out within a minute.")
+    if em.step > 1:
+        prev = next((e for e in s.emails if e.step == em.step - 1 and e.status == "sent"), None)
+        if prev is None:
+            raise ApiError(409, "EF-SEQ-012", f"Email {em.step - 1} hasn't gone out yet",
+                           "Follow-ups reply in the same thread, so they go after the email before them.")
+        if prev.sent_at and prev.sent_at + FOLLOW_UP_GAP > now:
+            raise ApiError(409, "EF-SEQ-014", "Too soon after the last email",
+                           f"A follow-up can go a day after email {prev.step}, so they don't land minutes apart.")
     em.scheduled_for, em.error = now, ""
     acc = c.db.get(GmailAccount, c.user.id)
     if acc is not None and acc.next_send_at and acc.next_send_at > now:  # the founder asked for this one now

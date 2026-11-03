@@ -262,7 +262,8 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
             return 0
 
     # A one-off reply written on a tracker card carries the Gmail thread and the Message-ID it answers.
-    reply_thread, reply_to = (em.gmail_thread_id, em.rfc_message_id) if direct else ("", "")
+    # A progress update to investors already emailed replies in their outreach thread the same way.
+    reply_thread, reply_to = (em.gmail_thread_id, em.rfc_message_id) if direct or (em.broadcast_id and em.step == 1) else ("", "")
 
     # Merge field: {first name} becomes the recipient's first name in what is actually sent.
     who = (db.get(Investor, seq.investor_id).name if seq is not None and seq.investor_id else
