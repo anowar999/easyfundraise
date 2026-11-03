@@ -130,3 +130,25 @@ def test_write_email_then_send_it_through_outreach(client):
     first = seq["emails"][0]
     assert first["subject"] == "My own subject" and first["issues"] == []
     assert first["body"].endswith("Sam\nDocAI") and "reply 'no'" not in first["body"].lower()
+
+
+def test_upcoming_scheduled_and_send_now(client):
+    ada = _ready_to_send(client)
+    seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
+    assert client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True}).status_code == 200
+    up = client.get("/sequences/scheduled").json()["items"]
+    mine = [x for x in up if x["sequence_id"] == seq["id"]]
+    assert [x["step"] for x in mine] == [1, 2, 3] and mine[0]["can_send_now"] and not mine[1]["can_send_now"]
+    assert mine[1]["subject"] == f"Re: {mine[0]['subject']}"
+    r = client.post(f"/sequences/{seq['id']}/emails/{mine[1]['email_id']}/send-now")
+    assert r.status_code == 409  # follow-ups wait for email 1
+    r = client.post(f"/sequences/{seq['id']}/emails/{mine[0]['email_id']}/send-now").json()
+    assert r["ok"]
+    from datetime import UTC, datetime
+
+    from app.db import SessionLocal
+    from app.services import mailer
+    with SessionLocal() as db:
+        mailer.send_due(db, datetime.now(UTC))
+    e1 = client.get(f"/sequences/{seq['id']}").json()["emails"][0]
+    assert e1["status"] == "sent"

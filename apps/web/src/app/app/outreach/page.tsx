@@ -10,6 +10,7 @@ import { PlaybookSheet, UpdateBox, usePlaybook } from "@/components/EmailPlayboo
 import { Empty, ErrorState, ListSkeleton } from "@/components/ui";
 import { OutreachAgent } from "./OutreachAgent";
 import { OutreachList } from "./OutreachList";
+import { UpcomingList, useUpcoming } from "./Upcoming";
 import { api, fmtDate } from "@/lib/api";
 
 type Row = { key: string; sent: number; opened: number; replied: number; positive: number; bounced: number; open_rate: number; reply_rate: number };
@@ -101,7 +102,8 @@ function PlaybookCard() {
 }
 
 export default function Outreach() {
-  const [tab, setTab] = useState<"list" | "activity">("list");
+  const [tab, setTab] = useState<"list" | "scheduled" | "activity">("list");
+  const up = useUpcoming();
   const s = useQuery<Stats>({ queryKey: ["outreach-stats"], queryFn: () => api("/outreach/stats") });
   const g = useQuery<Gmail>({ queryKey: ["gmail"], queryFn: () => api("/gmail") });
   const pb = usePlaybook();
@@ -124,20 +126,24 @@ export default function Outreach() {
       <OutreachAgent />
       <PlaybookCard />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        <Tile label="Sent (90 days)" value={d.total.sent} sub={`${d.queued} scheduled`} />
+        <button type="button" className="text-left" onClick={() => setTab("scheduled")} title="See what's scheduled">
+          <Tile label="Sent (90 days)" value={d.total.sent} sub={`${d.queued} scheduled · see them`} />
+        </button>
         <Tile label="Open rate" value={pct(d.total.open_rate)} sub="a hint, not proof" />
         <Tile label="Reply rate" value={pct(d.total.reply_rate)} sub={`${d.total.replied} replies`} />
         <Tile label="Interested" value={d.total.positive} sub={d.total.bounced ? `${d.total.bounced} bounced` : "positive replies"} />
       </div>
       <div className="flex gap-1 mb-3 border-b border-line">
-        {(["list", "activity"] as const).map((t) => (
+        {(["list", "scheduled", "activity"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={clsx("px-3 py-2 text-sm -mb-px border-b-2", tab === t ? "border-brand font-medium" : "border-transparent text-muted")}>
-            {t === "activity" ? "Activity" : "Outreach list"}
+            {t === "activity" ? "Activity" : t === "scheduled" ? `Scheduled${up.data?.items.length ? ` (${up.data.items.length})` : ""}` : "Outreach list"}
           </button>
         ))}
       </div>
       {tab === "list" ? (
         <OutreachList />
+      ) : tab === "scheduled" ? (
+        <UpcomingList />
       ) : (
         <div className="grid md:grid-cols-[1fr_340px] gap-4">
           <div className="card divide-y divide-line">
