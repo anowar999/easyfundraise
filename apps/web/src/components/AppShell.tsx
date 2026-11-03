@@ -2,7 +2,7 @@
 
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bell, BarChart3, Globe, Home, KanbanSquare, Heart, ListTodo, LogOut, Megaphone, Menu, Search, Settings, Shield, Sparkles } from "lucide-react";
+import { Bell, Globe, Home, KanbanSquare, Heart, ListTodo, LogOut, Mail, Megaphone, Menu, Search, Settings, Shield, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
@@ -16,8 +16,8 @@ const NAV = [
   { href: "/app/tasks", label: "My tasks", short: "Tasks", icon: ListTodo },
   { href: "/app/investors", label: "Investors", icon: Search },
   { href: "/app/shortlist", label: "Shortlist", icon: Heart },
+  { href: "/app/outreach", label: "Outreach", icon: Mail },
   { href: "/app/funnel", label: "Investor tracker", short: "Tracker", icon: KanbanSquare },
-  { href: "/app/outreach", label: "Outreach", icon: BarChart3 },
   { href: "/app/updates", label: "Updates", icon: Megaphone },
   { href: "/app/data-room", label: "Data room", icon: Globe },
   { href: "/app/notifications", label: "Alerts", icon: Bell },

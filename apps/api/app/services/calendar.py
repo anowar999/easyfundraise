@@ -34,6 +34,34 @@ TOOLS = [{
 TOOL_NAMES = {t["name"] for t in TOOLS}
 
 
+class CalendarBlocked(Exception):
+    """Google refused the calendar read for a reason reconnecting won't fix (e.g. the Calendar API is off in the
+    Google Cloud project). Carries a plain message and, when Google gives one, the page that fixes it."""
+
+    def __init__(self, message: str, link: str = ""):
+        super().__init__(message)
+        self.message, self.link = message, link
+
+
+def blocked(r: httpx.Response) -> Exception:
+    try:
+        err = r.json().get("error") or {}
+    except ValueError:
+        err = {}
+    reasons = {str(x.get("reason", "")) for x in err.get("errors") or []}
+    for d in err.get("details") or []:
+        reasons.add(str(d.get("reason", "")))
+    text = str(err.get("message", ""))
+    if reasons & {"insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}:
+        return GmailRevoked()  # calendar permission missing: reconnecting with calendar fixes it
+    if reasons & {"accessNotConfigured", "SERVICE_DISABLED"} or "has not been used" in text or "disabled" in text:
+        m = re.search(r"https://console\.(?:developers|cloud)\.google\.com/\S+?(?=[\s\"]|then|$)", text)
+        link = m.group(0).rstrip(".") if m else "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"
+        return CalendarBlocked("The Google Calendar API is switched off in your Google Cloud project. Turn it on, "
+                               "wait a few minutes, then reload.", link)
+    return CalendarBlocked(f"Google refused the calendar read: {text[:200] or 'permission denied'}.")
+
+
 def connected(acc: GmailAccount | None) -> bool:
     return bool(acc and acc.status == "connected" and (acc.mode == "fake" or "calendar" in (acc.scopes or "")))
 
@@ -43,8 +71,10 @@ def _google_events(db, acc: GmailAccount, start: datetime, end: datetime) -> lis
     r = httpx.get(API, headers={"Authorization": f"Bearer {tok}"}, timeout=20, params={
         "timeMin": start.isoformat(), "timeMax": end.isoformat(), "singleEvents": "true", "orderBy": "startTime",
         "maxResults": 100})
-    if r.status_code in (401, 403):
+    if r.status_code == 401:
         raise GmailRevoked()
+    if r.status_code == 403:
+        raise blocked(r)
     r.raise_for_status()
     out = []
     for e in r.json().get("items", []):
@@ -102,6 +132,8 @@ def tag(c: Ctx, e: dict) -> dict:
 def run(c: Ctx, name: str, args: dict) -> str:
     try:
         evs = events(c, int(args.get("days_ahead") or 7), int(args.get("days_back") or 0))
+    except CalendarBlocked as e:
+        return f"Couldn't read the calendar: {e.message} Fix link: {e.link or 'none'}. Do not suggest reconnecting."
     except (GmailRevoked, httpx.HTTPError):
         return "Couldn't read the calendar; Google access may have expired. Suggest reconnecting in settings."
     if evs is None:

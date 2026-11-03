@@ -226,3 +226,20 @@ def test_home_meetings_are_read_live_each_time(client):
     client.patch(f"/funnel/{card['id']}", json={"call_at": (datetime.now(UTC) + timedelta(days=2)).isoformat()})
     r = client.get("/home/meetings").json()  # no cache: the new call shows on the next load
     assert [m["title"] for m in r["meetings"]] == ["Call with Jane Calendar (Acme VC)"]
+
+
+def test_calendar_api_off_is_not_called_expired():
+    import httpx
+
+    from app.services import calendar
+    from app.services.gmail import GmailRevoked
+    off = httpx.Response(403, json={"error": {"code": 403, "message": "Google Calendar API has not been used in project 1 "
+                         "before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/"
+                         "calendar-json.googleapis.com/overview?project=1 then retry.",
+                         "errors": [{"reason": "accessNotConfigured"}]}})
+    e = calendar.blocked(off)
+    assert isinstance(e, calendar.CalendarBlocked) and "switched off" in e.message
+    assert e.link == "https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=1"
+    scope = httpx.Response(403, json={"error": {"message": "Insufficient Permission",
+                                                "errors": [{"reason": "insufficientPermissions"}]}})
+    assert isinstance(calendar.blocked(scope), GmailRevoked)
