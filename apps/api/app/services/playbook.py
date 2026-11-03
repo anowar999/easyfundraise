@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Email, Sequence, Workspace
+from ..models import DataRoom, Email, Sequence, Workspace
 
 DEFAULT_FOCUS = ("What we're building", "The problem we solve", "Market opportunity and traction")
 STRUCTURE = (
@@ -196,20 +196,88 @@ def profile_ask(p) -> str:
     return ask
 
 
-def _from_profile(p, focuses: list[str]) -> dict:
-    """No AI: fill what we can from the company profile fields that came from the deck."""
-    if not p or not (p.one_liner or p.traction or p.round_size):
+ROOM_TYPES = ("problem", "solution", "product", "traction", "market", "why_now", "team", "business_model")
+# What each focus draws on in the data room, by the words in it; first match wins.
+FOCUS_SECTIONS = [
+    (("problem", "pain", "challenge"), ("problem",)),
+    (("market", "opportunity"), ("market", "traction")),
+    (("traction", "progress", "growth", "customer", "result"), ("traction",)),
+    (("build", "solution", "product", "what we do", "how it works"), ("solution", "product")),
+    (("why now", "timing"), ("why_now",)),
+    (("team", "founder"), ("team",)),
+    (("business model", "revenue", "pricing"), ("business_model",)),
+]
+STEP_SECTIONS = {0: ("solution", "product"), 1: ("problem",), 2: ("market", "traction")}
+
+
+def room_facts(db: Session, ws_id) -> tuple[dict[str, str], str]:
+    """The founder's data room sections as plain text (body plus 'label: value' metrics), and when it changed."""
+    room = db.get(DataRoom, ws_id)
+    if not room:
+        return {}, ""
+    out: dict[str, str] = {}
+    for sec in (room.content or {}).get("sections") or []:
+        t = sec.get("type")
+        if t not in ROOM_TYPES:
+            continue
+        body = re.sub(r"\s+", " ", str(sec.get("body") or "")).strip()
+        metrics = "; ".join(f"{m.get('label', '').strip()}: {str(m.get('value', '')).strip()}"
+                            for m in sec.get("metrics") or [] if isinstance(m, dict) and str(m.get("value") or "").strip())
+        text = " ".join(x for x in (body, f"({metrics})" if metrics and body else metrics) if x)
+        if text:
+            out[t] = (out.get(t, "") + " " + text).strip()[:1500]
+    one = str(((room.content or {}).get("hero") or {}).get("one_liner") or "").strip()
+    if one:
+        out["one_liner"] = one
+    return out, room.updated_at.isoformat() if room.updated_at else ""
+
+
+def sections_for(focus: str, step: int) -> tuple[str, ...]:
+    f = (focus or "").lower()
+    for words, secs in FOCUS_SECTIONS:
+        if any(w in f for w in words):
+            return secs
+    return STEP_SECTIONS[step]
+
+
+def _sentences(text: str, n: int = 2, cap: int = 320) -> str:
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    out = " ".join(parts[:n]).strip()
+    if len(out) > cap:
+        out = out[:cap].rsplit(" ", 1)[0].rstrip(",;:") + "."
+    return out if not out or out[-1] in ".!?)" else out + "."
+
+
+def _from_room(room: dict, focuses: list[str], p) -> list[str]:
+    msgs = []
+    for i, f in enumerate(focuses):
+        secs = [room[k] for k in sections_for(f, i) if room.get(k)]
+        msgs.append(" ".join(_sentences(x, 2 if len(secs) == 1 else 1) for x in secs))
+    return msgs
+
+
+def _from_profile(p, focuses: list[str], room: dict | None = None) -> dict:
+    """No AI: fill from the data room sections for each focus, then the profile fields that came from the deck."""
+    room = room or {}
+    if not room and (not p or not (p.one_liner or p.traction or p.round_size)):
         return {"emails": [{"focus": f, "message": ""} for f in focuses], "ask": "", "strengths": [],
                 "update_example": "", "source": "generic"}
-    name = p.company_name or "We"
-    one = (p.one_liner or "").strip().rstrip(".")
-    msgs = [f"{name}: {one}." if one else "", "", (p.traction or "").strip().rstrip(".") + "." if p.traction else ""]
+    name = (p.company_name if p else "") or "We"
+    one = ((p.one_liner if p else "") or room.get("one_liner", "")).strip().rstrip(".")
+    traction = ((p.traction if p else "") or "").strip().rstrip(".")
+    by_room = _from_room(room, focuses, p)
+    msgs = []
+    for i, f in enumerate(focuses):
+        secs = sections_for(f, i)
+        fallback = (f"{name}: {one}." if one and ("solution" in secs or "product" in secs) else
+                    f"{traction}." if traction and "traction" in secs else "")
+        msgs.append(by_room[i] or fallback)
     ask = profile_ask(p)
     return {"emails": [{"focus": f, "message": m} for f, m in zip(focuses, msgs, strict=True)], "ask": ask,
-            "strengths": [], "update_example": "", "source": "profile"}
+            "strengths": [], "update_example": "", "source": "data room" if any(by_room) else "profile"}
 
 
-def fill(db: Session, ws: Workspace, p, focuses: list[str] | None = None) -> dict:
+def fill(db: Session, ws: Workspace, p, focuses: list[str] | None = None, refresh: bool = False) -> dict:
     """What each email says for the chosen focuses, what we're looking for, the founder's strengths and an
     example update: picked by AI from the founder's own deck (cached per deck and focuses). Falls back to the
     profile fields, then to blanks with neutral hints in the screens."""
@@ -219,34 +287,42 @@ def fill(db: Session, ws: Workspace, p, focuses: list[str] | None = None) -> dic
     focuses = [(_clean(f, 80) or DEFAULT_FOCUS[i]) for i, f in enumerate((focuses or list(DEFAULT_FOCUS))[:3])]
     while len(focuses) < 3:
         focuses.append(DEFAULT_FOCUS[len(focuses)])
-    key = (f"{p.updated_at.isoformat() if p and p.updated_at else ''}:{len(p.deck_text) if p else 0}:"
+    room, room_at = room_facts(db, ws.id)
+    key = (f"{p.updated_at.isoformat() if p and p.updated_at else ''}:{len(p.deck_text) if p else 0}:{room_at}:"
            f"{'|'.join(focuses)}")
     cached = (ws.email_playbook or {}).get("suggest") or {}
-    if cached.get("key") == key and cached.get("data"):
+    if not refresh and cached.get("key") == key and cached.get("data"):
         return cached["data"]
     data = None
-    if p and (p.deck_text or p.one_liner):
+    if (p and (p.deck_text or p.one_liner)) or room:
         system = (
             f"{ai.SAFETY}\n\nYou set up a founder's cold emails to investors from their own pitch deck. For each of "
             "the 3 email focuses given, write what that part of the email should say: 1-2 sentences in the founder's "
-            "voice ('we'), using the deck's strongest specific numbers and names, never invented ones, and nothing "
+            "voice ('we'), using the strongest specific numbers and names, never invented ones, and nothing "
             "about money except in ask. ask is 'what we're looking for': the raise amount and stage exactly as the "
             "deck states them, plus what kind of partner they want if stated (e.g. 'We're raising $750k pre-seed and "
             "looking for an angel with healthcare distribution.'); empty if the deck gives no amount. Never mention "
             "valuation or an investor's ticket or cheque size. strengths: up to 3 standout credentials from the deck "
             "(team history, accelerator, awards, notable customers, partners, advisors), one sentence each; none if "
-            "there are none. update_example: one example round or progress update this founder might send later.")
-        user = json.dumps({"focuses": focuses, "company": email_company(p),
-                           "deck_text": (p.deck_text or "")[:20000]}, default=str)
+            "there are none. update_example: one example round or progress update this founder might send later.\n\n"
+            "data_room holds the founder's own, up-to-date sections and wins over the deck when they differ. For "
+            "each focus use the section named in focus_sources: a problem focus says the problem (who has it, how "
+            "big or costly it is), never the one-liner or the product; a 'what we're building' focus says the "
+            "solution and product; a market or traction focus gives the market size and the traction numbers. "
+            "Use the deck only for what the data room leaves out.")
+        user = json.dumps({"focuses": focuses, "company": email_company(p) if p else {},
+                           "focus_sources": {f: list(sections_for(f, i)) for i, f in enumerate(focuses)},
+                           "data_room": room, "deck_text": ((p.deck_text if p else "") or "")[:20000]}, default=str)
         out = ai.small_json(db, ws, system, user, FILL_SCHEMA, max_tokens=1500)
         if out and len(out.get("messages", [])) >= 3 and not money_talk(*out["messages"][:3], *out.get("strengths", [])):
             data = {"emails": [{"focus": f, "message": _clean(m, MAX_MESSAGE)}
                                for f, m in zip(focuses, out["messages"][:3], strict=True)],
                     "ask": "" if money_talk(out.get("ask", "")) else _clean(out.get("ask"), MAX_ASK),
                     "strengths": [_clean(s, MAX_STRENGTH) for s in out.get("strengths", []) if s.strip()][:3],
-                    "update_example": _clean(out.get("update_example"), MAX_UPDATE), "source": "deck"}
+                    "update_example": _clean(out.get("update_example"), MAX_UPDATE),
+                    "source": "data room" if room else "deck"}
     if data is None:
-        data = _from_profile(p, focuses)
+        data = _from_profile(p, focuses, room)
     if data["source"] != "generic":
         ws.email_playbook = {**(ws.email_playbook or {}), "suggest": {"key": key, "data": data}}
     return data

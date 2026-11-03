@@ -56,7 +56,7 @@ function CompanyProfile() {
         traction: x.traction || r.suggested.traction || "",
         one_liner: x.one_liner || r.suggested.one_liner || "",
       });
-      toast("Deck read. Review the suggested fields and save, then use “Fill with AI from my deck” under Emails 1, 2, 3 to refresh your emails.");
+      toast("Deck read. Review the suggested fields and save, then use “Refresh from my data room” under Emails 1, 2, 3 to update your emails.");
     } catch (e) {
       toast(errText(e), "err");
     }
