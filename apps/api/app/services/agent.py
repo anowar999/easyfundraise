@@ -234,6 +234,7 @@ def draft_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile 
     emails, engine = got or (outreach.draft_sequence(inv, p, persona, instructions(db, ws.id), signature, plan),
                              "template")
     playbook.apply_to(emails, pb, signature)
+    outreach.vary_subjects(db, ws.id, emails, inv, p)
     return emails, engine
 
 
@@ -709,7 +710,8 @@ def apply_action(c, msg: ChatMessage, action_id: str) -> dict:
     elif a["type"] == "redraft":
         from ..routers.outreach import redraft_all
 
-        result["redrafted"] = redraft_all(c)["redrafted"]
+        r = redraft_all(c, 1)  # one per tap keeps the request short; the rest via "Update pending investors"
+        result["redrafted"], result["left"] = r["redrafted"], r["left"]
     elif a["type"] == "publish_room":
         from ..routers.dataroom import ensure_room, room_out
 

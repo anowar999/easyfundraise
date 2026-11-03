@@ -211,24 +211,45 @@ export function PlaybookEditor({ onSaved }: { onSaved?: () => void }) {
     mutationFn: () => api<Playbook>("/outreach/playbook", { method: "PUT", json: { emails, ask, strengths: strengths.filter((s) => s.trim()) } }),
     onSuccess: (r) => {
       refresh(r);
-      toast(r.pending ? `Saved. Press “Update ${r.pending} pending investor${r.pending === 1 ? "" : "s"}” to rewrite their emails too` : "Saved. New drafts are built this way");
+      toast(r.pending ? `Saved. Investors you add from now on get these emails. Press “Update ${r.pending} pending investor${r.pending === 1 ? "" : "s"}” to rewrite the ones already waiting` : "Saved. Investors you add from now on get these emails");
       onSaved?.();
     },
     onError: (e) => toast(errText(e), "err"),
   });
+  // One investor per request (AI drafting takes ~15s each), so no request runs into the proxy timeout.
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const redraft = useMutation({
-    mutationFn: () =>
-      api<Playbook & { redrafted: number; scheduled_kept: number; back_to_draft: number; left: number }>("/outreach/playbook/redraft", { method: "POST" }),
+    mutationFn: async () => {
+      type R = Playbook & { redrafted: number; scheduled_kept: number; back_to_draft: number; left: number; done_ids: string[] };
+      const done: string[] = [];
+      const sum = { redrafted: 0, scheduled_kept: 0, back_to_draft: 0 };
+      let last: R | null = null;
+      setProgress({ done: 0, total: q.data?.pending ?? 0 });
+      for (let i = 0; i < 500; i++) {
+        last = await api<R>("/outreach/playbook/redraft", { method: "POST", json: { skip: done, batch: 1 } });
+        done.push(...last.done_ids);
+        sum.redrafted += last.redrafted;
+        sum.scheduled_kept += last.scheduled_kept;
+        sum.back_to_draft += last.back_to_draft;
+        setProgress({ done: done.length, total: done.length + last.left });
+        if (!last.left || !last.redrafted) break;
+      }
+      return { ...last!, ...sum };
+    },
     onSuccess: (r) => {
+      setProgress(null);
       refresh(r);
       if (!r.redrafted) return toast("No pending outreach to update. Everyone has been sent something already");
-      const bits = [`Updated ${r.redrafted} investor${r.redrafted === 1 ? "" : "s"} with these emails.`];
+      const bits = [`Updated ${r.redrafted} investor${r.redrafted === 1 ? "" : "s"} with these emails, each with its own subject line.`];
       if (r.scheduled_kept) bits.push(`${r.scheduled_kept} scheduled keep their send times.`);
       if (r.back_to_draft) bits.push(`${r.back_to_draft} went back to drafts to check and approve again.`);
-      if (r.left) bits.push(`${r.left} more left: press again to update them.`);
       toast(bits.join(" "));
     },
-    onError: (e) => toast(errText(e), "err"),
+    onError: (e) => {
+      setProgress(null);
+      refresh();
+      toast(`${errText(e)}. The ones already done keep their new emails; press again to finish the rest.`, "err");
+    },
   });
   if (!q.data || emails.length < 3) return <div className="skeleton h-48" />;
   const draft = { emails, ask, strengths: strengths.filter((s) => s.trim()) };
@@ -315,7 +336,9 @@ export function PlaybookEditor({ onSaved }: { onSaved?: () => void }) {
             title={dirty ? "Save first, then update your pending investors" : "Rewrite the emails of every outreach investor who hasn't been sent anything yet. Anyone already emailed stays as they are."}
           >
             <RefreshCw size={15} className={redraft.isPending ? "animate-spin" : ""} />{" "}
-            {redraft.isPending ? "Updating…" : `Update ${q.data.pending} pending investor${q.data.pending === 1 ? "" : "s"}`}
+            {redraft.isPending
+              ? `Updating ${Math.min((progress?.done ?? 0) + 1, progress?.total || 1)} of ${progress?.total || q.data.pending}…`
+              : `Update ${q.data.pending} pending investor${q.data.pending === 1 ? "" : "s"}`}
           </button>
         )}
       </div>

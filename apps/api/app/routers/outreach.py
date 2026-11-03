@@ -367,7 +367,7 @@ def pending_sequences(c: Ctx, cap: int | None = None) -> list[Sequence]:
     return list(c.db.scalars(q.limit(cap) if cap else q).all())
 
 
-def redraft_all(c: Ctx, cap: int = 25) -> dict:
+def redraft_all(c: Ctx, cap: int = 25, skip: list[str] | None = None) -> dict:
     """Rewrite every pending sequence with the current emails 1-3 (nothing has been sent on any of them).
     Scheduled ones keep their send times; one whose new draft needs a fix goes back to drafts for approval."""
     from ..models import CompanyProfile, Investor
@@ -375,7 +375,9 @@ def redraft_all(c: Ctx, cap: int = 25) -> dict:
     from ..services import outreach as out_svc
 
     p = c.db.get(CompanyProfile, c.ws_id)
-    rows = pending_sequences(c, cap)
+    done = set(skip or [])
+    todo = [s for s in pending_sequences(c) if str(s.id) not in done]
+    rows = todo[:cap]
     kept = back = 0
     for s in rows:
         inv = c.db.get(Investor, s.investor_id)
@@ -400,14 +402,22 @@ def redraft_all(c: Ctx, cap: int = 25) -> dict:
             else:
                 kept += 1
     c.db.flush()
-    left = max(0, len(pending_sequences(c)) - len(rows)) if len(rows) == cap else 0
-    return {"redrafted": len(rows), "scheduled_kept": kept, "back_to_draft": back, "left": left}
+    return {"redrafted": len(rows), "scheduled_kept": kept, "back_to_draft": back, "left": len(todo) - len(rows),
+            "done_ids": [str(s.id) for s in rows]}
+
+
+class RedraftIn(BaseModel):
+    skip: list[str] = Field(default_factory=list, max_length=2000)  # already updated in this run
+    batch: int = Field(25, ge=1, le=25)
 
 
 @router.post("/outreach/playbook/redraft")
-def redraft(c: Ctx = Depends(ctx)):
+def redraft(body: RedraftIn | None = None, c: Ctx = Depends(ctx)):
+    """Rewrites pending outreach a few at a time; the app calls again with skip=done ids until left is 0, so each
+    request stays well inside proxy timeouts (AI drafting takes ~15s per investor)."""
     c.require_editor()
-    out = redraft_all(c)
+    body = body or RedraftIn()
+    out = redraft_all(c, body.batch, body.skip)
     c.audit("playbook.redraft", str(c.ws_id), after=out)
     c.db.commit()
     return {**out, **playbook_out(c)}
