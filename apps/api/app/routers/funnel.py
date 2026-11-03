@@ -15,6 +15,7 @@ from sqlalchemy import func, or_, select
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
 from ..models import CARD_TYPES, STAGES, STATUSES, CardEvent, FunnelCard, Investor, Notification, Reminder
+from ..services import test_investors
 from ..services import tracker_import as ti
 from ..services.dataset_import import norm_linkedin, norm_name
 from ..services.notes import parse_note
@@ -195,7 +196,7 @@ def create_card(body: CardIn, c: Ctx = Depends(ctx)):
     inv = None
     if body.investor_id:
         inv = c.db.get(Investor, uuid.UUID(body.investor_id))
-        if inv is None or inv.suppressed:
+        if not test_investors.visible(inv, c.user.email):
             raise not_found("Investor")
         dup = c.db.scalar(select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.investor_id == inv.id,
                                                    FunnelCard.deleted_at.is_(None)))

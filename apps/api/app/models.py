@@ -196,6 +196,8 @@ class Investor(Base):
 
     is_honeypot: Mapped[bool] = mapped_column(Boolean, default=False)
     suppressed: Mapped[bool] = mapped_column(Boolean, default=False)  # DATA-04
+    # Test investors (the founder's own inboxes): seen in dev/UAT, and on live only by the test accounts.
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     source: Mapped[str] = mapped_column(String(40), default="directory")
     collected_at: Mapped[datetime] = created()
     enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -144,7 +144,7 @@ def positioning(c: Ctx = Depends(ctx)):
     if not prof or not prof.sectors:
         return {"needs_profile": True}
     cand = c.db.scalars(select(Investor).where(
-        ~Investor.suppressed, ~Investor.is_honeypot, Investor.enriched,
+        ~Investor.suppressed, ~Investor.is_honeypot, ~Investor.is_test, Investor.enriched,
         or_(Investor.industries.overlap(prof.sectors), *[Investor.focus_sectors.ilike(f"%{s}%") for s in prof.sectors]),
     ).limit(800)).all()
     matched = [i for i in cand if fit(i, prof)["score"] >= 40]

@@ -29,6 +29,7 @@ from ..models import (
     Sequence,
     ShortlistItem,
 )
+from . import test_investors
 from .fit import fit
 
 PROFILE_FIELDS = ("company_name", "one_liner", "sectors", "stage", "geography", "round_size", "instrument", "traction",
@@ -262,7 +263,7 @@ def filter_label(f: dict) -> str:
 
 def _investor(c: Ctx, iid) -> Investor | None:
     inv = c.db.get(Investor, _uuid(iid) or uuid.uuid4())
-    return inv if inv and not inv.suppressed else None
+    return inv if test_investors.visible(inv, c.user.email) else None
 
 
 def _inv_row(i: Investor, p) -> dict:
@@ -368,7 +369,7 @@ def run(c: Ctx, name: str, args: dict, actions: list) -> str:  # noqa: C901 - on
         cards = db.scalars(select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.deleted_at.is_(None),
                                                     or_(FunnelCard.name.ilike(f"%{q}%"), FunnelCard.firm.ilike(f"%{q}%")))
                            .limit(10)).all()
-        invs = db.scalars(select(Investor).where(~Investor.suppressed, or_(Investor.name.ilike(f"%{q}%"),
+        invs = db.scalars(select(Investor).where(~Investor.suppressed, *test_investors.conds(c.user.email), or_(Investor.name.ilike(f"%{q}%"),
                                                                            Investor.current_firm.ilike(f"%{q}%")))
                           .limit(8)).all()
         return json.dumps({

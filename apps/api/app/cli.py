@@ -78,6 +78,8 @@ def main() -> None:
     demo = sub.add_parser("demo-investors")
     demo.add_argument("--count", type=int, default=200)
     sub.add_parser("remove-demo-investors")
+    ti = sub.add_parser("test-investors", help="add or refresh test investors from a private JSON file")
+    ti.add_argument("--file", type=Path, default=Path("/data/test_investors.json"))
     a = ap.parse_args()
 
     with SessionLocal() as db:
@@ -112,6 +114,10 @@ def main() -> None:
             n = db.execute(delete(Investor).where(Investor.source == "demo")).rowcount
             db.commit()
             print(f"removed {n} demo investors")
+        elif a.cmd == "test-investors":
+            from .services import test_investors
+            for line in test_investors.load(db, a.file):
+                print(f"test investor ready: {line}")
 
 
 if __name__ == "__main__":

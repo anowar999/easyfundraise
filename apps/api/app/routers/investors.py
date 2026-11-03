@@ -25,7 +25,7 @@ from ..models import (
     Sequence,
     ShortlistItem,
 )
-from ..services import ai, search_parse
+from ..services import ai, search_parse, test_investors
 from ..services.entitlements import can, consume, limit, rate_limit, trial_expired, usage
 from ..services.fit import SIMILAR_SQL, fit
 
@@ -58,7 +58,7 @@ def card(inv: Investor, f: dict | None = None, in_funnel: bool = False, in_short
         "thesis_summary": (inv.investment_thesis or "")[:240],
         "check_size": inv.typical_check_size if inv.enriched else "",
         "has_email": bool(inv.email), "in_funnel": in_funnel, "in_shortlist": in_shortlist,
-        "in_outreach": in_outreach, **({"fit": f} if f else {}),
+        "in_outreach": in_outreach, **({"is_test": True} if inv.is_test else {}), **({"fit": f} if f else {}),
     }
 
 
@@ -93,7 +93,7 @@ CHECK_USD = literal_column("""(case when check_size_src ~* '^\\$?[0-9]+(\\.[0-9]
 
 
 def _base_filters(c: Ctx, p: SearchParams):
-    conds = [~Investor.suppressed]
+    conds = [~Investor.suppressed, *test_investors.conds(c.user.email)]
     if p.q.strip():
         q = p.q.strip()[:200]
         conds.append(or_(Investor.search_tsv.op("@@")(func.websearch_to_tsquery("english", q)),
@@ -253,6 +253,7 @@ def recommended(c: Ctx = Depends(ctx)):
     sectors = prof.sectors
     cand = c.db.scalars(select(Investor).where(
         ~Investor.suppressed, ~Investor.is_honeypot, Investor.identity_confidence != "low",  # DATA-03
+        *test_investors.conds(c.user.email),
         or_(Investor.industries.overlap(sectors), *[Investor.focus_sectors.ilike(f"%{s}%") for s in sectors]),
     ).order_by(Investor.enriched.desc(), Investor.seed_fit.desc().nulls_last()).limit(600)).all()
     excl = _exclusions(c)
@@ -283,7 +284,7 @@ def _get(c: Ctx, iid: str) -> Investor:
         inv = c.db.get(Investor, uuid.UUID(iid))
     except ValueError:
         inv = None
-    if inv is None or inv.suppressed:
+    if not test_investors.visible(inv, c.user.email):
         raise not_found("Investor")
     return inv
 
@@ -346,7 +347,8 @@ def reveal(iid: str, c: Ctx = Depends(ctx)):
         c.db.add(AuditLog(actor_id=c.user.id, action="honeypot.reveal", target=str(inv.id), ip=c.ip))
         c.db.commit()
         raise ApiError(403, "EF-AUTH-003", "Account suspended")
-    consume(c.db, c.workspace, "reveals", "month", limit(c.db, c.workspace, "reveals_month"))
+    if not inv.is_test:  # test investors (the founder's own inboxes) never use a credit
+        consume(c.db, c.workspace, "reveals", "month", limit(c.db, c.workspace, "reveals_month"))
     c.db.add(Reveal(workspace_id=c.ws_id, investor_id=inv.id))
     c.access("reveal", inv.id)
     c.db.commit()
@@ -440,7 +442,7 @@ def company_lookup(name: str = Query(min_length=2, max_length=200), c: Ctx = Dep
     rate_limit(c.db, f"search:m:{c.user.id}", 60, 60)
     n = name.strip().lower().removeprefix("https://").removeprefix("http://").removeprefix("www.").split("/")[0]
     n = n.split(".")[0] if "." in n and " " not in n else n
-    rows = c.db.scalars(select(Investor).where(~Investor.suppressed, or_(
+    rows = c.db.scalars(select(Investor).where(~Investor.suppressed, *test_investors.conds(c.user.email), or_(
         func.array_to_string(Investor.portfolio_sample, "|").ilike(f"%{n}%"),
         Investor.enrichment["notable_portfolio"].astext.ilike(f"%{n}%"),
         Investor.enrichment["recent_investments_12mo"].astext.ilike(f"%{n}%"),
@@ -457,7 +459,7 @@ def company_lookup(name: str = Query(min_length=2, max_length=200), c: Ctx = Dep
     if rows:
         inds = sorted({x for i in rows for x in i.industries})[:12]
         seen = {i.id for i in rows}
-        cand = c.db.scalars(select(Investor).where(~Investor.suppressed, ~Investor.is_honeypot,
+        cand = c.db.scalars(select(Investor).where(~Investor.suppressed, ~Investor.is_honeypot, ~Investor.is_test,
                                                    Investor.industries.overlap(inds), ~Investor.id.in_(seen))
                             .order_by(Investor.enriched.desc(), Investor.seed_fit.desc().nulls_last()).limit(200)).all()
         scored = sorted(((fit(i, prof), i) for i in cand), key=lambda x: -x[0]["score"])[:10]
