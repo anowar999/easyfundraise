@@ -12,7 +12,7 @@ from sqlalchemy import select
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
 from ..models import CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence
-from ..services import agent, outreach
+from ..services import agent, outreach, test_investors
 from ..services.entitlements import can, consume, limit
 from .investors import _exclusions, is_excluded
 
@@ -54,7 +54,7 @@ def with_opt_out(body: str, signature: str) -> str:
 def draft(body: DraftIn, c: Ctx = Depends(ctx)):
     c.require_editor()
     inv = c.db.get(Investor, uuid.UUID(body.investor_id))
-    if inv is None or inv.suppressed:
+    if not test_investors.visible(inv, c.user.email):
         raise not_found("Investor")
     if is_excluded(inv, _exclusions(c)):  # SEQ-06
         raise ApiError(409, "EF-SEQ-001", "This investor is on your exclusion list")

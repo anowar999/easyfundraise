@@ -92,7 +92,7 @@ select i.id, i.name, i.company, i.current_firm, i.title, i.photo_url, i.investor
        i.identity_confidence, i.active_last_12mo, i.location, i.industries,
        cardinality(array(select unnest(i.industries) intersect select unnest(CAST(:inds AS text[])))) as overlap
 from investors i
-where i.id <> :id and not i.suppressed and not i.is_honeypot and i.industries && CAST(:inds AS text[])
+where i.id <> :id and not i.suppressed and not i.is_honeypot and not i.is_test and i.industries && CAST(:inds AS text[])
   and coalesce(i.identity_confidence, '') <> 'low'
 order by (cardinality(array(select unnest(i.industries) intersect select unnest(CAST(:inds AS text[]))))::float
           / greatest(cardinality(i.industries), 1))

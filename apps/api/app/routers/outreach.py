@@ -18,7 +18,7 @@ from ..db import get_db
 from ..deps import Ctx, ctx
 from ..errors import ApiError
 from ..models import Email, EmailEvent, FunnelCard, GmailAccount, Sequence
-from ..services import playbook
+from ..services import playbook, test_investors
 from ..services.agent import money_talk
 from ..services.calendar import SCOPE as CAL_SCOPE
 from ..services.calendar import connected as calendar_connected
@@ -293,7 +293,7 @@ def _sample_investor(c: Ctx, iid: str | None, skip: list[str]):
             inv = c.db.get(Investor, _uuid.UUID(iid))
         except ValueError:
             inv = None
-        if inv and not inv.suppressed:
+        if test_investors.visible(inv, c.user.email):
             return inv
     seen = set(skip)
     for q in (select(ShortlistItem.investor_id).where(ShortlistItem.workspace_id == c.ws_id)
@@ -303,10 +303,11 @@ def _sample_investor(c: Ctx, iid: str | None, skip: list[str]):
         for i in c.db.scalars(q).all():
             if str(i) not in seen:
                 inv = c.db.get(Investor, i)
-                if inv and not inv.suppressed and not inv.is_honeypot:
+                if test_investors.visible(inv, c.user.email) and not inv.is_honeypot:
                     return inv
     p = c.db.get(CompanyProfile, c.ws_id)
-    rows = c.db.scalars(select(Investor).where(Investor.suppressed.is_(False), Investor.is_honeypot.is_(False))
+    rows = c.db.scalars(select(Investor).where(Investor.suppressed.is_(False), Investor.is_honeypot.is_(False),
+                                               *test_investors.conds(c.user.email))
                         .order_by(Investor.enriched.desc(), Investor.seed_fit.desc().nulls_last()).limit(60)).all()
     rows = [r for r in rows if str(r.id) not in seen]
     return max(rows, key=lambda i: fit(i, p)["score"]) if rows else None

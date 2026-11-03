@@ -23,6 +23,7 @@ export type InvestorCard = {
   has_email: boolean;
   in_funnel: boolean;
   in_outreach?: boolean;
+  is_test?: boolean; // a test investor: only shown in dev/UAT and to test accounts
   in_shortlist: boolean;
   fit?: Fit;
 };

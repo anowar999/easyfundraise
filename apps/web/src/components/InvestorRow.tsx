@@ -233,6 +233,7 @@ export function InvestorRow({ inv }: { inv: InvestorCard }) {
                 <BadgeCheck size={12} /> recent deal
               </Badge>
             )}
+            {inv.is_test && <Badge tone="amber">test investor</Badge>}
             {inv.in_funnel && <Badge tone="blue">in tracker</Badge>}
             <CountryTag country={inv.country} location={inv.location} />
             {inv.industries.slice(0, 2).map((i) => (

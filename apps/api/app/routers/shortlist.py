@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 from ..deps import Ctx, ctx
 from ..errors import not_found
 from ..models import CompanyProfile, Investor, ShortlistItem
+from ..services import test_investors
 from ..services.fit import fit
 from .funnel import CardIn, create_card
 from .investors import _funnel_ids, _outreach_ids, card
@@ -21,7 +22,7 @@ def _investor(c: Ctx, iid: str) -> Investor:
         inv = c.db.get(Investor, uuid.UUID(iid))
     except ValueError:
         inv = None
-    if inv is None or inv.suppressed:
+    if not test_investors.visible(inv, c.user.email):
         raise not_found("Investor")
     return inv
 
@@ -30,7 +31,8 @@ def _investor(c: Ctx, iid: str) -> Investor:
 def list_shortlist(c: Ctx = Depends(ctx)):
     rows = c.db.execute(select(Investor, ShortlistItem.created_at).join(
         ShortlistItem, ShortlistItem.investor_id == Investor.id).where(
-        ShortlistItem.workspace_id == c.ws_id, ~Investor.suppressed).order_by(ShortlistItem.created_at.desc())).all()
+        ShortlistItem.workspace_id == c.ws_id, ~Investor.suppressed,
+        *test_investors.conds(c.user.email)).order_by(ShortlistItem.created_at.desc())).all()
     prof, fids, oids = c.db.get(CompanyProfile, c.ws_id), _funnel_ids(c), _outreach_ids(c)
     return {"items": [{**card(i, fit(i, prof), i.id in fids, True, i.id in oids), "added_at": at} for i, at in rows]}
 

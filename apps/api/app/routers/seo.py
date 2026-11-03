@@ -39,7 +39,7 @@ def segment_filter(segment: str):
 
 
 def _base(segment: str, country: str = "", sector: str = ""):
-    conds = [~Investor.suppressed, ~Investor.is_honeypot, segment_filter(segment)]
+    conds = [~Investor.suppressed, ~Investor.is_honeypot, ~Investor.is_test, segment_filter(segment)]
     if country:
         conds.append(func.lower(Investor.country) == country.lower())
     if sector:

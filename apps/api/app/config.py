@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     password_otp: bool | None = None
     admin_mfa: bool = False  # AUTH-08: forced on in prod
     admin_emails: str = ""  # comma-separated; these users get is_admin on login
+    # Test investors are seen by everyone in dev/UAT. On live (or with live_rules on a local copy used as live)
+    # only these accounts see them. Comma-separated.
+    test_investor_users: str = "anowar.hossain@doctra.ai"
+    live_rules: bool = False
 
     @property
     def is_prod(self) -> bool:
@@ -64,6 +68,13 @@ class Settings(BaseSettings):
     @property
     def admin_mfa_required(self) -> bool:
         return self.admin_mfa or self.is_prod
+
+    @property
+    def test_investor_set(self) -> set[str]:
+        return {e.strip().lower() for e in self.test_investor_users.split(",") if e.strip()}
+
+    def sees_test_investors(self, email: str) -> bool:
+        return not (self.is_prod or self.live_rules) or (email or "").lower() in self.test_investor_set
 
     @property
     def gmail_fake(self) -> bool:
