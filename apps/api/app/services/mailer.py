@@ -58,10 +58,14 @@ def user_day(user: User, now: datetime) -> str:
     return now.astimezone(tz).strftime("%Y-%m-%d")
 
 
+MAX_PER_DAY = 20  # founders' rule: never more than 20 outreach emails a day from one mailbox
+
+
 def daily_cap(db: Session, ws: Workspace, acc: GmailAccount, now: datetime) -> int:
     """MAIL-05 cap from the tier (admin-configurable), reduced by the SEQ-08 warm-up ramp for new accounts."""
     cap = limit(db, ws, "emails_day")
     cap = int(cfg(db, "sending", {}).get("daily_cap", 20)) if cap is None else cap
+    cap = min(cap, MAX_PER_DAY)
     age = (now - acc.connected_at).days if acc.connected_at else WARMUP_DAYS
     if age < WARMUP_DAYS:
         cap = min(cap, WARMUP_START + (cap - WARMUP_START) * age // WARMUP_DAYS)
@@ -271,6 +275,8 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     unsub = ""
     if em.broadcast_id and db.get(Broadcast, em.broadcast_id).kind == "investor_update":  # MAIL-07
         unsub = f"<mailto:{acc.email}?subject=unsubscribe>"
+    if first is not None and seq is not None:  # same thread: "Re: <email 1 subject>" (build_mime adds the Re:)
+        em.subject = f"Re: {re.sub(r'^\s*re:\s*', '', first.subject, flags=re.I)}"
     mime = build_mime(sender=acc.email, sender_name=user.name, to=em.to_email, subject=em.subject, text=em.body,
                       html=html_part, in_reply_to=first.rfc_message_id if first else reply_to, list_unsubscribe=unsub,
                       cc=em.cc if direct else "")

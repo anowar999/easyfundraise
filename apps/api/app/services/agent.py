@@ -187,7 +187,7 @@ def ai_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | N
         "Hard limits: Email 1 <= 110 words, Email 2 <= 95, Email 3 <= 75 (body only, before the signature). "
         "Subject <= 6 words, specific to them, no ALL CAPS, no clickbait. Email 1 uses at least 2 investor facts. Use "
         "only the investor facts, company fields and plan given; cite fact ids you used. No links, no attachments, "
-        "greeting 'Hi <first name>,' only. Do not add a signature or an opt-out line; they are appended later.\n"
+        "greeting 'Hi <first name>,' only. Do not add a signature (it is appended later) or any opt-out line. Emails 2 and 3 are sent as replies in email 1's thread, so write them as natural follow-ups to it; their subject is replaced with 'Re: <email 1 subject>'.\n"
         f"Persona: {persona}. {PERSONA_GUIDE.get(persona, '')}"
     )
     user = json.dumps({"investor_first_name": outreach.first_name(inv.name), "investor_facts": facts,
@@ -207,7 +207,7 @@ def ai_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | N
     by_id = {f["id"]: f for f in facts}
     emails = []
     for e in sorted(out["emails"], key=lambda x: x["step"]):
-        body = "\n\n".join([e["body"].strip(), outreach.OPT_OUT])
+        body = e["body"].strip()
         body = outreach.trim_to(body, outreach.LIMITS[e["step"]])
         if signature:
             body = f"{body}\n\n{signature}"
@@ -223,18 +223,19 @@ def ai_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | N
 
 
 def draft_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | None, persona: str,
-                   signature: str, pb: dict | None = None) -> tuple[list[dict], str]:
+                   signature: str, pb: dict | None = None, use_ai: bool = True) -> tuple[list[dict], str]:
     """Three emails built the founder's way (playbook), with any round/progress update as the first follow-up.
     pb overrides the saved playbook (used by the preview)."""
     pb = pb or playbook.get(ws)
     if not pb["ask"]:
         pb = {**pb, "ask": playbook.profile_ask(p)}
     plan = playbook.plan(pb)
-    got = ai_sequence(db, ws, inv, p, persona, signature, plan)
+    got = ai_sequence(db, ws, inv, p, persona, signature, plan) if use_ai else None
     emails, engine = got or (outreach.draft_sequence(inv, p, persona, instructions(db, ws.id), signature, plan),
                              "template")
     playbook.apply_to(emails, pb, signature)
     outreach.vary_subjects(db, ws.id, emails, inv, p)
+    outreach.thread_subjects(emails)
     return emails, engine
 
 

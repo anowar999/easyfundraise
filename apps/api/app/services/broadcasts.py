@@ -165,4 +165,4 @@ def schedule(db: Session, b: Broadcast, now: datetime) -> None:
             db.add(Email(workspace_id=em.workspace_id, broadcast_id=b.id, card_id=em.card_id, user_id=em.user_id,
                          to_email=em.to_email, step=2, hook="follow-up", subject=em.subject, status="scheduled",
                          scheduled_for=next_send_slot(em.scheduled_for + timedelta(days=4), tz),
-                         body=f"Hi {fn},\n\nBumping this in case it got buried. Happy to send the deck today.\n\n{OPT_OUT}"))
+                         body=f"Hi {fn},\n\nBumping this in case it got buried. Happy to send the deck today."))

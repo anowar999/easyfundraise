@@ -293,6 +293,28 @@ def _revealed(c: Ctx, inv: Investor) -> bool:
     return c.db.get(Reveal, (c.ws_id, inv.id)) is not None
 
 
+def auto_reveal(c: Ctx, inv: Investor, dry: bool = False) -> bool:
+    """Adding to outreach reveals the email by itself when the plan has contact credits left: 1 credit per
+    investor (free for test investors and anyone already revealed). Never raises; False means it couldn't."""
+    if _revealed(c, inv):
+        return True
+    if not inv.email or inv.is_honeypot or not can(c.db, c.workspace, "contacts_visible") or trial_expired(c.workspace):
+        return False
+    if not inv.is_test:
+        cap = limit(c.db, c.workspace, "reveals_month")
+        if cap is not None and usage(c.db, c.workspace, "reveals", "month") >= cap:
+            return False
+        if dry:
+            return True
+        consume(c.db, c.workspace, "reveals", "month", cap)
+    if dry:
+        return True
+    c.db.add(Reveal(workspace_id=c.ws_id, investor_id=inv.id))
+    c.access("reveal", inv.id, auto=True)
+    c.db.flush()
+    return True
+
+
 def contacts(inv: Investor) -> dict:
     return {"email": inv.email, "linkedin": inv.linkedin, "x": inv.x_url}
 

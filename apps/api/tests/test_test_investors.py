@@ -68,3 +68,25 @@ def test_test_reveal_uses_no_credit(client, seeded):
     r = client.post(f"/investors/{tid}/reveal").json()
     assert r["contacts"]["email"].endswith("@example.test")
     assert client.get("/workspace").json()["usage"].get("reveals_month", 0) == 0
+
+
+def test_add_to_outreach_reveals_by_itself(client, seeded):
+    from sqlalchemy import text
+    set_tier(client, "starter")
+    client.patch("/workspace/me", json={"signature": "Sam"})
+    client.get("/gmail/connect", follow_redirects=False)
+    tid = client.get("/investors", params={"q": "Testbed"}).json()["items"][0]["id"]
+    client.post("/sequences", json={"investor_id": tid})
+    assert client.get("/workspace").json()["usage"].get("reveals_month", 0) == 0  # test investor: free
+    assert client.get(f"/investors/{tid}").json()["revealed"]
+    # out of credits: nothing is spent and the draft says what's missing
+    ws = client.get("/workspace").json()["id"]
+    with SessionLocal() as db:
+        db.execute(text("insert into usage_counters (workspace_id, metric, period, count) values (:w, 'reveals', "
+                        "to_char(now() at time zone 'utc', 'YYYY-MM'), 100000)"), {"w": ws})
+        db.commit()
+    ada = next(i for i in client.get("/investors", params={"q": "Ada"}).json()["items"] if i["name"] == "Ada Seed")
+    client.post("/sequences", json={"investor_id": ada["id"]})
+    assert not client.get(f"/investors/{ada['id']}").json()["revealed"]
+    items = {x["investor"]["name"]: x for x in client.get("/sequences").json()["items"]}
+    assert items["Ada Seed"]["blocker"] == "Reveal this investor's email first"
