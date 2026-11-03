@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, ArrowUp, Bot, CalendarClock, CalendarDays, ChevronRight, FileText, Flame, Snowflake, Sparkles, Upload } from "lucide-react";
+import { ArrowRight, ArrowUp, Bot, CalendarClock, CalendarDays, ChevronRight, FileText, Flame, RefreshCw, Snowflake, Sparkles, Upload } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { askAgent } from "@/components/AgentChat";
@@ -151,6 +151,84 @@ function Row({ b, right }: { b: Brief; right: string }) {
   );
 }
 
+type Meetings = {
+  connected: boolean;
+  demo: boolean;
+  error: string;
+  checked_at: string;
+  meetings: { title: string; start: string; tracker_card: { card_id: string; name: string; firm: string } | null }[];
+  other: { title: string; start: string }[];
+};
+
+/** Investor meetings, read live from Google Calendar every time Home opens (and on the refresh button). */
+function MeetingsCard() {
+  const q = useQuery<Meetings>({ queryKey: ["home-meetings"], queryFn: () => api("/home/meetings"), staleTime: 0, refetchOnMount: "always", refetchOnWindowFocus: true });
+  const [all, setAll] = useState(false);
+  const d = q.data;
+  const when = (s: string) => fmtDate(s, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return (
+    <div className="card p-4">
+      <div className="flex items-center gap-2">
+        <h2 className="font-semibold flex items-center gap-2 flex-1">
+          <CalendarDays size={18} className="text-brand" /> Investor meetings
+        </h2>
+        {d?.connected && (
+          <button className="p-1.5 -m-1 text-muted hover:text-brand" onClick={() => q.refetch()} disabled={q.isFetching} aria-label="Reload calendar" title="Reload calendar">
+            <RefreshCw size={15} className={q.isFetching ? "animate-spin" : ""} />
+          </button>
+        )}
+      </div>
+      {!d ? (
+        <div className="skeleton h-10 mt-2" />
+      ) : !d.connected ? (
+        <a href="/api/gmail/connect?calendar=1&next=/app" className="mt-2 block text-sm text-brand font-medium">
+          Connect Google Calendar to see them here →
+        </a>
+      ) : d.error ? (
+        <a href="/api/gmail/connect?calendar=1&next=/app" className="mt-2 block text-sm text-warn">
+          {d.error} Reconnect →
+        </a>
+      ) : (
+        <>
+          {d.meetings.length === 0 ? (
+            <p className="text-sm text-muted py-2">No investor meetings in the next 7 days.</p>
+          ) : (
+            d.meetings.map((m) => (
+              <Link key={m.title + m.start} href={m.tracker_card ? `/app/funnel/${m.tracker_card.card_id}` : "/app/funnel"} className="flex items-center gap-3 py-2.5 border-b border-line last:border-0">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{m.title}</div>
+                  <div className="text-xs text-muted">{when(m.start)}</div>
+                </div>
+                <ChevronRight size={16} className="text-muted" />
+              </Link>
+            ))
+          )}
+          {d.other.length > 0 && (
+            <div className="mt-1">
+              <button className="text-xs text-muted hover:text-brand" onClick={() => setAll((x) => !x)}>
+                {all ? "Hide" : "Show"} {d.other.length} other meeting{d.other.length === 1 ? "" : "s"} this week
+              </button>
+              {all && (
+                <ul className="mt-1.5 space-y-1">
+                  {d.other.map((m) => (
+                    <li key={m.title + m.start} className="text-xs flex gap-2">
+                      <span className="text-muted shrink-0 w-28">{when(m.start)}</span>
+                      <span className="truncate">{m.title}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          <p className="mt-2 text-[11px] text-muted">
+            {d.demo ? "Demo calendar: shows calls booked on your tracker. Connect real Google to read your calendar." : `Checked ${fmtDate(d.checked_at, { hour: "2-digit", minute: "2-digit" })}`}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function HomePage() {
   const me = useMe();
   const q = useQuery<Home>({ queryKey: ["home"], queryFn: () => api("/home") });
@@ -229,28 +307,7 @@ export default function HomePage() {
               </div>
               <ChevronRight size={16} className="text-muted" />
             </Link>
-            <div className="card p-4">
-              <h2 className="font-semibold flex items-center gap-2">
-                <CalendarDays size={18} className="text-brand" /> Investor meetings
-              </h2>
-              {!q.data.calendar_connected ? (
-                <a href="/api/gmail/connect?calendar=1&next=/app" className="mt-2 block text-sm text-brand font-medium">
-                  Connect Google Calendar to see them here →
-                </a>
-              ) : q.data.meetings.length === 0 ? (
-                <p className="text-sm text-muted py-2">No investor meetings in the next 7 days.</p>
-              ) : (
-                q.data.meetings.map((m) => (
-                  <Link key={m.title + m.start} href={m.tracker_card ? `/app/funnel/${m.tracker_card.card_id}` : "/app/funnel"} className="flex items-center gap-3 py-2.5 border-b border-line last:border-0">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate">{m.title}</div>
-                      <div className="text-xs text-muted">{fmtDate(m.start, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
-                    </div>
-                    <ChevronRight size={16} className="text-muted" />
-                  </Link>
-                ))
-              )}
-            </div>
+            <MeetingsCard />
             <div className="card p-4">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-semibold">Investor tracker</h2>

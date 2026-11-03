@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { BadgeCheck, Heart, MailCheck, MailPlus } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { flag, SHORT } from "@/lib/countries";
 import type { InvestorCard } from "@/lib/types";
@@ -82,6 +82,9 @@ export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "
   const qc = useQueryClient();
   const toast = useToast();
   const [on, setOn] = useState(Boolean(inv.in_outreach));
+  useEffect(() => {
+    if (inv.in_outreach) setOn(true);  // added elsewhere (e.g. "Add all to outreach")
+  }, [inv.in_outreach]);
   const m = useMutation({
     mutationFn: () => api<{ id: string; auto: { scheduled: boolean; reason: string } | null }>("/sequences", { method: "POST", json: { investor_id: inv.id } }),
     onMutate: () => {
