@@ -112,6 +112,23 @@ TOOLS = [
        "with two angels'. With apply_to_unsent (default true) the next follow-up still to go out on every sequence "
        "becomes a short update email: the update, what we're looking for, the call. Empty text clears it and "
        "restores those follow-ups.", {"text": S, "apply_to_unsent": B}, ["text"]),
+    _t("get_outreach_stats", "Outreach results: emails sent, scheduled, open and reply rates, interested replies, "
+       "bounces, results by email 1/2/3, and whether sending is paused."),
+    _t("get_email_sequence", "One investor's emails on the outreach list: each email's subject, body, status and "
+       "send time. sequence is a sequence_id or the investor's name.", {"sequence": S}, ["sequence"]),
+    _t("edit_outreach_email", "Rewrite one unsent email in a sequence (applied now): pass the new subject and/or "
+       "body in full. step is 1, 2 or 3. Sent emails can't change.",
+       {"sequence": S, "step": INT, "subject": S, "body": S}, ["sequence", "step"]),
+    _t("redraft_sequence", "Redraft one investor's unapproved emails from scratch with the current playbook "
+       "(applied now). persona: momentum, warm-intro, technical-founder or humble-expert.",
+       {"sequence": S, "persona": {"type": "string", "enum": ["momentum", "warm-intro", "technical-founder",
+                                                               "humble-expert"]}}, ["sequence"]),
+    _t("propose_stop_sequence", "Offer to stop one investor's sequence: emails still scheduled are cancelled. The "
+       "founder taps to confirm.", {"sequence": S}, ["sequence"]),
+    _t("pause_sending", "Pause every email from leaving the founder's Gmail (applied now; scheduled ones wait)."),
+    _t("propose_resume_sending", "Offer to resume sending after a pause. The founder taps to confirm."),
+    _t("propose_send_all", "For 'send all' requests: gives the founder a button to the confirm screen that lists who "
+       "is ready, who is blocked and from which mailbox. Nothing is sent until they confirm there."),
     _t("propose_redraft", "Offer to redraft every outreach draft that hasn't been approved yet with the current "
        "playbook. The founder taps to run it. Scheduled and sent emails are not touched."),
     _t("propose_email", "Propose drafting a personalised 3-email sequence to an investor. The founder taps to draft "
@@ -505,6 +522,10 @@ def run(c: Ctx, name: str, args: dict, actions: list) -> str:  # noqa: C901 - on
                            "items": [{"sequence_id": str(sq.id), "investor": n, "status": sq.status,
                                       "drafted": str(sq.created_at.date())} for sq, n in rows[:20]]})
 
+    if name in ("get_outreach_stats", "get_email_sequence", "edit_outreach_email", "redraft_sequence",
+                "propose_stop_sequence", "pause_sending", "propose_resume_sending", "propose_send_all"):
+        return _outreach_tool(c, name, args, actions)
+
     if name in ("get_email_playbook", "set_email_playbook", "set_quick_update", "propose_redraft"):
         return _playbook_tool(c, name, args, actions)
 
@@ -635,6 +656,83 @@ CARD_NUM = re.compile(r"(?:\b(?:tracker|investor|card|no\.?|number)\s*#?\s*|#)(\
 QUOTED = re.compile(r"[\"“”'‘’](.+)[\"“”'‘’]", re.S)
 STATUS_WORDS = {"active": "Active", "inactive": "Inactive", "ghosting": "Ghosting", "ghosted": "Ghosting",
                 "rejected": "Rejection", "rejection": "Rejection", "passed": "Rejection"}
+
+
+def _find_sequence(c: Ctx, ref) -> Sequence | None:
+    s = c.db.get(Sequence, _uuid(ref)) if _uuid(ref) else None
+    if s and s.workspace_id == c.ws_id:
+        return s
+    name = str(ref or "").strip()
+    if not name:
+        return None
+    return c.db.scalars(select(Sequence).join(Investor, Investor.id == Sequence.investor_id)
+                        .where(Sequence.workspace_id == c.ws_id, Sequence.status != "stopped",
+                               Investor.name.ilike(f"%{name}%")).order_by(Sequence.created_at.desc())).first()
+
+
+def _outreach_tool(c: Ctx, name: str, args: dict, actions: list) -> str:  # noqa: C901 - one branch per tool
+    from ..models import GmailAccount
+
+    db = c.db
+    if name == "get_outreach_stats":
+        from ..routers.outreach import stats
+
+        st = stats(90, c)
+        acc = db.get(GmailAccount, c.user.id)
+        now = datetime.now(UTC)
+        return json.dumps({"last_90_days": st["total"], "scheduled": st["queued"], "by_email": st["by_step"],
+                           "gmail_connected": bool(acc and acc.status == "connected"),
+                           "paused": bool(acc and acc.paused_until and acc.paused_until > now)}, default=str)
+    if name in ("pause_sending", "propose_resume_sending"):
+        acc = db.get(GmailAccount, c.user.id)
+        if acc is None:
+            return "Gmail isn't connected, so nothing can send yet."
+        if name == "pause_sending":
+            from ..routers.outreach import gmail_pause
+
+            gmail_pause(c)
+            _act(actions, "outreach", "Sending paused. Scheduled emails wait until you resume", href="/app/outreach")
+            return "Paused."
+        _act(actions, "resume_sending", "Resume sending from your Gmail", state="pending")
+        return "Proposed resuming. The founder taps to confirm."
+    if name == "propose_send_all":
+        _act(actions, "open_page", "Review who's ready, then send all", href="/app/outreach?send_all=1")
+        return "Gave the founder a button to the send-all confirm screen. Nothing sends until they confirm there."
+    s = _find_sequence(c, args.get("sequence"))
+    if s is None:
+        return "No sequence found for that investor on the outreach list."
+    inv = db.get(Investor, s.investor_id)
+    who = inv.name if inv else "investor"
+    if name == "get_email_sequence":
+        return json.dumps({"sequence_id": str(s.id), "investor": who, "status": s.status,
+                           "emails": [{"step": e.step, "subject": e.subject, "body": e.body, "status": e.status,
+                                       "scheduled_for": e.scheduled_for, "sent_at": e.sent_at}
+                                      for e in sorted(s.emails, key=lambda e: e.step)]}, default=str)
+    if name == "edit_outreach_email":
+        em = next((e for e in s.emails if e.step == int(args.get("step") or 0)), None)
+        if em is None:
+            return "That email doesn't exist."
+        if em.status not in ("draft", "scheduled"):
+            return f"Email {em.step} to {who} was already {em.status}; it can't change."
+        if args.get("subject"):
+            em.subject = str(args["subject"]).strip()[:200]
+        if args.get("body"):
+            em.body = str(args["body"]).strip()[:5000]
+        from . import outreach
+
+        _act(actions, "outreach", f"Rewrote email {em.step} to {who}", href=f"/app/sequences/{s.id}")
+        return json.dumps({"saved": True, "issues": outreach.lint(em.subject, em.body, em.step, c.user.signature)})
+    if name == "redraft_sequence":
+        if s.status != "draft":
+            return f"{who}'s emails are already approved; only drafts can be redrafted."
+        from ..routers.sequences import RegenIn, regenerate
+
+        regenerate(str(s.id), RegenIn(persona=args.get("persona") or (s.persona if s.persona in (
+            "momentum", "warm-intro", "technical-founder", "humble-expert") else "momentum")), c)
+        _act(actions, "outreach", f"Redrafted the emails to {who}", href=f"/app/sequences/{s.id}")
+        return "Redrafted."
+    _act(actions, "stop_sequence", f"Stop the emails to {who}", {"sequence_id": str(s.id)}, "pending")
+    return f"Proposed stopping {who}'s sequence. The founder taps to confirm."
 
 
 def _playbook_tool(c: Ctx, name: str, args: dict, actions: list) -> str:

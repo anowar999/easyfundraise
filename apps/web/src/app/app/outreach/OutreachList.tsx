@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { AlertTriangle, CheckCircle2, MailPlus, Search, Send, Zap } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ConfirmSend, type SendPreview } from "@/components/ConfirmSend";
 import { Empty, ListSkeleton, Sheet, errText, useToast } from "@/components/ui";
 import { api, ApiError, fmtDate } from "@/lib/api";
@@ -116,6 +116,15 @@ export function OutreachList() {
     },
     onError: (e) => toast(errText(e), "err"),
   });
+  // The outreach agent's "send all" button lands here with ?send_all=1: open the same confirm screen.
+  const asked = useRef(false);
+  useEffect(() => {
+    if (asked.current || !q.data) return;
+    if (new URLSearchParams(window.location.search).get("send_all")) {
+      asked.current = true;
+      preview.mutate();
+    }
+  }, [q.data, preview]);
   if (q.isLoading) return <ListSkeleton rows={4} />;
   const items = (q.data?.items ?? []).filter((x) => x.status !== "stopped");
   const drafts = items.filter((x) => x.status === "draft");
