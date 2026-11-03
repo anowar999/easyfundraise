@@ -1,149 +1,161 @@
-"""Email playbook: founder's angles for emails 1-3 in a random order per investor, a special line in one email,
-quick updates written into unsent emails, and the outreach agent tools."""
+"""Email playbook: email 1-3 built the founder's way (about them + building, problem, market), what we're looking
+for, strengths placed once per investor, round/progress updates as the next follow-up, AI fill from the founder's
+own deck, a 3-email preview, and the outreach agent tools."""
 
 import json
 import random
 from types import SimpleNamespace as NS
 
-from app.services import agent, outreach, playbook
+from app.services import agent, playbook
 
 from .conftest import set_tier
 from .test_agent import GOOD, _ada, stub  # noqa: F401 - stub is a fixture
 
-PB = {"angles": [
-    {"label": "Problem", "message": "230m people ask ChatGPT health questions every week and reach a dead end. "
-                                    "DocAI connects them to a real doctor in minutes."},
-    {"label": "Traction", "message": "We launch to 1m users with 1,500 doctors, on a model built from 875k consultations."},
-    {"label": "Market", "message": "4.6bn people have no access to basic healthcare."}],
-    "special_line": "We were selected by EWOR (top 0.1% of founders), 10x more competitive than Y Combinator."}
+PB = {"emails": [
+    {"focus": "What we're building", "message": "LedgerLoop closes the books in one day for SaaS finance teams."},
+    {"focus": "The problem we solve", "message": "Finance teams lose 9 days every month reconciling usage billing."},
+    {"focus": "Market opportunity and traction", "message": "40 SaaS customers today and 3x usage since January."}],
+    "ask": "We're raising $750k pre-seed and looking for an angel with finance operator experience.",
+    "strengths": ["Our team has worked together for 5 years.", "We were selected for a top European founder program."]}
+
+PROFILE = {"company_name": "LedgerLoop", "one_liner": "Month-end close in one day for SaaS finance teams",
+           "sectors": ["Digital Health & HealthTech"], "stage": "pre-seed", "round_size": "$750k",
+           "traction": "40 SaaS customers"}
 
 
-def _setup(client):
-    client.put("/workspace/profile", json={"company_name": "DocAI", "one_liner": "AI triage for clinics",
-                                           "sectors": ["Digital Health & HealthTech"]})
-    r = client.put("/outreach/playbook", json=PB)
+def _setup(client, pb=PB):
+    client.put("/workspace/profile", json=PROFILE)
+    r = client.put("/outreach/playbook", json=pb)
     assert r.status_code == 200, r.text
     return r.json()
 
 
-def test_counts_are_not_money():
-    assert not agent.money_talk(PB["angles"][0]["message"], PB["angles"][1]["message"], PB["angles"][2]["message"])
-    assert agent.money_talk("€500k first cheques") and agent.money_talk("a EUR 350K round")
+def test_money_rules_allow_our_raise_not_their_money():
+    assert not agent.money_talk(PB["ask"], "230m people, 875k consultations", "we talk to investors weekly")
+    assert agent.money_talk("This fits your ticket range") and agent.money_talk("a great investment")
+    assert agent.money_talk("your typical cheque") and agent.money_talk("at a $5m valuation")
 
 
-def test_plan_shuffles_angles_and_places_special_line_once():
-    pb = {"angles": [{"label": a["label"], "message": a["message"]} for a in PB["angles"]],
-          "special_line": PB["special_line"], "shuffle": True, "quick_update": ""}
-    orders = set()
-    for seed in range(30):
+def test_plan_places_each_strength_once():
+    pb = {**playbook.merge(playbook.get(NS(email_playbook={})), PB["emails"], PB["ask"], PB["strengths"])}
+    for seed in range(20):
         p = playbook.plan(pb, random.Random(seed))
-        orders.add(tuple(p[s]["angle_no"] for s in (1, 2, 3)))
-        assert sorted(p[s]["angle_no"] for s in (1, 2, 3)) == [1, 2, 3]
-        assert sum(bool(p[s]["special"]) for s in (1, 2, 3)) == 1
-    assert len(orders) >= 4  # different investors get different orders
-    pb["shuffle"] = False
-    assert [playbook.plan(pb)[s]["angle_no"] for s in (1, 2, 3)] == [1, 2, 3]
+        placed = [s for step in (1, 2, 3) for s in p[step]["strengths"]]
+        assert sorted(placed) == sorted(PB["strengths"])
+        assert p[1]["structure"].startswith("About them") and p["ask"] == PB["ask"]
 
 
-def test_template_drafts_use_playbook_and_quick_update(client):
+def test_template_drafts_follow_the_shape(client):
     set_tier(client, "pro")
     got = _setup(client)
-    assert got["active"] and not got["money_warning"] and got["angles"][2]["label"] == "Market"
-    r = client.put("/outreach/quick-update", json={"text": "We just signed our third NHS trust"}).json()
-    assert r["quick_update"].startswith("We just signed") and r["changed"] == 0
+    assert got["saved_at"] and not got["money_warning"] and got["emails"][2]["focus"].startswith("Market")
     seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
-    emails = seq["emails"]
-    assert sorted(e["hook"] for e in emails) == ["playbook-1", "playbook-2", "playbook-3"]
-    by_hook = {e["hook"]: e["body"] for e in emails}
-    assert "230m people" in by_hook["playbook-1"] and "4.6bn" in by_hook["playbook-3"]
-    assert sum("EWOR" in e["body"] for e in emails) == 1
-    assert "Quick update: We just signed our third NHS trust." in emails[0]["body"]
-    assert all(e["issues"] == [] for e in emails), [e["issues"] for e in emails]
-    # A new update replaces the old one in the next unsent email only
-    r = client.put("/outreach/quick-update", json={"text": "Pilot live in 4 clinics"}).json()
-    assert r["changed"] == 1 and r["unsent"] >= 1
-    body = client.get(f"/sequences/{seq['id']}").json()["emails"][0]["body"]
-    assert "Pilot live in 4 clinics." in body and "NHS trust" not in body
-    assert body.index("Quick update") < body.index("reply 'no'")
-    r = client.put("/outreach/quick-update", json={"text": ""}).json()
-    assert "Quick update" not in client.get(f"/sequences/{seq['id']}").json()["emails"][0]["body"]
+    e1, e2, e3 = (e["body"] for e in seq["emails"])
+    assert "Medibot" in e1 and "closes the books in one day" in e1 and "$750k pre-seed" in e1  # about them, building, ask
+    assert "9 days" in e2 and "Medibot" not in e2 and "$750k" in e2  # the problem replaces the synergy
+    assert "40 SaaS customers" in e3 and "$750k" in e3
+    assert sum("5 years" in b for b in (e1, e2, e3)) == 1 and sum("founder program" in b for b in (e1, e2, e3)) == 1
+    assert [e["hook"] for e in seq["emails"]] == ["playbook-1", "playbook-2", "playbook-3"]
+    assert all(e["issues"] == [] for e in seq["emails"]), [e["issues"] for e in seq["emails"]]
 
 
-def test_ai_draft_follows_playbook(client, stub):  # noqa: F811
+def test_update_becomes_the_next_follow_up_and_clears_back(client):
+    set_tier(client, "pro")
+    _setup(client)
+    seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
+    before = seq["emails"][1]["body"]
+    r = client.put("/outreach/quick-update", json={"text": "We just closed half the round with two angels"}).json()
+    assert r["changed"] == 1 and r["update"].startswith("We just closed") and r["unsent"] >= 1
+    e = client.get(f"/sequences/{seq['id']}").json()["emails"]
+    assert e[1]["body"].startswith("Hi Ada,\n\nWe just closed half the round with two angels.")
+    assert "$750k pre-seed" in e[1]["body"] and "20-minute call" in e[1]["body"] and "9 days" not in e[1]["body"]
+    assert e[0]["body"] == seq["emails"][0]["body"] and e[2]["body"] == seq["emails"][2]["body"]
+    assert e[1]["issues"] == []
+    new = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()  # new drafts carry it too
+    assert "half the round" in new["emails"][1]["body"]
+    client.put("/outreach/quick-update", json={"text": ""})
+    assert client.get(f"/sequences/{seq['id']}").json()["emails"][1]["body"] == before
+
+
+def test_ai_draft_follows_the_plan(client, stub):  # noqa: F811
     set_tier(client, "pro")
     _setup(client)
     s = stub([GOOD])
     seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
     user = json.loads(s.calls[0]["messages"][0]["content"])
+    assert user["what_were_looking_for"] == PB["ask"]
     plan = user["email_plan"]
-    assert {plan[k]["label"] for k in plan} == {"Problem", "Traction", "Market"}
-    assert sum("special" in plan[k] for k in plan) == 1
-    assert "email playbook" in s.calls[0]["system"]
-    assert seq["engine"] != "template"
-    assert sorted(e["hook"] for e in seq["emails"]) == ["playbook-1", "playbook-2", "playbook-3"]
+    assert plan["1"]["shape"].startswith("About them") and plan["2"]["main_focus"] == "The problem we solve"
+    assert sum(len(plan[k].get("include_strengths", [])) for k in plan) == 2
+    assert "Email 2 (a follow-up" in s.calls[0]["system"]
+    assert seq["engine"] != "template" and [e["hook"] for e in seq["emails"]] == ["playbook-1", "playbook-2", "playbook-3"]
+
+
+def test_preview_shows_three_emails_without_saving(client):
+    set_tier(client, "pro")
+    client.put("/workspace/profile", json=PROFILE)
+    client.put(f"/shortlist/{_ada(client)['id']}")
+    draft = {**PB, "ask": "We're raising $1m seed."}
+    r = client.post("/outreach/playbook/preview", json=draft).json()
+    assert r["investor"]["name"] and len(r["emails"]) == 3 and "$1m seed" in r["emails"][0]["body"]
+    assert client.get("/outreach/playbook").json()["saved_at"] is None  # nothing saved
+    assert client.get("/sequences").json()["items"] == []  # nothing drafted
+    other = client.post("/outreach/playbook/preview", json={**draft, "skip": [r["investor"]["id"]]}).json()
+    assert other["investor"]["id"] != r["investor"]["id"]
 
 
 def test_redraft_unapproved_drafts(client):
     set_tier(client, "pro")
-    client.put("/workspace/profile", json={"company_name": "DocAI", "one_liner": "AI triage for clinics"})
+    client.put("/workspace/profile", json=PROFILE)
     seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
-    assert not any(e["hook"].startswith("playbook") for e in seq["emails"])
+    assert "9 days" not in seq["emails"][1]["body"]
     _setup(client)
     assert client.post("/outreach/playbook/redraft").json()["redrafted"] == 1
-    hooks = [e["hook"] for e in client.get(f"/sequences/{seq['id']}").json()["emails"]]
-    assert sorted(hooks) == ["playbook-1", "playbook-2", "playbook-3"]
+    assert "9 days" in client.get(f"/sequences/{seq['id']}").json()["emails"][1]["body"]
 
 
-def test_agent_sets_playbook_and_quick_update(client, stub):  # noqa: F811
+def test_agent_sets_playbook_and_update(client, stub):  # noqa: F811
     set_tier(client, "pro")
     tool = NS(content=[NS(type="tool_use", id="t1", name="set_email_playbook",
-                          input={"email1": {"label": "Problem", "message": PB["angles"][0]["message"]},
-                                 "special_line": PB["special_line"]}),
-                       NS(type="tool_use", id="t2", name="set_quick_update", input={"text": "Signed a 3rd NHS trust"})],
+                          input={"email2": {"focus": "The problem", "message": PB["emails"][1]["message"]},
+                                 "add_strength": "Selected by a top founder program"}),
+                       NS(type="tool_use", id="t2", name="set_quick_update", input={"text": "Half the round is committed"})],
               stop_reason="tool_use", model="claude-opus-5-5", usage=NS(input_tokens=10, output_tokens=5))
     done = NS(content=[NS(type="text", text="Saved.")], stop_reason="end_turn", model="claude-opus-5-5",
               usage=NS(input_tokens=10, output_tokens=5))
     stub([tool, done])
-    m = client.post("/agent/chat", json={"text": "Email 1 should be problem focused ..."}).json()
+    m = client.post("/agent/chat", json={"text": "Email 2 should be about the problem ..."}).json()
     assert [a["type"] for a in m["actions"]] == ["playbook", "playbook"]
     pb = client.get("/outreach/playbook").json()
-    assert pb["angles"][0]["message"].startswith("230m") and "EWOR" in pb["special_line"]
-    assert pb["quick_update"] == "Signed a 3rd NHS trust"
+    assert pb["emails"][1] == {"focus": "The problem", "message": PB["emails"][1]["message"]}
+    assert pb["strengths"] == ["Selected by a top founder program"] and pb["update"] == "Half the round is committed"
 
 
 def test_agent_without_ai_understands_playbook_lines(client):
-    client.post("/agent/chat", json={"text": "Email 2 should be: We launch to 1m users with 1,500 doctors"})
-    client.post("/agent/chat", json={"text": "Quick update: We closed a pilot with a London clinic"})
+    client.post("/agent/chat", json={"text": "Email 2 should focus on the problem we solve: Teams lose 9 days a month"})
+    client.post("/agent/chat", json={"text": "Add a strength: We have worked together for 5 years"})
+    client.post("/agent/chat", json={"text": "Round update: We closed our first $300k"})
     pb = client.get("/outreach/playbook").json()
-    assert pb["angles"][1]["message"] == "We launch to 1m users with 1,500 doctors"
-    assert pb["quick_update"] == "We closed a pilot with a London clinic"
+    assert pb["emails"][1] == {"focus": "the problem we solve", "message": "Teams lose 9 days a month"}
+    assert pb["strengths"] == ["We have worked together for 5 years"] and pb["update"] == "We closed our first $300k"
 
 
-def test_lint_ignores_quick_update_words():
-    body = "Hi Ada,\n\n" + "word " * 60 + "\n\nOpen to a call?\n\n" + outreach.OPT_OUT
-    assert outreach.lint("Hi", body, 3)
-    assert not outreach.lint("Hi", playbook.with_update("Hi Ada,\n\nShort.\n\n" + outreach.OPT_OUT, "x " * 40), 3)
-
-
-def test_suggestions_come_from_this_founders_deck(client, stub):  # noqa: F811
-    s = client.get("/outreach/playbook/suggest").json()  # no profile yet: neutral wording, nobody else's facts
-    assert s["source"] == "generic" and "EWOR" not in json.dumps(s) and "230m" not in json.dumps(s)
+def test_fill_comes_from_this_founders_deck(client, stub):  # noqa: F811
+    s = client.post("/outreach/playbook/fill", json={}).json()  # no profile: blanks, nobody else's facts
+    assert s["source"] == "generic" and all(e["message"] == "" for e in s["emails"]) and s["ask"] == ""
     assert [p.get("send", False) for p in s["prompts"]] == [False, False, False, True]
-    client.put("/workspace/profile", json={"company_name": "LedgerLoop", "one_liner": "Close the books in a day for "
-                                           "SaaS finance teams", "traction": "40 SaaS customers, 3x usage in 2026"})
-    s = client.get("/outreach/playbook/suggest").json()  # no AI: built from the profile
-    assert s["source"] == "profile" and "LedgerLoop" in s["angles"][0]["message"] and "40 SaaS" in s["angles"][1]["message"]
+    client.put("/workspace/profile", json=PROFILE)
+    s = client.post("/outreach/playbook/fill", json={}).json()  # no AI: from the profile
+    assert s["source"] == "profile" and "LedgerLoop" in s["emails"][0]["message"] and s["ask"] == "We're raising $750k pre-seed."
     set_tier(client, "pro")
-    deck = {"angles": [{"label": "Problem", "message": "Finance teams spend 9 days closing the books."},
-                       {"label": "Traction", "message": "40 SaaS customers and 3x usage this year."},
-                       {"label": "Why now", "message": "Every SaaS company now runs on usage billing."}],
-            "special_line": "Backed by a top-10 SaaS founder as advisor.", "quick_update": "We just went live with our 41st customer."}
+    deck = {"messages": ["We close the books in a day.", "Teams lose 9 days a month.", "A $40bn market, 40 customers."],
+            "ask": "We're raising $750k pre-seed.", "strengths": ["Team of 5 years."],
+            "update_example": "We just signed our 41st customer."}
     st = stub([deck])
-    client.put("/workspace/profile", json={"company_name": "LedgerLoop", "one_liner": "Close the books in a day",
-                                           "business_model": "SaaS subscription"})  # profile changed: re-pick
-    s = client.get("/outreach/playbook/suggest").json()
-    assert s["source"] == "deck" and s["angles"][2]["label"] == "Why now" and len(st.calls) == 1
-    assert s["prompts"][0]["text"].endswith("Finance teams spend 9 days closing the books.")
-    assert client.get("/outreach/playbook/suggest").json()["source"] == "deck" and len(st.calls) == 1  # cached
-    client.put("/outreach/playbook", json={"special_line": "x"})
-    assert client.get("/outreach/playbook/suggest").json()["source"] == "deck" and len(st.calls) == 1  # still cached
+    client.put("/workspace/profile", json={**PROFILE, "business_model": "SaaS subscription"})  # profile changed: re-pick
+    s = client.post("/outreach/playbook/fill", json={"focuses": ["What we're building", "Customer pain", "Market"]}).json()
+    assert s["source"] == "deck" and s["emails"][1] == {"focus": "Customer pain", "message": "Teams lose 9 days a month."}
+    assert s["strengths"] == ["Team of 5 years."] and len(st.calls) == 1
+    assert "Customer pain" in json.loads(st.calls[0]["messages"][0]["content"])["focuses"]
+    again = client.post("/outreach/playbook/fill", json={"focuses": ["What we're building", "Customer pain", "Market"]})
+    assert again.json()["source"] == "deck" and len(st.calls) == 1  # cached

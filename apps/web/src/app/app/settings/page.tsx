@@ -7,7 +7,7 @@ import { PageHeader, useMe } from "@/components/AppShell";
 import { Field, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { SettingsNav } from "./SettingsNav";
-import { PlaybookEditor, QuickUpdate } from "@/components/EmailPlaybook";
+import { PlaybookEditor, UpdateBox } from "@/components/EmailPlaybook";
 import { AgentMemoryList, BillingPlans, Devices, GmailSection, NewWorkspace, NotificationPrefs, OutreachSettings, Positioning, SignInMethods, Team } from "./extras";
 
 type Profile = { company_name: string; one_liner: string; sectors: string[]; stage: string; geography: string; round_size: string; instrument: string; traction: string; business_model: string; investor_types: string[]; looking_for: string; shareable: Record<string, boolean>; deck_filename: string };
@@ -56,7 +56,7 @@ function CompanyProfile() {
         traction: x.traction || r.suggested.traction || "",
         one_liner: x.one_liner || r.suggested.one_liner || "",
       });
-      toast("Deck read. Review the suggested fields and save.");
+      toast("Deck read. Review the suggested fields and save, then use “Fill with AI from my deck” under Emails 1, 2, 3 to refresh your emails.");
     } catch (e) {
       toast(errText(e), "err");
     }
@@ -314,11 +314,11 @@ export default function Settings() {
         <Section id="exclusions" title="Exclusion list" sub="We never draft or send to these.">
           <Exclusions />
         </Section>
-        <Section id="playbook" title="Email playbook" sub="What emails 1, 2 and 3 focus on, in your words. Each investor gets them in a different order, reworded for them.">
+        <Section id="playbook" title="Your emails 1, 2 and 3" sub="Pick each email's main focus. Your agent fills them from your deck and rewrites them for every investor.">
           <div className="space-y-5">
             <PlaybookEditor />
             <div className="pt-4 border-t border-line">
-              <QuickUpdate />
+              <UpdateBox />
             </div>
           </div>
         </Section>

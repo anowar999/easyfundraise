@@ -8,7 +8,7 @@ export const SECTIONS = [
   { id: "company", label: "Company profile", icon: Building2 },
   { id: "agent", label: "Agent instructions", icon: Bot },
   { id: "exclusions", label: "Exclusion list", icon: ShieldOff },
-  { id: "playbook", label: "Email playbook", icon: BookOpen },
+  { id: "playbook", label: "Emails 1, 2, 3", icon: BookOpen },
   { id: "account", label: "Signature & timezone", icon: PenLine },
   { id: "gmail", label: "Gmail", icon: Mail },
   { id: "outreach", label: "Sending & automations", icon: Send },

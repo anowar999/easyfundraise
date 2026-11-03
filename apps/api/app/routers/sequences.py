@@ -142,6 +142,7 @@ def regenerate(sid: str, body: RegenIn, c: Ctx = Depends(ctx)):
     for em in s.emails:
         e = by_step[em.step]
         em.hook, em.subject, em.body, em.facts = e["hook"], e["subject"], e["body"], e["facts"]
+        em.pre_update_body = e.get("pre_update_body")
     s.persona, s.engine = body.persona, engine
     c.db.commit()
     return s_out(s, inv, c.user.signature)

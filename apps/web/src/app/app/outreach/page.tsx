@@ -2,11 +2,11 @@
 
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { BookOpen, ChevronDown, Mail, Send, Shuffle } from "lucide-react";
+import { BookOpen, Mail, PenLine, Send } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
-import { PlaybookEditor, QuickUpdate, usePlaybook } from "@/components/EmailPlaybook";
+import { PlaybookSheet, UpdateBox, usePlaybook } from "@/components/EmailPlaybook";
 import { Empty, ErrorState, ListSkeleton } from "@/components/ui";
 import { OutreachAgent } from "./OutreachAgent";
 import { OutreachList } from "./OutreachList";
@@ -61,40 +61,41 @@ function Breakdown({ title, rows, label }: { title: string; rows: Row[]; label: 
 
 const STATUS: Record<string, string> = { sent: "Sent", scheduled: "Scheduled", failed: "Not sent" };
 
-/** Email playbook summary with the quick update always to hand; opens into the full editor. */
+/** Emails 1-3 at a glance, a button to review and change them, and the round & progress update. Opens on the
+ *  first visit when they've never been set up (and on ?playbook=1). */
 function PlaybookCard() {
   const q = usePlaybook();
   const [open, setOpen] = useState(false);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("playbook")) setOpen(true);
+    const ask = new URLSearchParams(window.location.search);
+    if (ask.get("playbook") || ask.get("setup")) setOpen(true);
   }, []);
+  useEffect(() => {
+    if (!q.data || q.data.saved_at) return;
+    let seen = false;
+    try {
+      seen = localStorage.getItem("ef-playbook-intro") === "1";
+      localStorage.setItem("ef-playbook-intro", "1");
+    } catch {}
+    if (!seen) setOpen(true);
+  }, [q.data]);
   const pb = q.data;
-  const filled = pb?.angles.filter((a) => a.message.trim()) ?? [];
   return (
     <div className="card p-3 md:p-4 mb-4">
-      <button className="w-full flex items-center gap-2 text-left" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+      <div className="flex flex-wrap items-center gap-2">
         <BookOpen size={16} className="text-brand shrink-0" />
-        <span className="font-semibold text-sm">Email playbook</span>
+        <span className="font-semibold text-sm">Your emails</span>
         <span className="text-xs text-muted truncate flex-1 min-w-0">
-          {filled.length
-            ? `${pb!.angles.map((a, i) => `${i + 1}. ${a.label}`).join(" · ")}${pb!.special_line ? " · special line" : ""}`
-            : "Tell your agent what emails 1, 2 and 3 should focus on"}
+          {pb?.saved_at ? pb.emails.map((e, i) => `${i + 1}. ${e.focus}`).join(" · ") : "Set what emails 1, 2 and 3 focus on. Your agent fills them from your deck."}
         </span>
-        {pb?.shuffle && filled.length > 1 && (
-          <span className="hidden sm:inline-flex chip shrink-0">
-            <Shuffle size={11} /> shuffled per investor
-          </span>
-        )}
-        <ChevronDown size={16} className={clsx("text-muted shrink-0 transition-transform", open && "rotate-180")} />
-      </button>
-      {open && (
-        <div className="mt-3 pt-3 border-t border-line">
-          <PlaybookEditor />
-        </div>
-      )}
-      <div className="mt-3 pt-3 border-t border-line">
-        <QuickUpdate compact />
+        <button className={pb?.saved_at ? "btn-ghost btn-sm" : "btn-primary btn-sm"} onClick={() => setOpen(true)}>
+          <PenLine size={13} /> {pb?.saved_at ? "Review emails" : "Set up emails"}
+        </button>
       </div>
+      <div className="mt-3 pt-3 border-t border-line">
+        <UpdateBox compact />
+      </div>
+      <PlaybookSheet open={open} onClose={() => setOpen(false)} />
     </div>
   );
 }
@@ -169,7 +170,7 @@ export default function Outreach() {
           </div>
           <div className="space-y-4">
             <Breakdown title="By email in the sequence" rows={d.by_step} label={(k) => (k === "update" ? "Updates" : `Email ${k}`)} />
-            <Breakdown title="By angle" rows={d.by_hook} label={(k) => (k.startsWith("playbook-") ? `Playbook: ${pb.data?.angles[Number(k.slice(9)) - 1]?.label ?? k}` : k.replace(/-/g, " "))} />
+            <Breakdown title="By angle" rows={d.by_hook} label={(k) => (k.startsWith("playbook-") ? `Email ${k.slice(9)}: ${pb.data?.emails[Number(k.slice(9)) - 1]?.focus ?? ""}` : k.replace(/-/g, " "))} />
             <Breakdown title="By approach" rows={d.by_persona} label={(k) => k.replace(/-/g, " ")} />
           </div>
         </div>

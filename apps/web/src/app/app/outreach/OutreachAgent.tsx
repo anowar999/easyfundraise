@@ -13,9 +13,9 @@ type Action = { id: string; type: string; label: string; state: "pending" | "app
 type Msg = { id: string; text: string; actions: Action[] };
 
 const FALLBACK = [
-  { label: "Email 1 should be problem focused: …", text: "Email 1 should be problem focused: " },
-  { label: "Use this line in one email: …", text: "Use this line in one email: " },
-  { label: "Quick update: …", text: "Quick update: " },
+  { label: "Email 2 should focus on the problem we solve: …", text: "Email 2 should focus on the problem we solve: " },
+  { label: "Add a strength: …", text: "Add a strength: " },
+  { label: "Round update: …", text: "Round update: " },
   { label: "Who in my outreach list hasn't been sent anything yet?", text: "Who in my outreach list hasn't been sent anything yet?", send: true },
 ];
 
@@ -69,7 +69,7 @@ export function OutreachAgent() {
         <Sparkles size={18} className="text-brand shrink-0 ml-1" />
         <input
           className="flex-1 min-w-0 bg-transparent text-[15px] outline-none placeholder:text-muted py-1.5"
-          placeholder={narrow ? "Tell your outreach agent…" : "Tell your outreach agent: what email 1, 2, 3 should say, a quick update, who to redraft…"}
+          placeholder={narrow ? "Tell your outreach agent…" : "Tell your outreach agent: what email 1, 2, 3 should focus on, a strength, a round update…"}
           ref={inputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}

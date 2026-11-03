@@ -504,6 +504,8 @@ class Email(Base):
     hook: Mapped[str] = mapped_column(String(32), default="")
     subject: Mapped[str] = mapped_column(Text)
     body: Mapped[str] = mapped_column(Text)
+    # A round/progress update replaced this follow-up (services/playbook.py); the original comes back when cleared
+    pre_update_body: Mapped[str | None] = mapped_column(Text)
     facts: Mapped[list] = mapped_column(JSONB, default=list)  # [{text, source}] "Why I wrote this"
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|scheduled|sending|sent|cancelled|failed
     scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
