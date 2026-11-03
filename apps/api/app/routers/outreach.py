@@ -203,25 +203,32 @@ def stats(days: int = 90, c: Ctx = Depends(ctx)):
     }
 
 
-# ---------------- email playbook + quick update ----------------
+# ---------------- email playbook + round/progress update ----------------
 
 
 def playbook_out(c: Ctx) -> dict:
     pb = playbook.get(c.workspace)
-    texts = [a["message"] for a in pb["angles"]] + [pb["special_line"], pb["quick_update"]]
-    return {**pb, "active": playbook.active(pb), "unsent": len(playbook.unsent(c.db, c.ws_id)),
-            "money_warning": money_talk(*texts)}
+    texts = [e["message"] for e in pb["emails"]] + pb["strengths"] + [pb["update"]]
+    return {**pb, "unsent": len(playbook.unsent(c.db, c.ws_id)), "money_warning": money_talk(*texts, pb["ask"])}
 
 
-class AngleIn(BaseModel):
-    label: str = Field("", max_length=60)
-    message: str = Field("", max_length=playbook.MAX_MESSAGE)
+class EmailPlanIn(BaseModel):
+    focus: str | None = Field(None, max_length=80)
+    message: str | None = Field(None, max_length=playbook.MAX_MESSAGE)
 
 
 class PlaybookIn(BaseModel):
-    angles: list[AngleIn] | None = Field(None, max_length=3)
-    special_line: str | None = Field(None, max_length=playbook.MAX_SPECIAL)
-    shuffle: bool | None = None
+    emails: list[EmailPlanIn] | None = Field(None, max_length=3)
+    ask: str | None = Field(None, max_length=playbook.MAX_ASK)
+    strengths: list[str] | None = Field(None, max_length=playbook.MAX_STRENGTHS)
+
+
+def _merged(c: Ctx, body: PlaybookIn | None) -> dict:
+    pb = playbook.get(c.workspace)
+    if body is None:
+        return pb
+    return playbook.merge(pb, [e.model_dump() for e in body.emails] if body.emails is not None else None, body.ask,
+                          [x[:playbook.MAX_STRENGTH] for x in body.strengths] if body.strengths is not None else None)
 
 
 @router.get("/outreach/playbook")
@@ -229,49 +236,114 @@ def get_playbook(c: Ctx = Depends(ctx)):
     return playbook_out(c)
 
 
-@router.get("/outreach/playbook/suggest")
-def suggest_playbook(c: Ctx = Depends(ctx)):
-    """Examples for this founder, picked from their own deck: email 1-3 key messages, a special line, a quick
-    update, and example asks for the outreach agent bar."""
+class FillIn(BaseModel):
+    focuses: list[str] | None = Field(None, max_length=3)
+
+
+@router.post("/outreach/playbook/fill")
+def fill_playbook(body: FillIn, c: Ctx = Depends(ctx)):
+    """What each email should say for the chosen focuses, what we're looking for, strengths and an example
+    update, picked by AI from this founder's own deck. Nothing is saved; the founder reviews it first."""
     from ..models import CompanyProfile
 
-    s = playbook.suggest(c.db, c.workspace, c.db.get(CompanyProfile, c.ws_id))
+    s = playbook.fill(c.db, c.workspace, c.db.get(CompanyProfile, c.ws_id), body.focuses)
+    c.db.commit()
+    return {**s, "prompts": playbook.prompts(s)}
+
+
+@router.get("/outreach/playbook/suggest")
+def suggest_playbook(c: Ctx = Depends(ctx)):
+    """The fill for the founder's current focuses (cached), with example asks for the outreach agent bar."""
+    from ..models import CompanyProfile
+
+    s = playbook.fill(c.db, c.workspace, c.db.get(CompanyProfile, c.ws_id),
+                      [e["focus"] for e in playbook.get(c.workspace)["emails"]])
     c.db.commit()
     return {**s, "prompts": playbook.prompts(s)}
 
 
 @router.put("/outreach/playbook")
 def put_playbook(body: PlaybookIn, c: Ctx = Depends(ctx)):
-    """Email 1-3 focus and key messages, and the special line. Used by every new draft and redraft."""
+    """Each email's main focus and what it says, what we're looking for, and strengths. Used by every new draft
+    and redraft."""
     c.require_editor()
-    pb = playbook.get(c.workspace)
-    before = dict(pb)
-    if body.angles is not None:
-        for i, a in enumerate(body.angles[:3]):
-            pb["angles"][i] = {"label": a.label.strip() or playbook.DEFAULT_LABELS[i], "message": a.message.strip()}
-    if body.special_line is not None:
-        pb["special_line"] = body.special_line.strip()
-    if body.shuffle is not None:
-        pb["shuffle"] = body.shuffle
+    before = playbook.get(c.workspace)
+    pb = {**_merged(c, body), "saved_at": datetime.now(UTC).isoformat()}
     playbook.save(c.workspace, pb)
-    c.audit("playbook.update", str(c.ws_id), before={"angles": before["angles"]}, after={"angles": pb["angles"]})
+    c.audit("playbook.update", str(c.ws_id), before={"emails": before["emails"], "ask": before["ask"]},
+            after={"emails": pb["emails"], "ask": pb["ask"]})
     c.db.commit()
     return playbook_out(c)
 
 
-class QuickUpdateIn(BaseModel):
+class PreviewIn(PlaybookIn):
+    investor_id: str | None = None
+    skip: list[str] = Field(default_factory=list, max_length=20)  # "try another investor"
+
+
+def _sample_investor(c: Ctx, iid: str | None, skip: list[str]):
+    """Who to preview for: the one asked for, else the shortlist, the tracker, then the best match."""
+    import uuid as _uuid
+
+    from ..models import CompanyProfile, Investor, ShortlistItem
+    from ..services.fit import fit
+
+    if iid:
+        try:
+            inv = c.db.get(Investor, _uuid.UUID(iid))
+        except ValueError:
+            inv = None
+        if inv and not inv.suppressed:
+            return inv
+    seen = set(skip)
+    for q in (select(ShortlistItem.investor_id).where(ShortlistItem.workspace_id == c.ws_id)
+              .order_by(ShortlistItem.created_at.desc()).limit(30),
+              select(FunnelCard.investor_id).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.investor_id.is_not(None),
+                                                   FunnelCard.deleted_at.is_(None)).limit(30)):
+        for i in c.db.scalars(q).all():
+            if str(i) not in seen:
+                inv = c.db.get(Investor, i)
+                if inv and not inv.suppressed and not inv.is_honeypot:
+                    return inv
+    p = c.db.get(CompanyProfile, c.ws_id)
+    rows = c.db.scalars(select(Investor).where(Investor.suppressed.is_(False), Investor.is_honeypot.is_(False))
+                        .order_by(Investor.enriched.desc(), Investor.seed_fit.desc().nulls_last()).limit(60)).all()
+    rows = [r for r in rows if str(r.id) not in seen]
+    return max(rows, key=lambda i: fit(i, p)["score"]) if rows else None
+
+
+@router.post("/outreach/playbook/preview")
+def preview_playbook(body: PreviewIn, c: Ctx = Depends(ctx)):
+    """The three emails one real investor would get with this playbook (saved or not). Nothing is stored."""
+    from ..models import CompanyProfile
+    from ..services import agent
+    from ..services.entitlements import rate_limit
+
+    rate_limit(c.db, f"preview:{c.ws_id}", 30, 3600)
+    inv = _sample_investor(c, body.investor_id, body.skip)
+    if inv is None:
+        raise ApiError(404, "EF-PB-001", "No investor to preview with yet", "Add an investor to your shortlist first.")
+    emails, engine = agent.draft_sequence(c.db, c.workspace, inv, c.db.get(CompanyProfile, c.ws_id), "momentum",
+                                          c.user.signature, _merged(c, body))
+    c.db.commit()
+    return {"investor": {"id": str(inv.id), "name": inv.name, "firm": inv.current_firm or inv.company},
+            "engine": engine, "emails": [{"step": e["step"], "subject": e["subject"], "body": e["body"],
+                                          "update": bool(e.get("pre_update_body"))} for e in emails]}
+
+
+class UpdateIn(BaseModel):
     text: str = Field("", max_length=playbook.MAX_UPDATE)
-    apply: bool = True  # also put it in the next unsent email of every sequence
+    apply: bool = True  # also turn the next unsent follow-up of every sequence into the update email
 
 
 @router.put("/outreach/quick-update")
-def put_quick_update(body: QuickUpdateIn, c: Ctx = Depends(ctx)):
-    """A short recent update. New drafts carry it; apply=true also writes it into the next email still to go out
-    on every sequence (replacing an older update). Clearing the text takes it out again."""
+def put_quick_update(body: UpdateIn, c: Ctx = Depends(ctx)):
+    """A round / progress update. The next follow-up still to go out on every sequence becomes a short update
+    email (the update, what we're looking for, the call). Clearing it restores those follow-ups."""
     c.require_editor()
     playbook.set_update(c.workspace, body.text)
     changed = playbook.apply_update(c.db, c.workspace, c.user.signature) if body.apply else 0
-    c.audit("playbook.quick_update", str(c.ws_id), after={"text": body.text.strip(), "emails": changed})
+    c.audit("playbook.update_note", str(c.ws_id), after={"text": body.text.strip(), "emails": changed})
     c.db.commit()
     return {**playbook_out(c), "changed": changed}
 

@@ -101,26 +101,28 @@ def fact_pack(inv: Investor, p: CompanyProfile | None, for_email: bool = False) 
     return facts
 
 
-EMAIL_COMPANY_FIELDS = ("company_name", "one_liner", "sectors", "geography", "traction", "business_model")
+EMAIL_COMPANY_FIELDS = ("company_name", "one_liner", "sectors", "geography", "stage", "round_size", "traction",
+                        "business_model", "looking_for")
 
-# Cold emails are about the investor, our problem and solution, and a short call: never money. Plain counts like
-# "230m people" or "875k consultations" are fine; amounts of money are not.
-MONEY_TALK = re.compile(r"\b(invest\w*|tickets?|cheques?|check[- ]sizes?|round sizes?|valuation|allocation|"
-                        r"term sheets?|raising|fundrais\w*)\b|[€$£]\s?\d|\b(?:eur|usd|gbp|euros?|dollars?)\b", re.I)
+# Emails may say what we're raising (our own amount and stage, in the "what we're looking for" part). They never talk
+# about the investor's money: no "invest", tickets, cheques, check sizes, valuation, or the round "fitting their range".
+MONEY_TALK = re.compile(r"\binvest(?!ors?\b)\w*|\b(tickets?|cheques?|check[- ]sizes?|valuation|allocation|term sheets?)\b|"
+                        r"\byour (?:range|fund size|typical)\b|\bfits? (?:your|within)\b", re.I)
 
 EMAIL_RULES = (
     "What every email must be:\n"
-    "- About THEM first: open with something specific to this person (their thesis in their own words, a portfolio "
-    "company, a recent backing, news or a hook), so it's obvious we know who they are. Never a stock opener "
+    "- Specific to THIS person: Email 1 opens with them (their thesis in their own words, a portfolio company, a "
+    "recent backing, news or a hook) and why we're a fit, so it's obvious we know who they are. Never a stock opener "
     "('I hope this finds you well', 'I came across your profile', 'I'm reaching out').\n"
-    "- Then our value proposition: the specific problem we solve and how, in plain words, tied to why it matters to "
-    "them. Use only the company fields given.\n"
-    "- Then the ask: one short call (or 'happy to send a short overview'). One ask only.\n"
-    "- Short and human: plain words, no buzzwords, no exclamation marks.\n"
-    "- Never mention money: no 'invest', 'investment', 'investing', 'raising', 'round', 'ticket', 'cheque', "
-    "'check size', valuation, amounts or currencies, and never say the round 'fits their range'.\n"
-    "- Written fresh for this one person: vary the opening line, structure and wording; nothing should read like a "
-    "template another investor would also get.\n")
+    "- Our story in plain words, using only the company fields and playbook text given.\n"
+    "- 'What we're looking for': the founder's own ask, reworded lightly, keeping amounts and stage exactly. If no "
+    "ask is given, leave money out entirely.\n"
+    "- One call to action: a 20-minute call.\n"
+    "- Short and human: plain words, no buzzwords, no exclamation marks, short paragraphs.\n"
+    "- Never talk about the investor's money: no 'invest', 'investment', 'ticket', 'cheque', 'check size', "
+    "valuation, and never say the round fits their range or fund.\n"
+    "- Written fresh for this one person: vary the wording; nothing should read like a template another investor "
+    "would also get.\n")
 
 
 def email_company(p: CompanyProfile | None) -> dict:
@@ -153,51 +155,53 @@ PERSONA_GUIDE = {
 }
 
 
-def playbook_brief(plan: dict | None) -> tuple[str, dict]:
-    """Prompt rules and per-email inputs for the founder's email playbook (empty when there is none)."""
-    if not plan or not any(x["message"] or x["special"] for x in plan.values()):
-        return "", {}
-    rules = (
-        "The founder's email playbook decides what each email is about. email_plan gives, per step, a focus and "
-        "key_message in the founder's words: build that email around the key message, rephrased freshly for this "
-        "investor, keeping every number, name and claim exactly as given (round or invent none). A step with a "
-        "special_line must include that line once, reworded naturally; other steps must not. Still open E1 with "
-        "something about them. Steps without a key_message follow the default guidance below.\n")
-    return rules, {str(k): {kk: v for kk, v in x.items() if v and kk in ("label", "message", "special")}
-                   for k, x in plan.items()}
+def playbook_brief(plan: dict) -> dict:
+    """Per-email inputs for the prompt: each email's shape, main focus, what it should say and any strengths."""
+    out = {}
+    for step in (1, 2, 3):
+        x = plan[step]
+        out[str(step)] = {"shape": x["structure"], "main_focus": x["focus"],
+                          **({"say": x["message"]} if x["message"] else {}),
+                          **({"include_strengths": x["strengths"]} if x["strengths"] else {})}
+    return out
 
 
 def ai_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | None, persona: str,
-                signature: str, plan: dict | None = None) -> tuple[list[dict], str] | None:
+                signature: str, plan: dict) -> tuple[list[dict], str] | None:
     facts = fact_pack(inv, p, for_email=True)
     company = email_company(p)
-    pb_rules, email_plan = playbook_brief(plan)
     system = (
-        "Write a 3-email cold outreach sequence from a founder to one investor.\n" + EMAIL_RULES + pb_rules +
-        "The three emails must each be different, never a reworded copy:\n"
-        "- E1: about them, then our problem and solution, then the ask for a short call.\n"
-        "- E2 (a follow-up a few days later): a genuinely new angle, e.g. a concrete customer problem story, a proof "
-        "point from traction, or a different fact about them. Never 'just checking in' or 'following up on my email'.\n"
-        "- E3 (last touch): very short; ask for their advice or a pointer to someone better placed, or close the loop "
-        "politely.\n"
-        "Each email uses a different hook family. Hard limits: E1 <= 90 words, E2 <= 70, E3 <= 55 (body only, before "
-        "the signature). Subject <= 6 words, specific to them, no ALL CAPS, no clickbait. E1 uses at least 2 investor "
-        "facts, E2 and E3 at least 1. Use only the investor facts and company fields provided; cite fact ids you used. "
-        "No links, no attachments, no greeting other than 'Hi <first name>,'. Do not add a signature or an opt-out "
-        "line; they are appended later.\n"
+        "Write a 3-email cold outreach sequence from a founder to one investor.\n" + EMAIL_RULES +
+        "The founder's email plan sets each email's shape and main focus; follow it exactly, one short paragraph per "
+        "part, in this order:\n"
+        "- Email 1: about them and the synergy with us; then what we're building (its main focus); then what we're "
+        "looking for; then the call to action.\n"
+        "- Email 2 (a follow-up a few days later): no synergy paragraph; open with its main focus (e.g. the problem we "
+        "solve); then what we're building said a different way than in Email 1; then what we're looking for, "
+        "reworded; then the call to action. Never 'just checking in'.\n"
+        "- Email 3: its main focus (e.g. market opportunity and traction); then what we're looking for; then the call "
+        "to action.\n"
+        "Where an email has 'say', build that part from it, reworded for this investor, keeping every number, name "
+        "and claim exactly (round or invent none); otherwise write it from the company fields. A strength listed for "
+        "an email goes into that email once, as a natural sentence; never use a strength in another email. "
+        "Hard limits: Email 1 <= 110 words, Email 2 <= 95, Email 3 <= 75 (body only, before the signature). "
+        "Subject <= 6 words, specific to them, no ALL CAPS, no clickbait. Email 1 uses at least 2 investor facts. Use "
+        "only the investor facts, company fields and plan given; cite fact ids you used. No links, no attachments, "
+        "greeting 'Hi <first name>,' only. Do not add a signature or an opt-out line; they are appended later.\n"
         f"Persona: {persona}. {PERSONA_GUIDE.get(persona, '')}"
     )
     user = json.dumps({"investor_first_name": outreach.first_name(inv.name), "investor_facts": facts,
-                       "company": company, "founder_instructions": instructions(db, ws.id)[:2000],
-                       "what_worked_before": memory_text(db, ws.id, 10),
-                       **({"email_plan": email_plan} if email_plan else {})}, default=str)
+                       "company": company, "what_were_looking_for": plan["ask"], "email_plan": playbook_brief(plan),
+                       "founder_instructions": instructions(db, ws.id)[:2000],
+                       "what_worked_before": memory_text(db, ws.id, 10)}, default=str)
     out, engine = None, ""
-    for _ in range(2):  # one retry if the model talks money anyway
+    for _ in range(2):  # one retry if the model talks about the investor's money anyway
         out, engine = ai.json_call(db, ws, "draft", system, user, SEQ_SCHEMA, max_tokens=6000)
         if not out or not money_talk(*[e.get("subject", "") + " " + e.get("body", "") for e in out.get("emails", [])]):
             break
         out = None
-        user += "\nYour last draft talked about money or investing. Rewrite every email without any of that."
+        user += ("\nYour last draft talked about investing, tickets, cheques or valuation. Rewrite every email "
+                 "without any of that.")
     if not out or len(out.get("emails", [])) != 3:
         return None
     by_id = {f["id"]: f for f in facts}
@@ -210,26 +214,26 @@ def ai_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | N
         subj = " ".join(e["subject"].split()[:outreach.SUBJECT_MAX_WORDS])
         if outreach.lint(subj, body, e["step"], signature):
             return None  # the deterministic engine is always lint-clean; use it instead
-        hook = playbook.hook_for(plan[e["step"]]) if plan else None
-        emails.append(dict(step=e["step"], hook=hook or e["hook"], subject=subj, body=body,
+        emails.append(dict(step=e["step"], hook=playbook.hook_for(e["step"]), subject=subj, body=body,
                            facts=[{"text": by_id[i]["text"], "source": by_id[i]["source"]}
                                   for i in e["fact_ids"] if i in by_id]))
-    if [e["step"] for e in emails] != [1, 2, 3] or len({e["hook"] for e in emails}) < 3:
+    if [e["step"] for e in emails] != [1, 2, 3]:
         return None
     return emails, engine
 
 
 def draft_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | None, persona: str,
-                   signature: str) -> tuple[list[dict], str]:
-    """Three emails following the founder's playbook (angles dealt in a random order for this investor), with
-    the quick update in the first one."""
-    pb = playbook.get(ws)
-    plan = playbook.plan(pb) if playbook.active(pb) else None
+                   signature: str, pb: dict | None = None) -> tuple[list[dict], str]:
+    """Three emails built the founder's way (playbook), with any round/progress update as the first follow-up.
+    pb overrides the saved playbook (used by the preview)."""
+    pb = pb or playbook.get(ws)
+    if not pb["ask"]:
+        pb = {**pb, "ask": playbook.profile_ask(p)}
+    plan = playbook.plan(pb)
     got = ai_sequence(db, ws, inv, p, persona, signature, plan)
     emails, engine = got or (outreach.draft_sequence(inv, p, persona, instructions(db, ws.id), signature, plan),
                              "template")
-    if pb["quick_update"]:
-        emails[0] = {**emails[0], "body": playbook.with_update(emails[0]["body"], pb["quick_update"], signature)}
+    playbook.apply_to(emails, pb, signature)
     return emails, engine
 
 
@@ -521,11 +525,13 @@ How to work:
   ask for several things. A "how many" question gets the number first. Don't add unrequested facts, don't revisit
   earlier questions, and don't add a "next step" unless they ask what to do. Name investors with their firm.
 - "Outreach" means the outreach list (list_email_sequences), not the investor tracker or shortlist.
-- The email playbook sets what emails 1, 2 and 3 focus on, with the founder's key messages, plus one special line;
-  each investor gets the angles in a random order, reworded. "Email 1 should be about ..." or "use this line in one
-  email" means set_email_playbook (store the founder's words as given). "Quick update: ..." or "add an update"
-  means set_quick_update. After a playbook change, offer propose_redraft if drafts exist. Emails never talk about
-  investing, tickets or amounts of money, even when the founder's angle is the raise; say so if they ask for it.
+- The email playbook shapes emails 1, 2 and 3. Email 1: about them and the synergy, what we're building, what
+  we're looking for, a call. Email 2: its focus (the problem by default), what we're building said differently, the
+  ask, a call. Email 3: its focus (market and traction by default), the ask, a call. "Email 2 should focus on ..."
+  means set_email_playbook (store the founder's words as given); "add a strength: ..." means add_strength; a round,
+  progress or FOMO update means set_quick_update (it becomes the next follow-up). After a playbook change, offer
+  propose_redraft if drafts exist. Emails may state our own raise, but never talk about the investor's ticket,
+  cheque size or valuation, and never use the word invest.
 
 Founder instructions (highest priority after safety):
 {instructions}
@@ -594,17 +600,25 @@ def fallback_chat(c, text: str, actions: list) -> str:
     low = text.lower().strip()
     if (done := agent_tools.tracker_command(c, text, actions)) is not None:
         return done
-    m = re.match(r"(?:add (?:a |an )?)?(?:quick )?update[:\s-]+(.+)", text.strip(), re.I | re.S)
-    if m and low.startswith(("quick update", "add a quick update", "add an update", "add update", "update:")):
+    m = re.match(r"(?:add (?:a |an )?)?(?:quick |round |progress )?update[:\s-]+(.+)", text.strip(), re.I | re.S)
+    if m and low.startswith(("quick update", "round update", "progress update", "add a quick update", "add an update",
+                             "add update", "update:")):
         r = json.loads(agent_tools.run(c, "set_quick_update", {"text": m.group(1).strip(" \"'")}, actions))
-        n = r["unsent_emails_changed"]
-        return "Saved your quick update. New drafts will carry it" + (
-            f", and I added it to the next email for {n} investor{'s' if n != 1 else ''} in outreach." if n else ".")
-    m = re.match(r"e-?mail\s*([123])\s*(?:(?:should be|focus(?:es)? on|is)\s*:?|:|-)\s*(.+)", text.strip(), re.I | re.S)
+        n = r["followups_changed"]
+        return "Saved your update. " + (f"It's now the next follow-up for {n} investor{'s' if n != 1 else ''} in "
+                                        "outreach." if n else "It will go out as the next follow-up in new sequences.")
+    m = re.match(r"(?:add (?:a |my )?)?strength[:\s-]+(.+)", text.strip(), re.I | re.S)
     if m:
-        agent_tools.run(c, "set_email_playbook", {f"email{m.group(1)}": {"message": m.group(2).strip()}}, actions)
-        return f"Saved as the key message for email {m.group(1)} in your playbook. Each investor gets the angles in a " \
-               "random order."
+        agent_tools.run(c, "set_email_playbook", {"add_strength": m.group(1).strip(" \"'")}, actions)
+        return "Added to your strengths. Each investor gets it in one of their three emails."
+    m = re.match(r"e-?mail\s*([123])\s*(?:(?:should be|should focus on|focus(?:es)? on|is)\s*:?|:|-)\s*(.+)", text.strip(),
+                 re.I | re.S)
+    if m:
+        said = m.group(2).strip()
+        head, sep, rest = said.partition(":")
+        e = {"focus": head.strip(), "message": rest.strip()} if sep and len(head) <= 60 and rest.strip() else {"message": said}
+        agent_tools.run(c, "set_email_playbook", {f"email{m.group(1)}": e}, actions)
+        return f"Saved as what email {m.group(1)} says in your playbook."
     if low.startswith("remember"):
         agent_tools.run(c, "remember", {"text": text.split(" ", 1)[-1]}, actions)
         return "Saved to memory."

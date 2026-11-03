@@ -5,7 +5,9 @@ import clsx from "clsx";
 import { ArrowRight, Check, FileUp, Loader2, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { PlaybookEditor } from "@/components/EmailPlaybook";
 import { LogoMark } from "@/components/landing/LogoMark";
+import { ToastProvider } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
 
 type Profile = {
@@ -50,7 +52,7 @@ function Onboarding() {
   const q = useQuery<Profile>({ queryKey: ["profile"], queryFn: () => api("/workspace/profile") });
   const facets = useQuery<{ sectors: { value: string; count: number }[] }>({ queryKey: ["facets"], queryFn: () => api("/investors/facets") });
   const [p, setP] = useState<Profile | null>(null);
-  const [step, setStep] = useState<"deck" | "form">("deck");
+  const [step, setStep] = useState<"deck" | "form" | "emails">("deck");
   const [reading, setReading] = useState(false);
   const [deckNote, setDeckNote] = useState("");
   const [err, setErr] = useState("");
@@ -112,7 +114,9 @@ function Onboarding() {
     setSaving(true);
     try {
       await api("/workspace/profile", { method: "PUT", json: p });
-      location.href = "/app?welcome=1";
+      setSaving(false);
+      setStep("emails");  // then set up emails 1-3 from the deck
+      window.scrollTo(0, 0);
     } catch (e) {
       setErr(e instanceof ApiError ? e.problem.title : "Couldn't save. Please try again.");
       setSaving(false);
@@ -133,13 +137,24 @@ function Onboarding() {
         <a href="/app" className="text-sm font-medium text-[#5b6680] hover:text-[#0b1220]">Skip for now</a>
       </header>
       <main className="mx-auto max-w-3xl px-5 pb-24">
-        <p className="text-sm font-semibold uppercase tracking-wider text-[#0f62fe]">Step 3 of 3 · Your company</p>
-        <h1 className="mt-2 text-3xl md:text-4xl font-bold tracking-tight text-[#0b1220]">Tell us about your raise</h1>
+        <p className="text-sm font-semibold uppercase tracking-wider text-[#0f62fe]">Step 3 of 3 · {step === "emails" ? "Your emails" : "Your company"}</p>
+        <h1 className="mt-2 text-3xl md:text-4xl font-bold tracking-tight text-[#0b1220]">{step === "emails" ? "How your emails will read" : "Tell us about your raise"}</h1>
         <p className="mt-2 text-[16px] text-[#4a5670] max-w-xl">
           We use this to rank investors by how well they match you, and to personalise every email. Two minutes, and you can change it any time.
         </p>
 
         {err && <p role="alert" className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{err}</p>}
+
+        {step === "emails" && (
+          <div className="mt-8 rounded-2xl border border-[#e6ebf3] bg-white p-4 md:p-6">
+            <h2 className="text-xl font-bold text-[#0b1220]">Your emails 1, 2 and 3</h2>
+            <p className="mt-1 mb-4 text-sm text-[#4a5670]">
+              Pick what each email focuses on. Your agent filled them in from your deck, and it rewrites them for every investor. Preview them, change anything, then save.
+            </p>
+            <PlaybookEditor onSaved={() => (location.href = "/app?welcome=1")} />
+            <a href="/app?welcome=1" className="mt-4 inline-block text-sm font-medium text-[#5b6680] hover:text-[#0b1220]">Skip, I&apos;ll do this later in Outreach</a>
+          </div>
+        )}
 
         {step === "deck" && (
           <div className="mt-8 grid gap-4 md:grid-cols-2">
@@ -260,7 +275,9 @@ export default function OnboardingPage() {
   const [qc] = useState(() => new QueryClient());
   return (
     <QueryClientProvider client={qc}>
+      <ToastProvider>
       <Onboarding />
+      </ToastProvider>
     </QueryClientProvider>
   );
 }
