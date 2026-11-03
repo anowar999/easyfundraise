@@ -5,23 +5,24 @@ send window; the worker sends them from the founder's Gmail (services/mailer.py)
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from ..db import SessionLocal
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
-from ..models import CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence
-from ..services import agent, outreach, test_investors
+from ..models import CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence, User, Workspace
+from ..services import agent, ai, outreach, test_investors
 from ..services.entitlements import can, consume, limit
-from .investors import _exclusions, is_excluded
+from .investors import _exclusions, auto_reveal, is_excluded
 
 router = APIRouter(prefix="/sequences", tags=["sequences"])
 
 
 def s_out(s: Sequence, inv: Investor | None = None, signature: str = "") -> dict:
     return {"id": str(s.id), "investor_id": str(s.investor_id), "status": s.status, "persona": s.persona,
-            "engine": s.engine, "card_id": str(s.card_id) if s.card_id else None,
+            "engine": s.engine, "drafting": s.engine == DRAFTING, "card_id": str(s.card_id) if s.card_id else None,
             "investor": {"name": inv.name, "firm": inv.current_firm or inv.company} if inv else None,
             "emails": [{"id": str(e.id), "step": e.step, "hook": e.hook, "subject": e.subject, "body": e.body,
                         "facts": e.facts, "status": e.status, "scheduled_for": e.scheduled_for,
@@ -41,8 +42,8 @@ class DraftIn(BaseModel):
 
 
 def with_opt_out(body: str, signature: str) -> str:
-    """Emails sent through outreach carry the opt-out line, just above the signature."""
-    if "Missing opt-out line." not in outreach.lint("", body, 1):
+    """Kept for callers; outreach no longer adds an opt-out line."""
+    if not outreach.OPT_OUT or outreach.OPT_OUT in body:
         return body
     sig = signature.strip()
     if sig and body.endswith(sig):
@@ -50,8 +51,38 @@ def with_opt_out(body: str, signature: str) -> str:
     return f"{body}\n\n{outreach.OPT_OUT}"
 
 
+DRAFTING = "drafting"  # template emails are in place; the AI versions are being written in the background
+
+
+def finish_ai_draft(seq_id: uuid.UUID, user_id: uuid.UUID, placed: dict[int, str]) -> None:
+    """Writes the AI versions after "add to outreach" has already answered with template drafts. Only emails
+    still exactly as placed are replaced, so nothing the founder edited or approved meanwhile is touched."""
+    with SessionLocal() as db:
+        s = db.get(Sequence, seq_id)
+        if s is None or s.engine != DRAFTING:
+            return
+        engine = "template"
+        try:
+            ws, inv, user = db.get(Workspace, s.workspace_id), db.get(Investor, s.investor_id), db.get(User, user_id)
+            emails, engine = agent.draft_sequence(db, ws, inv, db.get(CompanyProfile, s.workspace_id), s.persona,
+                                                  user.signature if user else "")
+            db.refresh(s)
+            clean = all(not outreach.lint(e["subject"], e["body"], e["step"], user.signature if user else "")
+                        for e in emails)
+            if s.status in ("draft", "approved") and engine != "template" and clean:
+                by_step = {e["step"]: e for e in emails}
+                for em in s.emails:  # auto-send may have scheduled them already; swap any not yet sent
+                    e = by_step.get(em.step)
+                    if e and em.status in ("draft", "scheduled") and em.body == placed.get(em.step):
+                        em.hook, em.subject, em.body, em.facts = e["hook"], e["subject"], e["body"], e["facts"]
+                        em.pre_update_body = e.get("pre_update_body")
+        finally:
+            s.engine = engine
+            db.commit()
+
+
 @router.post("")
-def draft(body: DraftIn, c: Ctx = Depends(ctx)):
+def draft(body: DraftIn, c: Ctx = Depends(ctx), background: BackgroundTasks = None):
     c.require_editor()
     inv = c.db.get(Investor, uuid.UUID(body.investor_id))
     if not test_investors.visible(inv, c.user.email):
@@ -63,7 +94,13 @@ def draft(body: DraftIn, c: Ctx = Depends(ctx)):
     prof = c.db.get(CompanyProfile, c.ws_id)
     card = c.db.scalar(select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.investor_id == inv.id,
                                                 FunnelCard.deleted_at.is_(None)))
-    emails, engine = agent.draft_sequence(c.db, c.workspace, inv, prof, body.persona, c.user.signature)
+    auto = auto_send_on(c.workspace)
+    # Answer at once with lint-clean template drafts; the AI versions (10-20s) are written in the background.
+    later = background is not None and ai.available()
+    emails, engine = agent.draft_sequence(c.db, c.workspace, inv, prof, body.persona, c.user.signature,
+                                          use_ai=not later)
+    if later:
+        engine = DRAFTING
     seq = Sequence(workspace_id=c.ws_id, investor_id=inv.id, card_id=card.id if card else None, persona=body.persona,
                    user_id=c.user.id, engine=engine)
     c.db.add(seq)
@@ -71,12 +108,18 @@ def draft(body: DraftIn, c: Ctx = Depends(ctx)):
     if body.first_email:
         emails[0] = {**emails[0], "subject": body.first_email.subject.strip(),
                      "body": with_opt_out(body.first_email.body.strip(), c.user.signature)}
+        outreach.thread_subjects(emails)
     for e in emails:
         c.db.add(Email(workspace_id=c.ws_id, sequence_id=seq.id, user_id=c.user.id, **e))
+    if not (card and card.email):
+        auto_reveal(c, inv)  # so it's ready to send with no "reveal first" step
     c.db.commit()
     c.db.refresh(seq)
-    auto = try_auto_send(c, seq) if auto_send_on(c.workspace) else None
-    return {**s_out(seq, inv, c.user.signature), "auto": auto}
+    if later:
+        background.add_task(finish_ai_draft, seq.id, c.user.id,
+                            {e.step: e.body for e in seq.emails if not (body.first_email and e.step == 1)})
+    sent = try_auto_send(c, seq) if auto else None
+    return {**s_out(seq, inv, c.user.signature), "auto": sent}
 
 
 def _get(c: Ctx, sid: str) -> Sequence:
@@ -120,6 +163,8 @@ def edit_email(sid: str, eid: str, body: EmailPatch, c: Ctx = Depends(ctx)):
     if em.status == "sent":
         raise ApiError(409, "EF-SEQ-002", "This email was already sent")
     em.subject, em.body = body.subject.strip(), body.body.strip()
+    if em.step == 1:
+        outreach.thread_subjects([e for e in s.emails if e.status != "sent"])
     c.db.commit()
     return {"issues": outreach.lint(em.subject, em.body, em.step, c.user.signature)}
 
@@ -152,7 +197,7 @@ class ApproveIn(BaseModel):
     confirm: bool = False  # the founder saw who, from which mailbox and when, and said yes
 
 
-def _ready(c: Ctx, s: Sequence) -> tuple[Investor, str, GmailAccount]:
+def _ready(c: Ctx, s: Sequence, reveal: bool = True) -> tuple[Investor, str, GmailAccount]:
     """Everything that must hold before a sequence may be scheduled. Raises the ApiError that names the blocker."""
     if not can(c.db, c.workspace, "send"):
         raise ApiError(402, "EF-TIER-030", "Upgrade to send emails", "Trial accounts can draft but not send.",
@@ -166,6 +211,8 @@ def _ready(c: Ctx, s: Sequence) -> tuple[Investor, str, GmailAccount]:
     inv = c.db.get(Investor, s.investor_id)
     card = c.db.get(FunnelCard, s.card_id) if s.card_id else None
     to = (card.email if card and card.email else "") or (inv.email if c.db.get(Reveal, (c.ws_id, inv.id)) else "")
+    if not to and auto_reveal(c, inv, dry=not reveal):  # uses one contact credit by itself when there are some
+        to = inv.email
     if not to:
         raise ApiError(409, "EF-SEQ-005", "Reveal this investor's email first",
                        "Reveal the contact on their profile (uses one credit) or add an email on their investor tracker card.",
@@ -180,7 +227,7 @@ def _ready(c: Ctx, s: Sequence) -> tuple[Investor, str, GmailAccount]:
 def blocker(c: Ctx, s: Sequence) -> str | None:
     """Why this draft can't be scheduled yet, in plain words (None when it's ready)."""
     try:
-        _ready(c, s)
+        _ready(c, s, reveal=False)  # a check only: never spends a credit
     except ApiError as e:
         return e.title
     return None
@@ -223,7 +270,7 @@ def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
     and send times so the founder confirms before anything can go out from their Gmail."""
     c.require_editor()
     s = _get(c, sid)
-    inv, to, acc = _ready(c, s)
+    inv, to, acc = _ready(c, s, reveal=bool(body and body.confirm))
     outreach.schedule(s.emails, datetime.now(UTC), inv.timezone)
     if not (body and body.confirm):
         preview = {"from": acc.email, "to": to, "investor": inv.name, "timezone": inv.timezone,
@@ -246,7 +293,7 @@ def send_all(body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
     ready, skipped, sender = [], [], ""
     for s in drafts:
         try:
-            inv, to, acc = _ready(c, s)
+            inv, to, acc = _ready(c, s, reveal=bool(body and body.confirm))
         except ApiError as e:
             skipped.append({"id": str(s.id), "name": c.db.get(Investor, s.investor_id).name, "reason": e.title})
             continue

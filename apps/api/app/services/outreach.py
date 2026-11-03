@@ -16,7 +16,7 @@ from .fit import sector_overlap
 LIMITS = {1: 140, 2: 120, 3: 100}  # word limits including the opt-out line (a "Quick update:" line is extra)
 SUBJECT_MAX_WORDS = 7
 DEFAULT_DAYS = {1: 0, 2: 4, 3: 10}
-OPT_OUT = "If this isn't relevant, reply 'no' and I won't follow up."
+OPT_OUT = ""  # founders asked for no "reply 'no'" line; replies like "no" / "unsubscribe" still stop a sequence
 SPAM_PHRASES = ("guaranteed", "act now", "100% free", "risk-free", "click here", "limited time", "urgent",
                 "once in a lifetime", "no obligation", "!!!", "$$$")
 SHORTENERS = ("bit.ly", "tinyurl", "t.co/", "goo.gl", "ow.ly", "buff.ly")
@@ -127,13 +127,13 @@ def draft_sequence(inv: Investor, p: CompanyProfile | None, persona: str = "mome
     else:
         hook_line = f"One more thought on why {company} matters: {one[0].lower() + one[1:] if one else 'the problem we solve is growing'}."
     e2 = "\n\n".join([f"Hi {fn},", hook_line,
-                      f"{traction + '. ' if traction else ''}Happy to send a short overview, or find 20 minutes?", OPT_OUT])
+                      f"{traction + '. ' if traction else ''}Happy to send a short overview, or find 20 minutes?"])
     subj2 = f"Quick update from {company}"
 
     # E3 — last touch / ask-for-advice
     e3 = "\n\n".join([f"Hi {fn},",
                       "Last note from me. If this isn't a fit, who else should I talk to? "
-                      "A name or a 'no' both help.", OPT_OUT])
+                      "A name or a 'no' both help."])
     subj3 = "Closing the loop"
 
     hooks = ["thesis-echo" if f["thesis"] else "portfolio-adjacent", "insight-first", "ask-for-advice"]
@@ -182,7 +182,7 @@ def lint(subject: str, body: str, step: int, signature: str = "") -> list[str]:
     b = "\n\n".join(x for x in b.split("\n\n") if not x.strip().startswith("Quick update:"))
     if words(b) > LIMITS[step]:
         issues.append(f"Email {step} is {words(b)} words; limit is {LIMITS[step]}.")
-    if words(subject) > SUBJECT_MAX_WORDS:
+    if words(re.sub(r"^\s*re:\s*", "", subject, flags=re.I)) > SUBJECT_MAX_WORDS:
         issues.append(f"Subject is over {SUBJECT_MAX_WORDS} words.")
     if subject.isupper() and len(subject) > 3:
         issues.append("Subject is ALL CAPS.")
@@ -194,8 +194,6 @@ def lint(subject: str, body: str, step: int, signature: str = "") -> list[str]:
         issues.append("Link shorteners are not allowed.")
     if len(re.findall(r"https?://", body)) > 1:
         issues.append("Use at most one link (data room or calendar).")
-    if "reply 'no'" not in low and "reply “no”" not in low:
-        issues.append("Missing opt-out line.")
     return issues
 
 
@@ -259,6 +257,8 @@ def vary_subjects(db, ws_id, emails: list[dict], inv: Investor, p: CompanyProfil
     for step, subj in rows:
         used.setdefault(step, set()).add((subj or "").strip())
     for e in emails:
+        if e["step"] != 1:
+            continue  # follow-ups reply in email 1's thread as "Re: <its subject>"
         taken = used.get(e["step"], set())
         if e["subject"].strip().lower() not in taken:
             continue
@@ -268,3 +268,19 @@ def vary_subjects(db, ws_id, emails: list[dict], inv: Investor, p: CompanyProfil
                 break
         else:
             e["subject"] = " ".join(f"{e['subject']} for {first_name(inv.name)}".split()[-SUBJECT_MAX_WORDS:])
+
+
+def thread_subjects(emails: list) -> None:
+    """Follow-ups go in the same Gmail thread as email 1, so their subject is "Re: <email 1 subject>". Works on
+    dicts and Email rows."""
+    get = (lambda e, k: e[k]) if emails and isinstance(emails[0], dict) else getattr
+    first = next((get(e, "subject") for e in emails if get(e, "step") == 1), "")
+    base = re.sub(r"^\s*re:\s*", "", first or "", flags=re.I).strip()
+    if not base:
+        return
+    for e in emails:
+        if get(e, "step") > 1:
+            if isinstance(e, dict):
+                e["subject"] = f"Re: {base}"
+            else:
+                e.subject = f"Re: {base}"

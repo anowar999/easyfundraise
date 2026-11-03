@@ -10,7 +10,7 @@ import { ErrorState, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api, ApiError, fmtDate } from "@/lib/api";
 
 type Email = { id: string; step: number; hook: string; subject: string; body: string; facts: { text: string; source: string }[]; status: string; scheduled_for: string | null; sent_at: string | null; opened: number; reply: string; error: string; issues: string[] };
-type Seq = { id: string; investor_id: string; card_id: string | null; status: string; persona: string; engine: string; investor: { name: string; firm: string }; emails: Email[] };
+type Seq = { id: string; investor_id: string; card_id: string | null; status: string; persona: string; engine: string; drafting?: boolean; investor: { name: string; firm: string }; emails: Email[] };
 const PERSONAS = [
   ["momentum", "Momentum"],
   ["warm-intro", "Warm intro"],
@@ -139,7 +139,8 @@ export default function SequencePage() {
   const { id } = useParams<{ id: string }>();
   const toast = useToast();
   const qc = useQueryClient();
-  const q = useQuery<Seq>({ queryKey: ["sequence", id], queryFn: () => api(`/sequences/${id}`) });
+  // Add to outreach answers at once; the personalised AI versions land a few seconds later, so poll until then.
+  const q = useQuery<Seq>({ queryKey: ["sequence", id], queryFn: () => api(`/sequences/${id}`), refetchInterval: (qq) => (qq.state.data?.drafting ? 3000 : false) });
   const approve = useMutation({
     mutationFn: (confirm: boolean) => api<Seq>(`/sequences/${id}/approve`, { method: "POST", json: { confirm } }),
     onSuccess: (s) => {
@@ -194,8 +195,13 @@ export default function SequencePage() {
       )}
       <h1 className="text-xl font-semibold">Sequence for {s.investor.name}</h1>
       <p className="text-sm text-muted mb-3">
-        {s.investor.firm} · status: <b>{s.status}</b> · written by {s.engine === "template" ? "the template engine" : "Claude"}
+        {s.investor.firm} · status: <b>{s.status}</b> · written by {s.drafting ? "your agent (writing now)" : s.engine === "template" ? "the template engine" : "Claude"}
       </p>
+      {s.drafting && (
+        <div role="status" className="mb-4 flex items-center gap-2 rounded-xl border border-brand/30 bg-brand/5 px-3 py-2 text-sm">
+          <RefreshCw size={14} className="animate-spin text-brand" /> Your agent is personalising these emails for {s.investor.name}. They update here in a few seconds.
+        </div>
+      )}
       {!locked ? (
         <div className="card p-3 mb-4 flex flex-wrap items-center gap-2">
           <span className="text-sm text-muted">Change the approach</span>
@@ -231,7 +237,7 @@ export default function SequencePage() {
       )}
       <div className="space-y-4">
         {s.emails.map((e) => (
-          <EmailEditor key={e.id} seqId={s.id} e={e} disabled={locked} />
+          <EmailEditor key={`${e.id}:${e.body.length}:${e.subject}`} seqId={s.id} e={e} disabled={locked} />
         ))}
       </div>
       {!locked && (

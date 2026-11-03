@@ -38,6 +38,12 @@ def stub(monkeypatch):
     return use
 
 
+def _drafted(client, iid=None):
+    """Add to outreach answers at once with template drafts; the AI versions land in the background."""
+    r = client.post("/sequences", json={"investor_id": iid or _ada(client)["id"]}).json()
+    return client.get(f"/sequences/{r['id']}").json()
+
+
 def _ada(client):
     return client.get("/investors", params={"q": "Ada"}).json()["items"][0]
 
@@ -59,14 +65,14 @@ def test_ai_draft_is_grounded_and_routed(client, stub):
     client.put("/workspace/profile", json={"company_name": "DocAI", "one_liner": "AI triage for clinics",
                                            "sectors": ["Digital Health & HealthTech"]})
     s = stub([GOOD])
-    seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
+    seq = _drafted(client)
     assert seq["engine"] == "claude-opus-5-5"
     call = s.calls[0]
     assert call["output_config"]["format"]["type"] == "json_schema"  # structured output
     assert call["fallbacks"] == "default" and "server-side-fallback-2026-07-01" in call["betas"]
     assert "never invent" in call["system"]
     e1 = seq["emails"][0]
-    assert "reply 'no'" in e1["body"] and e1["issues"] == []  # opt-out appended, lint clean
+    assert "reply 'no'" not in e1["body"] and e1["issues"] == []  # no opt-out line, lint clean
     assert any("Medibot" in f["text"] for f in e1["facts"])  # cited facts come from the fact pack
 
 
@@ -75,7 +81,7 @@ def test_ai_draft_falls_back_when_lint_fails(client, stub):
     bad = json.loads(json.dumps(GOOD))
     bad["emails"][0]["body"] = "Hi Ada,\n\nClick here for a guaranteed return!!!"
     stub([bad])
-    seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
+    seq = _drafted(client)
     assert seq["engine"] == "template"
 
 
@@ -85,11 +91,11 @@ def test_money_talk_is_redrafted_then_falls_back(client, stub):
     money["emails"][0]["body"] = ("Hi Ada,\n\nThe round sits in the range of your EUR 350-500K first tickets, so one "
                                   "short call should tell us both quickly whether it fits.")
     s = stub([money, GOOD])
-    seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
+    seq = _drafted(client)
     assert len(s.calls) == 2 and seq["engine"] != "template"  # redrafted once, clean the second time
     assert all("ticket" not in e["body"].lower() for e in seq["emails"])
     stub([money, money])
-    seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
+    seq = _drafted(client)
     assert seq["engine"] == "template"
     assert not any(w in e["body"].lower() for e in seq["emails"] for w in ("invest", "ticket", "round of", "raising"))
 
@@ -104,7 +110,7 @@ def test_template_tier_never_calls_model(client, stub):
 def test_refusal_falls_back(client, stub):
     set_tier(client, "pro")
     stub([NS(content=[], stop_reason="refusal", model="claude-opus-5-5", usage=NS(input_tokens=1, output_tokens=0))])
-    assert client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()["engine"] == "template"
+    assert _drafted(client)["engine"] == "template"
 
 
 def test_chat_tools_change_tracker_by_number(client, stub):
@@ -243,3 +249,14 @@ def test_calendar_api_off_is_not_called_expired():
     scope = httpx.Response(403, json={"error": {"message": "Insufficient Permission",
                                                 "errors": [{"reason": "insufficientPermissions"}]}})
     assert isinstance(calendar.blocked(scope), GmailRevoked)
+
+
+def test_add_to_outreach_answers_at_once_then_ai_lands(client, stub):
+    set_tier(client, "pro")
+    stub([GOOD])
+    r = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
+    assert r["drafting"] and r["engine"] == "drafting" and all(e["issues"] == [] for e in r["emails"])
+    s = client.get(f"/sequences/{r['id']}").json()
+    assert not s["drafting"] and s["engine"] == "claude-opus-5-5" and "Medibot" in s["emails"][0]["body"]
+    first = s["emails"][0]["subject"]
+    assert [e["subject"] for e in s["emails"][1:]] == [f"Re: {first}", f"Re: {first}"]  # follow-ups in the same thread

@@ -16,8 +16,22 @@ from .services.mailer import poll_replies, send_due
 log = logging.getLogger("easyfundraise.worker")
 
 
+def release_stuck_drafts(db) -> int:
+    """A background AI draft that never finished (e.g. the API restarted) keeps its template emails."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+
+    from .models import Sequence
+    n = db.execute(update(Sequence).where(Sequence.engine == "drafting",
+                                          Sequence.created_at < datetime.now(UTC) - timedelta(minutes=5))
+                   .values(engine="template")).rowcount
+    db.commit()
+    return n
+
+
 def tick(n: int) -> None:
-    jobs = [("reminders", fire_due_reminders), ("send", send_due), ("call briefs", prepare_call_briefs),
+    jobs = [("stuck drafts", release_stuck_drafts), ("reminders", fire_due_reminders), ("send", send_due), ("call briefs", prepare_call_briefs),
             ("daily briefs", send_daily_briefs)]
     if n % 5 == 0:
         jobs.append(("replies", poll_replies))

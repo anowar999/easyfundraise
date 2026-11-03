@@ -27,8 +27,8 @@ def test_sequence_draft_limits_and_lint(client):
     assert r.status_code == 409 and r.json()["needs_signature"]
     client.patch("/workspace/me", json={"signature": "Sam\nDocAI"})
     r = client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True})
-    assert r.status_code == 409 and r.json()["needs_reveal"]  # sending needs the contact (ASP-01 credit)
-    client.post(f"/investors/{seq['investor_id']}/reveal")
+    # adding to outreach revealed the contact by itself (one credit), so no "reveal first" step
+    assert client.get("/workspace").json()["usage"]["reveals_month"] == 1
     r = client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True})
     assert r.status_code == 409 and r.json()["needs_gmail"]
     client.get("/gmail/connect", follow_redirects=False)  # fake mailbox in tests
@@ -56,7 +56,7 @@ def test_trial_can_draft_three_samples(client):
 def test_lint_catches_spam():
     issues = outreach.lint("URGENT OFFER", "Click here! bit.ly/x http://a http://b", 1)
     assert any("Spam" in i for i in issues) and any("shortener" in i for i in issues)
-    assert any("opt-out" in i for i in issues) and any("one link" in i for i in issues)
+    assert any("one link" in i for i in issues)
 
 
 def test_send_slot_is_in_investor_window():
@@ -99,10 +99,7 @@ def test_send_all_reports_then_schedules_ready_drafts(client):
     seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
     assert seq["auto"] is None  # auto-send is off unless the founder turns it on
     lst = client.get("/sequences").json()
-    assert lst["auto_send"] is False and lst["items"][0]["blocker"] == "Reveal this investor's email first"
-    r = client.post("/sequences/send-all").json()
-    assert r["needs_confirm"] and r["ready"] == [] and r["skipped"][0]["name"] == ada["name"]
-    client.post(f"/investors/{ada['id']}/reveal")
+    assert lst["auto_send"] is False and lst["items"][0]["blocker"] is None  # contact revealed automatically
     r = client.post("/sequences/send-all").json()
     assert [x["name"] for x in r["ready"]] == [ada["name"]] and r["from"]
     assert client.get(f"/sequences/{seq['id']}").json()["status"] == "draft"  # preview changes nothing
@@ -132,4 +129,4 @@ def test_write_email_then_send_it_through_outreach(client):
                                           "first_email": {"subject": "My own subject", "body": e["body"]}}).json()
     first = seq["emails"][0]
     assert first["subject"] == "My own subject" and first["issues"] == []
-    assert first["body"].endswith("Sam\nDocAI") and "reply 'no'" in first["body"].lower()
+    assert first["body"].endswith("Sam\nDocAI") and "reply 'no'" not in first["body"].lower()
