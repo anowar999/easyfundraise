@@ -150,7 +150,7 @@ def draft_sequence(inv: Investor, p: CompanyProfile | None, persona: str = "mome
                                                    ask if step == 1 else cta, OPT_OUT] if x))
         e1, e2, e3 = bodies
         hooks = ["playbook-1", "playbook-2", "playbook-3"]
-        subjects = [subj1, f"{company}: {plan[2]['focus'].lower()}", f"{company}: {plan[3]['focus'].lower()}"]
+        subjects = [subject_options(step, inv, p)[0] for step in (1, 2, 3)]
 
     out = []
     for step, hook, subj, body, facts in [(1, hooks[0], subjects[0], e1, facts1), (2, hooks[1], subjects[1], e2, facts2),
@@ -223,3 +223,48 @@ def schedule(emails: list, start: datetime, tz_name: str, days: dict[int, int] =
     for em in emails:
         em.scheduled_for = next_send_slot(start + timedelta(days=days[em.step]), tz_name)
         em.status = "scheduled"
+
+
+def subject_options(step: int, inv: Investor, p: CompanyProfile | None, current: str = "") -> list[str]:
+    """Different subject lines for the same email, so a founder's outreach doesn't go out as one bulk subject."""
+    import random
+
+    company, one, _ = _pitch(p)
+    fn, firm = first_name(inv.name), (inv.current_firm or inv.company or "").strip()
+    short = " ".join(one.split()[:4]).rstrip(",;:") if one and one != "what we're building" else ""
+    if step == 1:
+        opts = [f"{company} x {firm}" if firm else "", f"{company} for {firm}" if firm else "", f"{fn}, meet {company}",
+                f"Intro: {company}", f"{company} intro for {fn}", f"{short} ({company})" if short else "",
+                f"A note from {company}"]
+    elif step == 2:
+        opts = [f"{fn}, one more on {company}", f"Following up: {company}", f"{company}, a quick follow-up",
+                f"More on {company} for {firm}" if firm else "", f"{company}: the problem we solve"]
+    else:
+        opts = [f"{company}: where we are now", f"{fn}, last note on {company}", f"{company} progress for {firm}" if firm else "",
+                f"Closing the loop on {company}", f"{company}: market and traction"]
+    opts = [" ".join(o.split()[:SUBJECT_MAX_WORDS]) for o in opts if o]
+    random.Random(f"{inv.id}:{step}").shuffle(opts)  # each investor starts from a different pattern
+    return ([current] if current else []) + [o for o in opts if o != current]
+
+
+def vary_subjects(db, ws_id, emails: list[dict], inv: Investor, p: CompanyProfile | None) -> None:
+    """Make each step's subject unique across this workspace's other outreach (other investors), in place."""
+    from sqlalchemy import func, select
+
+    from ..models import Email, Sequence
+
+    rows = db.execute(select(Email.step, func.lower(Email.subject)).join(Sequence, Sequence.id == Email.sequence_id)
+                      .where(Email.workspace_id == ws_id, Sequence.investor_id != inv.id)).all()
+    used: dict[int, set[str]] = {}
+    for step, subj in rows:
+        used.setdefault(step, set()).add((subj or "").strip())
+    for e in emails:
+        taken = used.get(e["step"], set())
+        if e["subject"].strip().lower() not in taken:
+            continue
+        for cand in subject_options(e["step"], inv, p)[0:]:
+            if cand.lower() not in taken:
+                e["subject"] = cand
+                break
+        else:
+            e["subject"] = " ".join(f"{e['subject']} for {first_name(inv.name)}".split()[-SUBJECT_MAX_WORDS:])

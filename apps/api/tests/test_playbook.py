@@ -221,3 +221,21 @@ def test_update_all_pending_outreach_keeps_schedules(client):
     after = client.get(f"/sequences/{seq['id']}").json()
     assert after["status"] == "approved" and [e["scheduled_for"] for e in after["emails"]] == when
     assert "9 days" in after["emails"][1]["body"]  # the new email 2
+
+
+def test_subjects_differ_per_investor_and_update_runs_in_batches(client):
+    set_tier(client, "pro")
+    _setup(client)
+    ids = [i["id"] for i in client.get("/investors", params={"q": ""}).json()["items"] if i["name"] in ("Ada Seed", "Cara Angel", "Bob Buyout")]
+    seqs = [client.post("/sequences", json={"investor_id": i}).json() for i in ids]
+    assert len(seqs) >= 2
+    for step in range(3):
+        subs = [s["emails"][step]["subject"].lower() for s in seqs]
+        assert len(set(subs)) == len(subs), subs
+    assert all(e["issues"] == [] for s in seqs for e in s["emails"])
+    r = client.post("/outreach/playbook/redraft", json={"batch": 1}).json()
+    assert r["redrafted"] == 1 and r["left"] == len(seqs) - 1
+    r2 = client.post("/outreach/playbook/redraft", json={"batch": 1, "skip": r["done_ids"]}).json()
+    assert r2["done_ids"] != r["done_ids"] and r2["left"] == len(seqs) - 2
+    again = [client.get(f"/sequences/{s['id']}").json()["emails"][0]["subject"].lower() for s in seqs]
+    assert len(set(again)) == len(again)  # still unique after redrafting
