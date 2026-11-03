@@ -60,7 +60,8 @@ TOOLS = [
        "any saved web research.", {"investor_id": S}, ["investor_id"]),
     _t("research_investor", "Run live web research on an investor's firm: thesis, portfolio, partners, recent news. "
        "Uses one research credit unless cached.", {"investor_id": S}, ["investor_id"]),
-    _t("find_contact", "Find a person by name across the founder's tracker and the investor database. Use before "
+    _t("find_contact", "Find a person by name or email address across the founder's tracker, the investor database "
+       "and the outreach list. Use before "
        "acting on 'email X' or 'move X'. Returns every match so you can ask which one when there are several.",
        {"name": S}, ["name"]),
     _t("list_shortlist", "Investors saved to the shortlist."),
@@ -94,7 +95,7 @@ TOOLS = [
     _t("remember", "Save a durable fact about the company, the raise or what works.",
        {"text": S, "kind": {"type": "string", "enum": ["fact", "preference", "worked", "raise"]}}, ["text"]),
     _t("list_email_sequences", "The outreach list: every investor added to outreach (each has a drafted or live email "
-       "sequence), with counts by status. Use this for any question about outreach.",
+       "sequence), with counts by status. For each email's status and send time use list_outreach.",
        {"investor_id": S}),
     _t("get_email_playbook", "The founder's email playbook: each email's main focus and what it says, what we're "
        "looking for (the ask), their strengths, the current round/progress update and how many follow-ups are unsent."),
@@ -116,7 +117,13 @@ TOOLS = [
     _t("get_outreach_stats", "Outreach results: emails sent, scheduled, open and reply rates, interested replies, "
        "bounces, results by email 1/2/3, and whether sending is paused."),
     _t("get_email_sequence", "One investor's emails on the outreach list: each email's subject, body, status and "
-       "send time. sequence is a sequence_id or the investor's name.", {"sequence": S}, ["sequence"]),
+       "send time. sequence is a sequence_id, the investor's name or their email address.", {"sequence": S},
+       ["sequence"]),
+    _t("list_outreach", "Everyone on the outreach list with each email's status (draft, scheduled, sent, failed, "
+       "cancelled), scheduled or sent time, opens and replies, plus what blocks a draft. Use for any question "
+       "about outreach status, 'what is scheduled', 'did my email to X go out', 'who replied'. status filters "
+       "sequences (draft, approved, stopped, replied, done); scheduled_only lists just upcoming emails.",
+       {"status": S, "scheduled_only": B}),
     _t("edit_outreach_email", "Rewrite one unsent email in a sequence (applied now): pass the new subject and/or "
        "body in full. step is 1, 2 or 3. Sent emails can't change.",
        {"sequence": S, "step": INT, "subject": S, "body": S}, ["sequence", "step"]),
@@ -366,6 +373,23 @@ def run(c: Ctx, name: str, args: dict, actions: list) -> str:  # noqa: C901 - on
         q = (args.get("name") or "").strip()
         if len(q) < 2:
             return "Give at least two letters of the name."
+        if "@" in q:  # by email: tracker cards, and investors this workspace revealed or emailed
+            from ..models import Email, Reveal
+
+            em = q.lower()
+            cards = db.scalars(select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.deleted_at.is_(None),
+                                                        func.lower(FunnelCard.email) == em).limit(10)).all()
+            known = select(Reveal.investor_id).where(Reveal.workspace_id == c.ws_id).union(
+                select(Sequence.investor_id).join(Email, Email.sequence_id == Sequence.id)
+                .where(Sequence.workspace_id == c.ws_id, func.lower(Email.to_email) == em))
+            invs = db.scalars(select(Investor).where(func.lower(Investor.email) == em, Investor.id.in_(known))).all()
+            seqs = db.scalars(select(Sequence).where(Sequence.workspace_id == c.ws_id,
+                                                     Sequence.investor_id.in_([i.id for i in invs]))).all() if invs else []
+            return json.dumps({
+                "in_tracker": [{"number": x.number, "card_id": str(x.id), "name": x.name, "firm": x.firm,
+                                "stage": STAGES[x.stage - 1]} for x in cards],
+                "in_database": [_inv_row(i, p) for i in invs],
+                "on_outreach_list": [{"sequence_id": str(s.id), "status": s.status} for s in seqs]})
         cards = db.scalars(select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.deleted_at.is_(None),
                                                     or_(FunnelCard.name.ilike(f"%{q}%"), FunnelCard.firm.ilike(f"%{q}%")))
                            .limit(10)).all()
@@ -523,7 +547,7 @@ def run(c: Ctx, name: str, args: dict, actions: list) -> str:  # noqa: C901 - on
                            "items": [{"sequence_id": str(sq.id), "investor": n, "status": sq.status,
                                       "drafted": str(sq.created_at.date())} for sq, n in rows[:20]]})
 
-    if name in ("get_outreach_stats", "get_email_sequence", "edit_outreach_email", "redraft_sequence",
+    if name in ("list_outreach", "get_outreach_stats", "get_email_sequence", "edit_outreach_email", "redraft_sequence",
                 "propose_stop_sequence", "pause_sending", "propose_resume_sending", "propose_send_all"):
         return _outreach_tool(c, name, args, actions)
 
@@ -666,6 +690,12 @@ def _find_sequence(c: Ctx, ref) -> Sequence | None:
     name = str(ref or "").strip()
     if not name:
         return None
+    if "@" in name:
+        from ..models import Email
+
+        return c.db.scalars(select(Sequence).join(Email, Email.sequence_id == Sequence.id)
+                            .where(Sequence.workspace_id == c.ws_id, func.lower(Email.to_email) == name.lower())
+                            .order_by(Sequence.created_at.desc())).first()
     return c.db.scalars(select(Sequence).join(Investor, Investor.id == Sequence.investor_id)
                         .where(Sequence.workspace_id == c.ws_id, Sequence.status != "stopped",
                                Investor.name.ilike(f"%{name}%")).order_by(Sequence.created_at.desc())).first()
@@ -675,6 +705,29 @@ def _outreach_tool(c: Ctx, name: str, args: dict, actions: list) -> str:  # noqa
     from ..models import GmailAccount
 
     db = c.db
+    if name == "list_outreach":
+        from ..routers.sequences import blocker
+
+        q = select(Sequence).where(Sequence.workspace_id == c.ws_id).order_by(Sequence.created_at.desc())
+        if args.get("status"):
+            q = q.where(Sequence.status == str(args["status"]))
+        rows = []
+        for s in db.scalars(q.limit(60)).all():
+            inv = db.get(Investor, s.investor_id)
+            ems = sorted(s.emails, key=lambda e: e.step)
+            if args.get("scheduled_only"):
+                ems = [e for e in ems if e.status == "scheduled"]
+                if not ems:
+                    continue
+            rows.append({"sequence_id": str(s.id), "investor": inv.name if inv else "", "firm": (inv.current_firm or inv.company) if inv else "",
+                         "to": next((e.to_email for e in s.emails if e.to_email), ""), "status": s.status,
+                         "blocker": blocker(c, s) if s.status == "draft" else None,
+                         "emails": [{"step": e.step, "subject": e.subject, "status": e.status,
+                                     "scheduled_for": e.scheduled_for, "sent_at": e.sent_at, "opened": e.open_count,
+                                     "reply": e.reply_kind, "error": e.error} for e in ems]})
+        return json.dumps({"now_utc": datetime.now(UTC), "sequences": rows,
+                           "note": "Scheduled emails go out from the founder's Gmail at their time, in the investor's "
+                                   "local morning window; they appear in Gmail Sent only once sent."}, default=str)
     if name == "get_outreach_stats":
         from ..routers.outreach import stats
 

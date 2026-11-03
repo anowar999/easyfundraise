@@ -36,3 +36,21 @@ def test_agent_pauses_and_offers_send_all_without_ai(client):
     assert m["actions"][0]["type"] == "outreach" and client.get("/gmail").json()["paused_until"]
     m = client.post("/agent/chat", json={"text": "Send all founders"}).json()
     assert m["actions"][0]["href"] == "/app/outreach?send_all=1"  # a button to the confirm screen, never a send
+
+
+def test_agent_finds_outreach_by_email_and_lists_scheduled(client, stub):  # noqa: F811
+    import json
+    set_tier(client, "pro")
+    client.patch("/workspace/me", json={"signature": "Sam"})
+    client.get("/gmail/connect", follow_redirects=False)
+    seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()  # reveals Ada by itself
+    client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True})
+    s = stub([_turn(("find_contact", {"name": "ada@seedfund.vc"}), ("get_email_sequence", {"sequence": "ada@seedfund.vc"}),
+                    ("list_outreach", {"scheduled_only": True})), DONE])
+    client.post("/agent/chat", json={"text": "Did my email to ada@seedfund.vc go out?"})
+    results = [b for m in s.calls[1]["messages"] if isinstance(m["content"], list) for b in m["content"]
+               if isinstance(b, dict) and b.get("type") == "tool_result"]
+    found, one, up = (json.loads(r["content"]) for r in results)
+    assert found["in_database"][0]["name"] == "Ada Seed" and found["on_outreach_list"][0]["status"] == "approved"
+    assert one["sequence_id"] == seq["id"] and one["emails"][0]["status"] == "scheduled"
+    assert up["sequences"][0]["emails"][0]["scheduled_for"]

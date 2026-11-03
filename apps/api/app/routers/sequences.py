@@ -142,6 +142,21 @@ def list_sequences(c: Ctx = Depends(ctx)):
                       for s, i in rows]}
 
 
+@router.get("/scheduled")
+def scheduled(c: Ctx = Depends(ctx)):
+    """Every outreach email waiting to go out, soonest first, with the investor's time zone for local times."""
+    rows = c.db.execute(select(Email, Sequence, Investor).join(Sequence, Sequence.id == Email.sequence_id)
+                        .join(Investor, Investor.id == Sequence.investor_id)
+                        .where(Email.workspace_id == c.ws_id, Email.status == "scheduled", Sequence.status == "approved")
+                        .order_by(Email.scheduled_for).limit(300)).all()
+    sent_first = {sid for (sid,) in c.db.execute(select(Email.sequence_id).where(
+        Email.workspace_id == c.ws_id, Email.step == 1, Email.status == "sent")).all()}
+    return {"items": [{"email_id": str(e.id), "sequence_id": str(s.id), "step": e.step, "subject": e.subject,
+                       "to": e.to_email, "scheduled_for": e.scheduled_for, "investor": inv.name,
+                       "firm": inv.current_firm or inv.company, "timezone": inv.timezone or "UTC",
+                       "can_send_now": e.step == 1 or s.id in sent_first} for e, s, inv in rows]}
+
+
 @router.get("/{sid}")
 def get_sequence(sid: str, c: Ctx = Depends(ctx)):
     s = _get(c, sid)
@@ -320,6 +335,27 @@ def stop(sid: str, c: Ctx = Depends(ctx)):
             e.status = "cancelled"
     c.db.commit()
     return {"ok": True}
+
+
+@router.post("/{sid}/emails/{eid}/send-now")
+def send_now(sid: str, eid: str, c: Ctx = Depends(ctx)):
+    """Move one scheduled email to now; the sender picks it up within a minute (daily cap and safety checks still
+    apply). A follow-up can only go once email 1 has been sent, so it stays in the same thread."""
+    c.require_editor()
+    s = _get(c, sid)
+    em = next((e for e in s.emails if str(e.id) == eid), None)
+    if em is None or em.status != "scheduled" or s.status != "approved":
+        raise ApiError(409, "EF-SEQ-011", "This email isn't scheduled")
+    if em.step > 1 and not any(e.step == 1 and e.status == "sent" for e in s.emails):
+        raise ApiError(409, "EF-SEQ-012", "Email 1 hasn't gone out yet", "Send email 1 first; follow-ups reply in its thread.")
+    now = datetime.now(UTC)
+    em.scheduled_for, em.error = now, ""
+    acc = c.db.get(GmailAccount, c.user.id)
+    if acc is not None and acc.next_send_at and acc.next_send_at > now:  # the founder asked for this one now
+        acc.next_send_at = now
+    c.audit("sequence.send_now", str(em.id))
+    c.db.commit()
+    return {"ok": True, "scheduled_for": now}
 
 
 @router.get("/nudge/{card_id}")
