@@ -27,6 +27,7 @@ from ..models import (
     Exclusion,
     FunnelCard,
     GmailAccount,
+    Investor,
     Notification,
     Reminder,
     Sequence,
@@ -37,7 +38,7 @@ from ..models import (
 from . import ai, follow_up
 from .entitlements import consume, limit, usage
 from .gmail import GmailRevoked, build_mime, client_for, strip_quoted
-from .outreach import next_send_slot
+from .outreach import fill_first_name, next_send_slot
 
 log = logging.getLogger("easyfundraise.mailer")
 ROLE_PREFIXES = ("info@", "press@", "hello@", "contact@", "admin@", "support@", "team@", "office@")
@@ -258,6 +259,12 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
 
     # A one-off reply written on a tracker card carries the Gmail thread and the Message-ID it answers.
     reply_thread, reply_to = (em.gmail_thread_id, em.rfc_message_id) if direct else ("", "")
+
+    # Merge field: {first name} becomes the recipient's first name in what is actually sent.
+    who = (db.get(Investor, seq.investor_id).name if seq is not None and seq.investor_id else
+           db.get(FunnelCard, em.card_id).name if em.card_id and db.get(FunnelCard, em.card_id) else "")
+    if "first" in (em.body + em.subject).lower():
+        em.body, em.subject = fill_first_name(em.body, who), fill_first_name(em.subject, who)
 
     em.open_token = em.open_token or secrets.token_urlsafe(18)
     html_part = pixel_html(em.body, em.open_token) if ws.tracking_enabled else None

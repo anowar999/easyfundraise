@@ -323,6 +323,7 @@ def preview_playbook(body: PreviewIn, c: Ctx = Depends(ctx)):
     from ..models import CompanyProfile
     from ..services import agent
     from ..services.entitlements import rate_limit
+    from ..services.outreach import with_first_name_field
 
     rate_limit(c.db, f"preview:{c.ws_id}", 30, 3600)
     inv = _sample_investor(c, body.investor_id, body.skip)
@@ -332,7 +333,8 @@ def preview_playbook(body: PreviewIn, c: Ctx = Depends(ctx)):
                                           c.user.signature, _merged(c, body))
     c.db.commit()
     return {"investor": {"id": str(inv.id), "name": inv.name, "firm": inv.current_firm or inv.company},
-            "engine": engine, "emails": [{"step": e["step"], "subject": e["subject"], "body": e["body"],
+            "engine": engine, "emails": [{"step": e["step"], "subject": with_first_name_field(e["subject"], inv.name),
+                                          "body": with_first_name_field(e["body"], inv.name),
                                           "update": bool(e.get("pre_update_body"))} for e in emails]}
 
 
