@@ -202,3 +202,22 @@ def test_preview_shows_first_name_field_and_send_fills_it(client):
     assert r["emails"][0]["body"].startswith("Hi {first name},") and "Ada," not in r["emails"][0]["body"]
     assert fill_first_name("Hi {first name}, {First_Name} {{first name}}", "Ada Seed") == "Hi Ada, Ada Ada"
     assert with_first_name_field("Hi Ada, Adam", "Ada Seed") == "Hi {first name}, Adam"
+
+
+def test_update_all_pending_outreach_keeps_schedules(client):
+    set_tier(client, "pro")
+    client.put("/workspace/profile", json=PROFILE)
+    client.patch("/workspace/me", json={"signature": "Sam"})
+    ada = _ada(client)
+    client.post(f"/investors/{ada['id']}/reveal")
+    client.get("/gmail/connect", follow_redirects=False)
+    seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
+    assert client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True}).status_code == 200
+    when = [e["scheduled_for"] for e in client.get(f"/sequences/{seq['id']}").json()["emails"]]
+    got = _setup(client)
+    assert got["pending"] == 1
+    r = client.post("/outreach/playbook/redraft").json()
+    assert r["redrafted"] == 1 and r["scheduled_kept"] == 1 and r["back_to_draft"] == 0
+    after = client.get(f"/sequences/{seq['id']}").json()
+    assert after["status"] == "approved" and [e["scheduled_for"] for e in after["emails"]] == when
+    assert "9 days" in after["emails"][1]["body"]  # the new email 2

@@ -16,6 +16,7 @@ export type Playbook = {
   update_at: string | null;
   saved_at: string | null;
   unsent: number;
+  pending: number; // outreach investors nothing has been sent to yet
   money_warning: boolean;
 };
 export type Fill = {
@@ -210,16 +211,22 @@ export function PlaybookEditor({ onSaved }: { onSaved?: () => void }) {
     mutationFn: () => api<Playbook>("/outreach/playbook", { method: "PUT", json: { emails, ask, strengths: strengths.filter((s) => s.trim()) } }),
     onSuccess: (r) => {
       refresh(r);
-      toast("Saved. New drafts are built this way");
+      toast(r.pending ? `Saved. Press “Update ${r.pending} pending investor${r.pending === 1 ? "" : "s"}” to rewrite their emails too` : "Saved. New drafts are built this way");
       onSaved?.();
     },
     onError: (e) => toast(errText(e), "err"),
   });
   const redraft = useMutation({
-    mutationFn: () => api<Playbook & { redrafted: number }>("/outreach/playbook/redraft", { method: "POST" }),
+    mutationFn: () =>
+      api<Playbook & { redrafted: number; scheduled_kept: number; back_to_draft: number; left: number }>("/outreach/playbook/redraft", { method: "POST" }),
     onSuccess: (r) => {
       refresh(r);
-      toast(r.redrafted ? `Redrafted ${r.redrafted} draft${r.redrafted === 1 ? "" : "s"}` : "No unapproved drafts to redraft");
+      if (!r.redrafted) return toast("No pending outreach to update. Everyone has been sent something already");
+      const bits = [`Updated ${r.redrafted} investor${r.redrafted === 1 ? "" : "s"} with these emails.`];
+      if (r.scheduled_kept) bits.push(`${r.scheduled_kept} scheduled keep their send times.`);
+      if (r.back_to_draft) bits.push(`${r.back_to_draft} went back to drafts to check and approve again.`);
+      if (r.left) bits.push(`${r.left} more left: press again to update them.`);
+      toast(bits.join(" "));
     },
     onError: (e) => toast(errText(e), "err"),
   });
@@ -300,9 +307,15 @@ export function PlaybookEditor({ onSaved }: { onSaved?: () => void }) {
         <button className="btn-primary" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
           {save.isPending ? "Saving…" : q.data.saved_at ? "Save changes" : "Save my emails"}
         </button>
-        {q.data.saved_at && (
-          <button className="btn-ghost" onClick={() => redraft.mutate()} disabled={dirty || redraft.isPending} title="Redraft every draft you haven't approved yet. Scheduled and sent emails stay as they are.">
-            <RefreshCw size={15} className={redraft.isPending ? "animate-spin" : ""} /> {redraft.isPending ? "Redrafting…" : "Redraft unapproved drafts"}
+        {q.data.saved_at && q.data.pending > 0 && (
+          <button
+            className={dirty ? "btn-ghost" : "btn-primary"}
+            onClick={() => redraft.mutate()}
+            disabled={dirty || redraft.isPending}
+            title={dirty ? "Save first, then update your pending investors" : "Rewrite the emails of every outreach investor who hasn't been sent anything yet. Anyone already emailed stays as they are."}
+          >
+            <RefreshCw size={15} className={redraft.isPending ? "animate-spin" : ""} />{" "}
+            {redraft.isPending ? "Updating…" : `Update ${q.data.pending} pending investor${q.data.pending === 1 ? "" : "s"}`}
           </button>
         )}
       </div>

@@ -175,9 +175,14 @@ export default function SequencePage() {
   const locked = s.status !== "draft";
   return (
     <div className="max-w-3xl">
-      <Link href={`/app/investors/${s.investor_id}`} className="text-sm text-muted flex items-center gap-1 mb-3">
-        <ArrowLeft size={16} /> {s.investor.name}
-      </Link>
+      <div className="flex items-center justify-between gap-3 mb-3 text-sm">
+        <Link href="/app/outreach" className="text-muted hover:text-brand flex items-center gap-1">
+          <ArrowLeft size={16} /> Outreach
+        </Link>
+        <Link href={`/app/investors/${s.investor_id}`} className="text-muted hover:text-brand">
+          {s.investor.name}&apos;s profile →
+        </Link>
+      </div>
       {fresh && s.status === "draft" && (
         <div role="status" className="mb-4 flex gap-3 rounded-2xl border border-emerald-600/25 bg-emerald-50 p-4 text-sm text-emerald-900">
           <CheckCircle2 size={20} className="shrink-0 text-emerald-600" />

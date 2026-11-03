@@ -209,7 +209,8 @@ def stats(days: int = 90, c: Ctx = Depends(ctx)):
 def playbook_out(c: Ctx) -> dict:
     pb = playbook.get(c.workspace)
     texts = [e["message"] for e in pb["emails"]] + pb["strengths"] + [pb["update"]]
-    return {**pb, "unsent": len(playbook.unsent(c.db, c.ws_id)), "money_warning": money_talk(*texts, pb["ask"])}
+    return {**pb, "unsent": len(playbook.unsent(c.db, c.ws_id)), "pending": len(pending_sequences(c)),
+            "money_warning": money_talk(*texts, pb["ask"])}
 
 
 class EmailPlanIn(BaseModel):
@@ -355,16 +356,52 @@ def put_quick_update(body: UpdateIn, c: Ctx = Depends(ctx)):
     return {**playbook_out(c), "changed": changed}
 
 
-def redraft_all(c: Ctx, cap: int = 25) -> dict:
-    """Redraft every sequence that is still a draft (nothing scheduled or sent) with the current playbook."""
-    from .sequences import RegenIn, regenerate
+def pending_sequences(c: Ctx, cap: int | None = None) -> list[Sequence]:
+    """Outreach nothing has gone out on yet: drafts, and approved sequences whose first email is still scheduled."""
+    from ..models import Email
 
-    rows = c.db.scalars(select(Sequence).where(Sequence.workspace_id == c.ws_id, Sequence.status == "draft")
-                        .order_by(Sequence.created_at.desc()).limit(cap)).all()
+    started = select(Email.sequence_id).where(Email.workspace_id == c.ws_id, Email.sequence_id.is_not(None),
+                                              Email.status.in_(["sent", "sending"]))
+    q = (select(Sequence).where(Sequence.workspace_id == c.ws_id, Sequence.status.in_(["draft", "approved"]),
+                                ~Sequence.id.in_(started)).order_by(Sequence.created_at.desc()))
+    return list(c.db.scalars(q.limit(cap) if cap else q).all())
+
+
+def redraft_all(c: Ctx, cap: int = 25) -> dict:
+    """Rewrite every pending sequence with the current emails 1-3 (nothing has been sent on any of them).
+    Scheduled ones keep their send times; one whose new draft needs a fix goes back to drafts for approval."""
+    from ..models import CompanyProfile, Investor
+    from ..services import agent
+    from ..services import outreach as out_svc
+
+    p = c.db.get(CompanyProfile, c.ws_id)
+    rows = pending_sequences(c, cap)
+    kept = back = 0
     for s in rows:
-        regenerate(str(s.id), RegenIn(persona=s.persona if s.persona in ("momentum", "warm-intro", "technical-founder",
-                                                                          "humble-expert") else "momentum"), c)
-    return {"redrafted": len(rows)}
+        inv = c.db.get(Investor, s.investor_id)
+        if inv is None:
+            continue
+        persona = s.persona if s.persona in ("momentum", "warm-intro", "technical-founder", "humble-expert") else "momentum"
+        emails, engine = agent.draft_sequence(c.db, c.workspace, inv, p, persona, c.user.signature)
+        by_step = {e["step"]: e for e in emails}
+        for em in s.emails:
+            e = by_step.get(em.step)
+            if e:
+                em.hook, em.subject, em.body, em.facts = e["hook"], e["subject"], e["body"], e["facts"]
+                em.pre_update_body = e.get("pre_update_body")
+        s.engine = engine
+        if s.status == "approved":
+            if any(out_svc.lint(em.subject, em.body, em.step, c.user.signature) for em in s.emails):
+                s.status = "draft"
+                for em in s.emails:
+                    if em.status == "scheduled":
+                        em.status, em.scheduled_for = "draft", None
+                back += 1
+            else:
+                kept += 1
+    c.db.flush()
+    left = max(0, len(pending_sequences(c)) - len(rows)) if len(rows) == cap else 0
+    return {"redrafted": len(rows), "scheduled_kept": kept, "back_to_draft": back, "left": left}
 
 
 @router.post("/outreach/playbook/redraft")
