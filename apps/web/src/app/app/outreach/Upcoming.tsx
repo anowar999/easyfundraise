@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Send } from "lucide-react";
+import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { Empty, ErrorState, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -57,7 +58,7 @@ export function UpcomingList() {
       </p>
       {items.map((u) => (
         <div key={u.email_id} className="flex items-center gap-3 px-4 py-3">
-          <Link href={`/app/sequences/${u.sequence_id}`} className="flex-1 min-w-0">
+          <Link href={from(`/app/sequences/${u.sequence_id}`, "outreach-scheduled")} className="flex-1 min-w-0">
             <div className="text-sm font-medium truncate">
               {u.investor}
               {u.firm ? <span className="text-muted font-normal">, {u.firm}</span> : null}

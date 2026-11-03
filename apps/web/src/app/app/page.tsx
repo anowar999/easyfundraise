@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, ArrowUp, Bot, CalendarClock, CalendarDays, ChevronRight, FileText, Flame, RefreshCw, Snowflake, Sparkles, Upload } from "lucide-react";
+import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { useState } from "react";
 import { askAgent } from "@/components/AgentChat";
@@ -138,7 +139,7 @@ function SetupCard() {
 
 function Row({ b, right }: { b: Brief; right: string }) {
   return (
-    <Link href={`/app/funnel/${b.id}`} className="flex items-center gap-3 py-3 border-b border-line last:border-0">
+    <Link href={from(`/app/funnel/${b.id}`, "home")} className="flex items-center gap-3 py-3 border-b border-line last:border-0">
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium truncate">{b.name}</div>
         <div className="text-xs text-muted truncate">
