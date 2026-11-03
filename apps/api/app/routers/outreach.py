@@ -194,7 +194,7 @@ def stats(days: int = 90, c: Ctx = Depends(ctx)):
     return {
         "total": total[0] if total else {"sent": 0, "opened": 0, "replied": 0, "positive": 0, "bounced": 0,
                                          "open_rate": 0, "reply_rate": 0},
-        "queued": queued, "by_step": agg(Email.step), "by_hook": agg(Email.hook), "by_persona": agg(Sequence.persona),
+        "queued": queued, "tracking": tracking_state(c), "by_step": agg(Email.step), "by_hook": agg(Email.hook), "by_persona": agg(Sequence.persona),
         "by_hour": agg(func.extract("hour", Email.sent_at)),
         "recent": [{"id": str(e.id), "to": name or e.to_email, "card_id": str(e.card_id) if e.card_id else None,
                     "subject": e.subject, "step": e.step, "status": e.status, "sent_at": e.sent_at,
@@ -204,6 +204,14 @@ def stats(days: int = 90, c: Ctx = Depends(ctx)):
 
 
 # ---------------- email playbook + round/progress update ----------------
+
+
+def tracking_state(c: Ctx) -> dict:
+    """Opens are counted by a 1px image Gmail fetches from Google's servers: it needs an address the internet can
+    reach. On a laptop (localhost) every open stays at 0."""
+    base = get_settings().tracking_base_url.lower()
+    local = any(h in base for h in ("localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal")) or "://192.168." in base
+    return {"enabled": bool(c.workspace.tracking_enabled), "public": not local}
 
 
 def playbook_out(c: Ctx) -> dict:
@@ -421,3 +429,60 @@ def redraft(body: RedraftIn | None = None, c: Ctx = Depends(ctx)):
     c.audit("playbook.redraft", str(c.ws_id), after=out)
     c.db.commit()
     return {**out, **playbook_out(c)}
+
+
+# ---------------- round & progress update to everyone already emailed ----------------
+
+class ProgressIn(BaseModel):
+    text: str = Field(min_length=3, max_length=1500)
+
+
+def _progress_plan(c: Ctx) -> list[dict]:
+    from ..services import progress_update as pu
+
+    return pu.plan(c.db, c.ws_id, datetime.now(UTC))
+
+
+@router.post("/outreach/progress-update/polish")
+def polish_progress(body: ProgressIn, c: Ctx = Depends(ctx)):
+    """AI tidy-up of the founder's update (facts kept as written). Nothing is saved or sent."""
+    from ..services import progress_update as pu
+
+    c.require_editor()
+    text, engine = pu.polish(c.db, c.workspace, body.text)
+    c.db.commit()  # AI usage record
+    return {"text": text, "engine": engine}
+
+
+@router.post("/outreach/progress-update/preview")
+def preview_progress(body: ProgressIn, c: Ctx = Depends(ctx)):
+    """Who it goes to, when it lands in their time zone, and the email one of them will get."""
+    from ..services import progress_update as pu
+
+    rows = _progress_plan(c)
+    sample = rows[0] if rows else None
+    return {"count": len(rows), "moved": sum(1 for r in rows if r["moved"]),
+            "recipients": [{"name": r["name"], "firm": r["firm"], "to": r["to"], "timezone": r["timezone"],
+                            "scheduled_for": r["scheduled_for"], "moved": r["moved"]} for r in rows[:100]],
+            "sample": {"to": sample["name"], "subject": f"Re: {sample['subject']}",
+                       "body": pu.body_for(body.text, c.user.signature or "", sample["name"])} if sample else
+            {"to": "", "subject": "Re: <your first email's subject>", "body": pu.body_for(body.text, c.user.signature or "")}}
+
+
+@router.post("/outreach/progress-update/schedule")
+def schedule_progress(body: ProgressIn, c: Ctx = Depends(ctx)):
+    """Schedules the update to every investor already emailed: 08:35 their time, as a reply in their thread, and
+    3 days later for anyone with another email within a day. The founder's own tap; the sender still paces."""
+    from ..services import progress_update as pu
+    from ..services.entitlements import can
+
+    c.require_editor()
+    if not can(c.db, c.workspace, "send"):
+        raise ApiError(402, "EF-TIER-030", "Upgrade to send emails", "", {"upgrade": True})
+    b, n = pu.schedule(c.db, c.workspace, c.user, body.text, datetime.now(UTC))
+    if n == 0:
+        c.db.rollback()
+        raise ApiError(422, "EF-UPD-001", "Nobody to update yet", "Updates go to investors you've already emailed.")
+    c.audit("progress_update.schedule", str(b.id), after={"emails": n})
+    c.db.commit()
+    return {"ok": True, "scheduled": n, "broadcast_id": str(b.id)}

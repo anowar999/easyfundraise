@@ -1,5 +1,6 @@
 "use client";
 
+import { ChatMarkdown } from "@/lib/markdown";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, MessageSquare, Sparkles, X } from "lucide-react";
 import Link from "next/link";
@@ -80,7 +81,7 @@ export function OutreachAgent() {
       {reply && (
         <div className="mt-2.5 rounded-xl bg-card border border-line p-3">
           <div className="flex items-start gap-2">
-            <p className="flex-1 text-sm whitespace-pre-wrap break-words">{reply.text}</p>
+            <ChatMarkdown source={reply.text} className="flex-1 min-w-0 text-sm" />
             <button className="p-1 -m-1 text-muted hover:text-ink" onClick={() => setReply(null)} aria-label="Close answer">
               <X size={16} />
             </button>

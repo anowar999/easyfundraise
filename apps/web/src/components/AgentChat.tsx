@@ -1,5 +1,6 @@
 "use client";
 
+import { ChatMarkdown } from "@/lib/markdown";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { ArrowRight, CalendarDays, Check, Send, Sparkles, Trash2, X } from "lucide-react";
@@ -141,8 +142,8 @@ export function AgentChat() {
             )}
             {q.data?.items.map((m) => (
               <div key={m.id} className={clsx("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-                <div className={clsx("max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words", m.role === "user" ? "bg-brand text-white rounded-br-sm" : "bg-surface rounded-bl-sm")}>
-                  {m.text}
+                <div className={clsx("max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm break-words", m.role === "user" ? "bg-brand text-white rounded-br-sm whitespace-pre-wrap" : "bg-surface rounded-bl-sm")}>
+                  {m.role === "user" ? m.text : <ChatMarkdown source={m.text} />}
                   {m.actions.length > 0 && (
                     <div className="mt-2 space-y-1.5">
                       {m.actions.map((a) => (

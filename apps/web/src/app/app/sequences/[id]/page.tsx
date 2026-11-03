@@ -141,10 +141,16 @@ export default function SequencePage() {
   const toast = useToast();
   const qc = useQueryClient();
   // Add to outreach answers at once; the personalised AI versions land a few seconds later, so poll until then.
-  const q = useQuery<Seq>({ queryKey: ["sequence", id], queryFn: () => api(`/sequences/${id}`), refetchInterval: (qq) => (qq.state.data?.drafting ? 3000 : false) });
+  const [going, setGoing] = useState<string | null>(null);  // the email just sent with Send now
+  const q = useQuery<Seq>({
+    queryKey: ["sequence", id],
+    queryFn: () => api(`/sequences/${id}`),
+    refetchInterval: (qq) => (qq.state.data?.drafting ? 3000 : going && qq.state.data?.emails.find((e) => e.id === going)?.status !== "sent" ? 5000 : false),
+  });
   const sendNow = useMutation({
     mutationFn: (eid: string) => api(`/sequences/${id}/emails/${eid}/send-now`, { method: "POST" }),
-    onSuccess: () => {
+    onSuccess: (_, eid) => {
+      setGoing(eid);
       qc.invalidateQueries({ queryKey: ["sequence", id] });
       qc.invalidateQueries({ queryKey: ["upcoming"] });
       toast("Sending within a minute. It'll show in your Gmail Sent then.");
@@ -206,18 +212,41 @@ export default function SequencePage() {
         {s.investor.firm} · status: <b>{s.status}</b> · written by {s.drafting ? "your agent (writing now)" : s.engine === "template" ? "the template engine" : "Claude"}
       </p>
       {(() => {
-        // The next email waiting to go out: email 1, or a follow-up once email 1 has gone (same thread).
-        const next = s.status === "approved" ? [...s.emails].sort((a, b) => a.step - b.step).find((e) => e.status === "scheduled") : undefined;
-        const ok = next && (next.step === 1 || s.emails.some((e) => e.step === 1 && e.status === "sent"));
-        return next && ok ? (
+        // The next email waiting to go out: email 1, or a follow-up a day after the email before it (same thread).
+        const sorted = [...s.emails].sort((a, b) => a.step - b.step);
+        const just = going ? s.emails.find((e) => e.id === going) : undefined;
+        if (just)
+          return (
+            <div role="status" className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-green-600/30 bg-green-600/5 px-3 py-2 text-sm">
+              {just.status === "sent" ? (
+                <><CheckCircle2 size={15} className="text-green-600" /> Email {just.step} was sent{just.sent_at ? ` at ${fmtDate(just.sent_at, { hour: "2-digit", minute: "2-digit" })}` : ""}. It&apos;s in your Gmail Sent.</>
+              ) : (
+                <><RefreshCw size={14} className="animate-spin text-green-600" /> Email {just.step} is on its way. It goes out within a minute and then shows in your Gmail Sent.</>
+              )}
+              {just.status === "sent" && <button className="btn-ghost btn-sm ml-auto" onClick={() => setGoing(null)}>OK</button>}
+            </div>
+          );
+        const next = s.status === "approved" ? sorted.find((e) => e.status === "scheduled") : undefined;
+        if (!next) return null;
+        const prev = sorted.find((e) => e.step === next.step - 1);
+        const opensAt = prev?.sent_at ? new Date(new Date(prev.sent_at).getTime() + 24 * 3600 * 1000) : null;
+        const when = next.scheduled_for ? new Date(next.scheduled_for).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "later";
+        const onWay = next.scheduled_for && new Date(next.scheduled_for) <= new Date();
+        const ok = !onWay && (next.step === 1 || (prev?.status === "sent" && opensAt !== null && opensAt <= new Date()));
+        if (next.step > 1 && prev?.status !== "sent") return null;
+        return (
           <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-card px-3 py-2 text-sm">
             <CalendarCheck size={15} className="text-brand" />
-            Email {next.step} is scheduled for {next.scheduled_for ? new Date(next.scheduled_for).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "later"} (your time).
-            <button className="btn-primary btn-sm ml-auto" disabled={sendNow.isPending} onClick={() => sendNow.mutate(next.id)}>
-              {sendNow.isPending ? "Sending…" : "Send now"}
-            </button>
+            {onWay ? `Email ${next.step} is on its way.` : `Email ${next.step} is scheduled for ${when} (your time).`}
+            {ok ? (
+              <button className="btn-primary btn-sm ml-auto" disabled={sendNow.isPending} onClick={() => sendNow.mutate(next.id)}>
+                {sendNow.isPending ? "Sending…" : "Send now"}
+              </button>
+            ) : (
+              !onWay && opensAt && <span className="ml-auto text-xs text-muted">Send now opens {fmtDate(opensAt.toISOString(), { weekday: "short", hour: "2-digit", minute: "2-digit" })}, a day after email {prev?.step}</span>
+            )}
           </div>
-        ) : null;
+        );
       })()}
       {s.drafting && (
         <div role="status" className="mb-4 flex items-center gap-2 rounded-xl border border-brand/30 bg-brand/5 px-3 py-2 text-sm">

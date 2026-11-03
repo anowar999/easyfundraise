@@ -3,12 +3,14 @@ import type { ReactNode } from "react";
 /** Minimal Markdown renderer for our own legal pages and blog posts (headings, paragraphs, lists, bold, links). */
 function inline(text: string): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /\*\*(.+?)\*\*|\[(.+?)\]\((.+?)\)/g;
+  const re = /\*\*(.+?)\*\*|\[(.+?)\]\((.+?)\)|`([^`]+)`/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
     if (m.index > last) out.push(text.slice(last, m.index));
     if (m[1]) out.push(<strong key={m.index}>{m[1]}</strong>);
+    else if (m[4]) out.push(<code key={m.index} className="rounded bg-surface px-1 text-[0.9em]">{m[4]}</code>);
+    else if (!/^(https?:\/\/|\/|mailto:)/.test(m[3])) out.push(m[2]);
     else out.push(<a key={m.index} href={m[3]} className="text-brand underline">{m[2]}</a>);
     last = m.index + m[0].length;
   }
@@ -45,4 +47,51 @@ export function Markdown({ source }: { source: string }) {
       })}
     </>
   );
+}
+
+/** Chat answers from the agents: bold, `code`, links, bullet and numbered lists and line breaks, sized for a reply
+ *  bubble. Plain text in, React out (no raw HTML is ever rendered). */
+export function ChatMarkdown({ source, className = "" }: { source: string; className?: string }) {
+  const out: ReactNode[] = [];
+  const lines = source.replace(/\r/g, "").split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (!l.trim()) {
+      i++;
+      continue;
+    }
+    const bullet = /^\s*[-*•]\s+/;
+    const num = /^\s*\d+[.)]\s+/;
+    if (bullet.test(l) || num.test(l)) {
+      const re = bullet.test(l) ? bullet : num;
+      const items: string[] = [];
+      while (i < lines.length && re.test(lines[i])) items.push(lines[i++].replace(re, ""));
+      const Tag = re === bullet ? "ul" : "ol";
+      out.push(
+        <Tag key={i} className={`${re === bullet ? "list-disc" : "list-decimal"} pl-5 space-y-1`}>
+          {items.map((t, j) => <li key={j}>{inline(t)}</li>)}
+        </Tag>,
+      );
+      continue;
+    }
+    const para: string[] = [];
+    while (i < lines.length && lines[i].trim() && !bullet.test(lines[i]) && !num.test(lines[i])) para.push(lines[i++]);
+    const h = /^#{1,4}\s+(.*)$/.exec(para[0]);
+    if (h && para.length === 1) {
+      out.push(<p key={i} className="font-semibold">{inline(h[1])}</p>);
+      continue;
+    }
+    out.push(
+      <p key={i}>
+        {para.map((t, j) => (
+          <span key={j}>
+            {j > 0 && <br />}
+            {inline(t)}
+          </span>
+        ))}
+      </p>,
+    );
+  }
+  return <div className={`space-y-2 break-words ${className}`}>{out}</div>;
 }
