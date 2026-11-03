@@ -31,6 +31,21 @@ def first_name(name: str) -> str:
     return (name.split() or ["there"])[0]
 
 
+FIRST_NAME_FIELD = "{first name}"
+_FIELD = re.compile(r"\{\{?\s*first[ _]?name\s*\}\}?", re.I)
+
+
+def fill_first_name(text: str, name: str) -> str:
+    """Swap {first name} (also {first_name}, {{first name}}) for the recipient's first name at send time."""
+    return _FIELD.sub(first_name(name or ""), text or "")
+
+
+def with_first_name_field(text: str, name: str) -> str:
+    """The other way round, for previews: the investor's first name shown as {first name}."""
+    fn = first_name(name or "")
+    return re.sub(rf"\b{re.escape(fn)}\b", FIRST_NAME_FIELD, text or "") if fn != "there" else text
+
+
 def _shareable(p: CompanyProfile | None, field: str) -> str:
     if not p:
         return ""

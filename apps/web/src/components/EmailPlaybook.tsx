@@ -151,7 +151,7 @@ function PreviewPane({ draft }: { draft: { emails: EmailPlan[]; ask: string; str
         <div className={clsx("mt-3 space-y-3", run.isPending && "opacity-50")}>
           <div className="text-xs text-muted flex items-center gap-1.5">
             <UserRound size={13} /> For {data.investor.name}
-            {data.investor.firm ? `, ${data.investor.firm}` : ""}
+            {data.investor.firm ? `, ${data.investor.firm}` : ""}. {"{first name}"} becomes each investor's own first name when it's sent.
           </div>
           {data.emails.map((e) => (
             <div key={e.step} className="rounded-lg border border-line bg-card p-3">

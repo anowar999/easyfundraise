@@ -259,3 +259,18 @@ def test_follow_up_date_and_quote_stripping():
     assert follow_up_date("Great, thanks!", sat) is None
     assert strip_quoted("Will update you next week. Best On Sat, 31 Oct 2026 at 01:15, Anow") == \
         "Will update you next week."
+
+
+def test_first_name_field_is_filled_at_send(client):
+    FakeGmail.reset()
+    seq = _approved(client)
+    with SessionLocal() as db:
+        first = db.scalar(select(Email).where(Email.sequence_id == seq["id"], Email.step == 1))
+        first.body = "Hi {first name},\n\nQuick note for {First_Name}."
+        db.get(GmailAccount, first.user_id).next_send_at = None
+        db.commit()
+        mailer.send_due(db, first.scheduled_for + timedelta(seconds=1))
+        db.refresh(first)
+        assert first.status == "sent" and first.body == "Hi Ada,\n\nQuick note for Ada."
+    sent = FakeGmail.sent[-1].get_body(preferencelist=("plain",)).get_content()
+    assert sent.startswith("Hi Ada,") and "{first" not in sent

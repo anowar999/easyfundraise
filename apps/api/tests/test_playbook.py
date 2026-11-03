@@ -191,3 +191,14 @@ def test_fill_reads_the_data_room_sections(client, stub):  # noqa: F811
     assert sent["data_room"]["problem"].startswith("Finance teams") and sent["focus_sources"]["The problem we solve"] == ["problem"]
     r = client.post("/outreach/playbook/fill", json={"refresh": True}).json()
     assert len(st.calls) == 2 and r["source"] == "data room"
+
+
+def test_preview_shows_first_name_field_and_send_fills_it(client):
+    from app.services.outreach import fill_first_name, with_first_name_field
+    set_tier(client, "pro")
+    _setup(client)
+    client.put(f"/shortlist/{_ada(client)['id']}")
+    r = client.post("/outreach/playbook/preview", json=PB).json()
+    assert r["emails"][0]["body"].startswith("Hi {first name},") and "Ada," not in r["emails"][0]["body"]
+    assert fill_first_name("Hi {first name}, {First_Name} {{first name}}", "Ada Seed") == "Hi Ada, Ada Ada"
+    assert with_first_name_field("Hi Ada, Adam", "Ada Seed") == "Hi {first name}, Adam"
