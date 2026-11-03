@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowLeft, BadgeCheck, ChevronLeft, ChevronRight, ExternalLink, Flag, Globe, KanbanSquare, Lock, Mail, Newspaper, PenLine, Plus, RefreshCw, Sparkles, Unlock, Users } from "lucide-react";
+import { BadgeCheck, ChevronLeft, ChevronRight, ExternalLink, Flag, Globe, KanbanSquare, Lock, Mail, Newspaper, PenLine, Plus, RefreshCw, Sparkles, Unlock, Users } from "lucide-react";
+import { Crumbs } from "@/components/Crumbs";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
@@ -244,9 +245,7 @@ export default function InvestorProfile() {
 
   return (
     <div className="pb-20 md:pb-0">
-      <button onClick={() => router.back()} className="text-sm text-muted flex items-center gap-1 mb-3">
-        <ArrowLeft size={16} /> Back
-      </button>
+      <Crumbs fallback={[{ label: "Investors", href: "/app/investors" }]} current={p.name} back />
       <div className="card p-4 md:p-6">
         <div className="flex gap-4">
           <Avatar name={p.name} src={p.photo_url} logoDomain={p.firm_domain} size={72} />

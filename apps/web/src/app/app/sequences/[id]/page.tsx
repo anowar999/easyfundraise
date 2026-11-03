@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, CalendarCheck, CheckCircle2, Eye, Info, Mail, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Crumbs } from "@/components/Crumbs";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -141,6 +142,15 @@ export default function SequencePage() {
   const qc = useQueryClient();
   // Add to outreach answers at once; the personalised AI versions land a few seconds later, so poll until then.
   const q = useQuery<Seq>({ queryKey: ["sequence", id], queryFn: () => api(`/sequences/${id}`), refetchInterval: (qq) => (qq.state.data?.drafting ? 3000 : false) });
+  const sendNow = useMutation({
+    mutationFn: (eid: string) => api(`/sequences/${id}/emails/${eid}/send-now`, { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sequence", id] });
+      qc.invalidateQueries({ queryKey: ["upcoming"] });
+      toast("Sending within a minute. It'll show in your Gmail Sent then.");
+    },
+    onError: (e) => toast(errText(e), "err"),
+  });
   const approve = useMutation({
     mutationFn: (confirm: boolean) => api<Seq>(`/sequences/${id}/approve`, { method: "POST", json: { confirm } }),
     onSuccess: (s) => {
@@ -177,9 +187,7 @@ export default function SequencePage() {
   return (
     <div className="max-w-3xl">
       <div className="flex items-center justify-between gap-3 mb-3 text-sm">
-        <Link href="/app/outreach" className="text-muted hover:text-brand flex items-center gap-1">
-          <ArrowLeft size={16} /> Outreach
-        </Link>
+        <Crumbs fallback={[{ label: "Outreach", href: "/app/outreach" }]} current={s.investor.name} />
         <Link href={`/app/investors/${s.investor_id}`} className="text-muted hover:text-brand">
           {s.investor.name}&apos;s profile →
         </Link>
@@ -197,6 +205,20 @@ export default function SequencePage() {
       <p className="text-sm text-muted mb-3">
         {s.investor.firm} · status: <b>{s.status}</b> · written by {s.drafting ? "your agent (writing now)" : s.engine === "template" ? "the template engine" : "Claude"}
       </p>
+      {(() => {
+        // The next email waiting to go out: email 1, or a follow-up once email 1 has gone (same thread).
+        const next = s.status === "approved" ? [...s.emails].sort((a, b) => a.step - b.step).find((e) => e.status === "scheduled") : undefined;
+        const ok = next && (next.step === 1 || s.emails.some((e) => e.step === 1 && e.status === "sent"));
+        return next && ok ? (
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-card px-3 py-2 text-sm">
+            <CalendarCheck size={15} className="text-brand" />
+            Email {next.step} is scheduled for {next.scheduled_for ? new Date(next.scheduled_for).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "later"} (your time).
+            <button className="btn-primary btn-sm ml-auto" disabled={sendNow.isPending} onClick={() => sendNow.mutate(next.id)}>
+              {sendNow.isPending ? "Sending…" : "Send now"}
+            </button>
+          </div>
+        ) : null;
+      })()}
       {s.drafting && (
         <div role="status" className="mb-4 flex items-center gap-2 rounded-xl border border-brand/30 bg-brand/5 px-3 py-2 text-sm">
           <RefreshCw size={14} className="animate-spin text-brand" /> Your agent is personalising these emails for {s.investor.name}. They update here in a few seconds.

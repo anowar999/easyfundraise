@@ -2,7 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { BookOpen, Mail, PenLine, Send } from "lucide-react";
+import { BookOpen, CalendarClock, Mail, PenLine, Send } from "lucide-react";
+import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
@@ -104,6 +105,10 @@ function PlaybookCard() {
 export default function Outreach() {
   const [tab, setTab] = useState<"list" | "scheduled" | "activity">("list");
   const up = useUpcoming();
+  useEffect(() => {  // ?tab=scheduled / ?tab=activity (breadcrumbs lead back to a tab)
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t === "scheduled" || t === "activity") setTab(t);
+  }, []);
   const s = useQuery<Stats>({ queryKey: ["outreach-stats"], queryFn: () => api("/outreach/stats") });
   const g = useQuery<Gmail>({ queryKey: ["gmail"], queryFn: () => api("/gmail") });
   const pb = usePlaybook();
@@ -116,11 +121,18 @@ export default function Outreach() {
         title="Outreach"
         sub={g.data?.connected ? `Sending from ${g.data.email} · ${g.data.sent_today} of ${g.data.daily_cap} today` : undefined}
         actions={
-          !g.data?.connected && (
-            <Link className="btn-primary" href="/app/settings#gmail">
-              <Mail size={16} /> Connect Gmail
-            </Link>
-          )
+          <>
+            {up.data && up.data.items.length > 0 && (
+              <button className="btn-ghost" onClick={() => setTab("scheduled")} title="See every email waiting to go out, with Send now">
+                <CalendarClock size={16} /> Scheduled ({up.data.items.length})
+              </button>
+            )}
+            {!g.data?.connected && (
+              <Link className="btn-primary" href="/app/settings#gmail">
+                <Mail size={16} /> Connect Gmail
+              </Link>
+            )}
+          </>
         }
       />
       <OutreachAgent />
@@ -166,7 +178,7 @@ export default function Outreach() {
                 </div>
               );
               return e.card_id ? (
-                <Link key={e.id} href={`/app/funnel/${e.card_id}`} className="block hover:bg-surface">
+                <Link key={e.id} href={from(`/app/funnel/${e.card_id}`, "outreach-activity")} className="block hover:bg-surface">
                   {inner}
                 </Link>
               ) : (

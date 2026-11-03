@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { Bell, CheckCheck, Clock } from "lucide-react";
+import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { PageHeader } from "@/components/AppShell";
 import { Empty, ErrorState, ListSkeleton } from "@/components/ui";
@@ -81,7 +82,7 @@ export default function Notifications() {
                 </Link>
                 <div className="flex gap-2 mt-2">
                   {x.card_id && (
-                    <Link href={`/app/funnel/${x.card_id}`} className="btn-primary btn-sm">
+                    <Link href={from(`/app/funnel/${x.card_id}`, "alerts")} className="btn-primary btn-sm">
                       Do it now
                     </Link>
                   )}

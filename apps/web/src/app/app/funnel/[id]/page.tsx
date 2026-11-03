@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowLeft, Bell, Check, Copy, ExternalLink, Mail, MessageCircle, Pencil, Phone, RefreshCw, Sparkles, Star, Trash2 } from "lucide-react";
+import { Bell, Check, Copy, ExternalLink, Mail, MessageCircle, Pencil, Phone, RefreshCw, Sparkles, Star, Trash2 } from "lucide-react";
+import { Crumbs } from "@/components/Crumbs";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -111,9 +112,7 @@ export default function CardPage() {
 
   return (
     <div className="pb-6">
-      <Link href="/app/funnel" className="text-sm text-muted flex items-center gap-1 mb-3">
-        <ArrowLeft size={16} /> Investor tracker
-      </Link>
+      <Crumbs fallback={[{ label: "Investor tracker", href: "/app/funnel" }]} current={c.name} />
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold truncate flex items-center gap-2">

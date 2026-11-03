@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { AlertTriangle, CheckCircle2, MailPlus, Search, Send, Zap } from "lucide-react";
+import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmSend, type SendPreview } from "@/components/ConfirmSend";
@@ -158,7 +159,7 @@ export function OutreachList() {
           <div className="divide-y divide-line">
             {items.map((x) => (
               <div key={x.id} className="flex items-center gap-3 px-4 py-3">
-                <Link href={`/app/sequences/${x.id}`} className="flex-1 min-w-0">
+                <Link href={from(`/app/sequences/${x.id}`, "outreach")} className="flex-1 min-w-0">
                   <div className="font-medium truncate">{x.investor.name}</div>
                   <div className="text-xs text-muted truncate">{x.investor.firm}</div>
                   {x.blocker && (
@@ -168,7 +169,7 @@ export function OutreachList() {
                   )}
                 </Link>
                 <span className={clsx("chip text-xs hidden sm:inline-flex", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>
-                <Link href={`/app/sequences/${x.id}`} className="btn-ghost btn-sm">
+                <Link href={from(`/app/sequences/${x.id}`, "outreach")} className="btn-ghost btn-sm">
                   Review
                 </Link>
                 {x.status === "draft" && !x.blocker && <SendOne x={x} />}
