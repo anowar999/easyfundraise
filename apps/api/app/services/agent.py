@@ -525,6 +525,10 @@ How to work:
   ask for several things. A "how many" question gets the number first. Don't add unrequested facts, don't revisit
   earlier questions, and don't add a "next step" unless they ask what to do. Name investors with their firm.
 - "Outreach" means the outreach list (list_email_sequences), not the investor tracker or shortlist.
+- On Outreach you can do anything the founder can there: read results (get_outreach_stats), read and rewrite one
+  investor's unsent emails (get_email_sequence, edit_outreach_email), redraft one (redraft_sequence) or all drafts
+  (propose_redraft), pause sending (pause_sending), and offer to resume, stop a sequence or send all
+  (propose_resume_sending, propose_stop_sequence, propose_send_all). Sending only ever happens on a confirm screen.
 - The email playbook shapes emails 1, 2 and 3. Email 1: about them and the synergy, what we're building, what
   we're looking for, a call. Email 2: its focus (the problem by default), what we're building said differently, the
   ask, a call. Email 3: its focus (market and traction by default), the ask, a call. "Email 2 should focus on ..."
@@ -619,6 +623,12 @@ def fallback_chat(c, text: str, actions: list) -> str:
         e = {"focus": head.strip(), "message": rest.strip()} if sep and len(head) <= 60 and rest.strip() else {"message": said}
         agent_tools.run(c, "set_email_playbook", {f"email{m.group(1)}": e}, actions)
         return f"Saved as what email {m.group(1)} says in your playbook."
+    if re.search(r"\bpause (?:all )?(?:sending|emails|outreach)\b", low):
+        r = agent_tools.run(c, "pause_sending", {}, actions)
+        return "Paused. Nothing leaves your Gmail until you resume." if r == "Paused." else r
+    if re.search(r"\bsend (?:them )?all\b", low):
+        agent_tools.run(c, "propose_send_all", {}, actions)
+        return "Tap below to see who's ready and who's blocked. Nothing sends until you confirm there."
     if low.startswith("remember"):
         agent_tools.run(c, "remember", {"text": text.split(" ", 1)[-1]}, actions)
         return "Saved to memory."
@@ -688,6 +698,14 @@ def apply_action(c, msg: ChatMessage, action_id: str) -> dict:
         from ..routers.sequences import DraftIn, draft
 
         result["sequence_id"] = draft(DraftIn(investor_id=a["args"]["investor_id"]), c)["id"]
+    elif a["type"] == "stop_sequence":
+        from ..routers.sequences import stop
+
+        stop(a["args"]["sequence_id"], c)
+    elif a["type"] == "resume_sending":
+        from ..routers.outreach import gmail_resume
+
+        gmail_resume(c)
     elif a["type"] == "redraft":
         from ..routers.outreach import redraft_all
 
