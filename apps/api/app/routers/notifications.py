@@ -118,8 +118,10 @@ def home_meetings(days: int = 7, c: Ctx = Depends(ctx)):
         return out
     try:
         evs = calendar.events(c, max(1, min(days, 30))) or []
+    except calendar.CalendarBlocked as e:
+        return {**out, "error": e.message, "fix_url": e.link}
     except GmailRevoked:
-        return {**out, "error": "Google access expired. Reconnect your calendar."}
+        return {**out, "error": "Google access expired. Reconnect your calendar.", "reconnect": True}
     except Exception:  # Google hiccup
         return {**out, "error": "Couldn't reach Google Calendar just now."}
     out["meetings"] = [e for e in evs if e["raise_related"]][:8]

@@ -155,6 +155,8 @@ type Meetings = {
   connected: boolean;
   demo: boolean;
   error: string;
+  reconnect?: boolean; // reconnecting Google fixes it
+  fix_url?: string; // otherwise, the page that fixes it (e.g. turn on the Calendar API)
   checked_at: string;
   meetings: { title: string; start: string; tracker_card: { card_id: string; name: string; firm: string } | null }[];
   other: { title: string; start: string }[];
@@ -184,10 +186,19 @@ function MeetingsCard() {
         <a href="/api/gmail/connect?calendar=1&next=/app" className="mt-2 block text-sm text-brand font-medium">
           Connect Google Calendar to see them here →
         </a>
-      ) : d.error ? (
+      ) : d.error && d.reconnect ? (
         <a href="/api/gmail/connect?calendar=1&next=/app" className="mt-2 block text-sm text-warn">
           {d.error} Reconnect →
         </a>
+      ) : d.error ? (
+        <p className="mt-2 text-sm text-warn">
+          {d.error}{" "}
+          {d.fix_url && (
+            <a href={d.fix_url} target="_blank" rel="noreferrer" className="font-medium underline">
+              Fix it in Google Cloud →
+            </a>
+          )}
+        </p>
       ) : (
         <>
           {d.meetings.length === 0 ? (
