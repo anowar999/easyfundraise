@@ -23,7 +23,7 @@ export type Fill = {
   ask: string;
   strengths: string[];
   update_example: string;
-  source: "deck" | "profile" | "generic";
+  source: "data room" | "deck" | "profile" | "generic";
   prompts: { label: string; text: string; send?: boolean }[];
 };
 type Preview = { investor: { id: string; name: string; firm: string }; engine: string; emails: { step: number; subject: string; body: string; update: boolean }[] };
@@ -44,7 +44,7 @@ export function usePlaybook() {
   return useQuery<Playbook>({ queryKey: ["playbook"], queryFn: () => api("/outreach/playbook") });
 }
 
-/** The AI fill for this founder's current focuses, from their own deck (neutral blanks when there's no deck). */
+/** The AI fill for this founder's current focuses, from their own data room and deck (neutral blanks when there's no deck). */
 export function useSuggest() {
   return useQuery<Fill>({ queryKey: ["playbook-suggest"], queryFn: () => api("/outreach/playbook/suggest"), staleTime: 10 * 60_000 });
 }
@@ -199,9 +199,9 @@ export function PlaybookEditor({ onSaved }: { onSaved?: () => void }) {
     if (q.data && !q.data.saved_at && sg.data && sg.data.source !== "generic") apply(sg.data);
   }, [q.data, sg.data]);
   const fill = useMutation({
-    mutationFn: () => api<Fill>("/outreach/playbook/fill", { method: "POST", json: { focuses: emails.map((e) => e.focus) } }),
+    mutationFn: () => api<Fill>("/outreach/playbook/fill", { method: "POST", json: { focuses: emails.map((e) => e.focus), refresh: true } }),
     onSuccess: (f) => {
-      if (f.source === "generic") toast("Upload your deck or fill in your company profile first, so your agent has something to work from", "err");
+      if (f.source === "generic") toast("Fill in your data room or upload your deck first, so your agent has something to work from", "err");
       else apply(f);
     },
     onError: (e) => toast(errText(e), "err"),
@@ -231,11 +231,11 @@ export function PlaybookEditor({ onSaved }: { onSaved?: () => void }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className="btn-ghost btn-sm" onClick={() => fill.mutate()} disabled={fill.isPending}>
-          {fill.isPending ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} className="text-brand" />} {fill.isPending ? "Reading your deck…" : "Fill with AI from my deck"}
+          {fill.isPending ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} className="text-brand" />} {fill.isPending ? "Reading your data room…" : "Refresh from my data room"}
         </button>
         {drafted && (
           <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 text-brand px-2.5 py-1 text-xs font-medium">
-            <Sparkles size={12} /> Filled from your {drafted === "deck" ? "deck" : "company profile"}. Check it, then save.
+            <Sparkles size={12} /> Filled from your {drafted === "profile" ? "company profile" : drafted}. Check it, then save.
           </span>
         )}
       </div>

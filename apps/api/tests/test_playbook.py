@@ -159,3 +159,35 @@ def test_fill_comes_from_this_founders_deck(client, stub):  # noqa: F811
     assert "Customer pain" in json.loads(st.calls[0]["messages"][0]["content"])["focuses"]
     again = client.post("/outreach/playbook/fill", json={"focuses": ["What we're building", "Customer pain", "Market"]})
     assert again.json()["source"] == "deck" and len(st.calls) == 1  # cached
+
+
+def test_fill_reads_the_data_room_sections(client, stub):  # noqa: F811
+    client.put("/workspace/profile", json=PROFILE)
+    room = client.get("/data-room").json()
+    secs = room["content"]["sections"]
+    text = {"problem": "Finance teams lose 9 days every month reconciling usage billing. It costs them a hire.",
+            "solution": "LedgerLoop matches every invoice to usage automatically.",
+            "market": "SaaS finance software is a $40bn market.", "traction": "40 SaaS customers and 3x usage since January."}
+    for s in secs:
+        if s["type"] in text:
+            s["body"] = text[s["type"]]
+    assert client.put("/data-room", json={"content": {**room["content"], "sections": secs}}).status_code == 200
+    s = client.post("/outreach/playbook/fill", json={}).json()  # no AI: straight from the room, by focus
+    assert s["source"] == "data room"
+    e1, e2, e3 = (e["message"] for e in s["emails"])
+    assert e1.startswith("LedgerLoop matches every invoice") and "Month-end close" not in e2
+    assert e2.startswith("Finance teams lose 9 days") and "$40bn" in e3 and "40 SaaS customers" in e3
+    swapped = client.post("/outreach/playbook/fill", json={"focuses": ["The problem", "Our solution", "Traction"]}).json()
+    assert swapped["emails"][0]["message"].startswith("Finance teams") and swapped["emails"][2]["message"].startswith("40 SaaS")
+    # With AI: the room goes in, mapped per focus, and refresh re-reads instead of using the cache
+    set_tier(client, "pro")
+    out = {"messages": ["We match invoices to usage.", "Teams lose 9 days a month.", "$40bn market, 40 customers."],
+           "ask": "We're raising $750k pre-seed.", "strengths": [], "update_example": ""}
+    st = stub([out, out])
+    client.post("/outreach/playbook/fill", json={})
+    client.post("/outreach/playbook/fill", json={})  # cached
+    assert len(st.calls) == 1
+    sent = json.loads(st.calls[0]["messages"][0]["content"])
+    assert sent["data_room"]["problem"].startswith("Finance teams") and sent["focus_sources"]["The problem we solve"] == ["problem"]
+    r = client.post("/outreach/playbook/fill", json={"refresh": True}).json()
+    assert len(st.calls) == 2 and r["source"] == "data room"

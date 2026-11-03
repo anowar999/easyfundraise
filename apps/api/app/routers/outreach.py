@@ -238,6 +238,7 @@ def get_playbook(c: Ctx = Depends(ctx)):
 
 class FillIn(BaseModel):
     focuses: list[str] | None = Field(None, max_length=3)
+    refresh: bool = False  # re-read the data room and deck now instead of using the last fill
 
 
 @router.post("/outreach/playbook/fill")
@@ -245,8 +246,11 @@ def fill_playbook(body: FillIn, c: Ctx = Depends(ctx)):
     """What each email should say for the chosen focuses, what we're looking for, strengths and an example
     update, picked by AI from this founder's own deck. Nothing is saved; the founder reviews it first."""
     from ..models import CompanyProfile
+    from ..services.entitlements import rate_limit
 
-    s = playbook.fill(c.db, c.workspace, c.db.get(CompanyProfile, c.ws_id), body.focuses)
+    if body.refresh:
+        rate_limit(c.db, f"pbfill:{c.user.id}", 20, 3600)
+    s = playbook.fill(c.db, c.workspace, c.db.get(CompanyProfile, c.ws_id), body.focuses, refresh=body.refresh)
     c.db.commit()
     return {**s, "prompts": playbook.prompts(s)}
 
