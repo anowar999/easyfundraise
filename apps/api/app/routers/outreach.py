@@ -3,7 +3,7 @@ dashboard (TRK-04)."""
 
 import base64
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from urllib.parse import urlencode
 
 import httpx
@@ -451,13 +451,21 @@ def redraft(body: RedraftIn | None = None, c: Ctx = Depends(ctx)):
 
 class ProgressIn(BaseModel):
     text: str = Field(min_length=3, max_length=1500)
-    when: str = Field("morning", pattern="^(morning|now)$")  # 08:35 their time, or straight away
+    when: str = Field("morning", pattern="^(morning|now)$")  # their local time, or straight away
+    day: date | None = None  # empty = tomorrow (next weekday)
+    at: str = Field("08:35", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # in each investor's own time zone
 
 
-def _progress_plan(c: Ctx) -> list[dict]:
+def _when(body: ProgressIn) -> tuple[date | None, time]:
+    h, m = (int(x) for x in body.at.split(":"))
+    return body.day, time(h, m)
+
+
+def _progress_plan(c: Ctx, body: ProgressIn) -> list[dict]:
     from ..services import progress_update as pu
 
-    return pu.plan(c.db, c.ws_id, datetime.now(UTC))
+    day, at = _when(body)
+    return pu.plan(c.db, c.ws_id, datetime.now(UTC), day, at)
 
 
 @router.post("/outreach/progress-update/polish")
@@ -477,11 +485,11 @@ def preview_progress(body: ProgressIn, c: Ctx = Depends(ctx)):
     from ..services import progress_update as pu
     from ..services import spam
 
-    rows = _progress_plan(c)
+    rows = _progress_plan(c, body)
     sample = rows[0] if rows else None
-    return {"count": len(rows), "moved": sum(1 for r in rows if r["moved"]),
+    return {"count": len(rows), "moved": 0, "clash": sum(1 for r in rows if r["clash"]),
             "recipients": [{"name": r["name"], "firm": r["firm"], "to": r["to"], "timezone": r["timezone"],
-                            "scheduled_for": r["scheduled_for"], "moved": r["moved"]} for r in rows[:100]],
+                            "scheduled_for": r["scheduled_for"], "moved": False, "clash": r["clash"]} for r in rows[:100]],
             "spam": spam.score("Re: update", pu.body_for(body.text, c.user.signature or ""), 2, "first name"),
             "sample": {"to": sample["name"], "subject": f"Re: {sample['subject']}",
                        "body": pu.body_for(body.text, c.user.signature or "", sample["name"])} if sample else
@@ -504,7 +512,8 @@ def schedule_progress(body: ProgressIn, c: Ctx = Depends(ctx)):
     if r["level"] == "high":
         raise ApiError(422, "EF-UPD-002", f"This update looks like spam (score {r['score']}/100)",
                        "Fix: " + "; ".join(r["reasons"][:3]))
-    b, n = pu.schedule(c.db, c.workspace, c.user, body.text, datetime.now(UTC), send_now=body.when == "now")
+    day, at = _when(body)
+    b, n = pu.schedule(c.db, c.workspace, c.user, body.text, datetime.now(UTC), send_now=body.when == "now", day=day, at=at)
     if n == 0:
         c.db.rollback()
         raise ApiError(422, "EF-UPD-001", "Nobody to update yet", "Updates go to investors you've already emailed.")

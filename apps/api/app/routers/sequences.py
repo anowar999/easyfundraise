@@ -220,6 +220,48 @@ class SendNowIn(BaseModel):
     anyway: bool = False  # the founder confirmed sending a follow-up within a day of the email before it
 
 
+def _respace_plan(c: Ctx) -> list[tuple[Email, datetime]]:
+    """Follow-ups scheduled later than 3 working days after the email before them (the old 1-week spacing)."""
+    out = []
+    seqs = c.db.scalars(select(Sequence).where(Sequence.workspace_id == c.ws_id, Sequence.status == "approved")).all()
+    for s in seqs:
+        inv = c.db.get(Investor, s.investor_id)
+        tz = (inv.timezone if inv else "") or "UTC"
+        prev = None
+        for e in sorted(s.emails, key=lambda e: e.step):
+            if e.status == "sent":
+                prev = e.sent_at
+            elif e.status == "scheduled" and e.step > 1 and prev is not None and e.scheduled_for:
+                due = max(outreach.follow_up_slot(prev, tz), datetime.now(UTC))
+                if e.scheduled_for - due > timedelta(hours=20):
+                    out.append((e, due))
+                    prev = due
+                else:
+                    prev = e.scheduled_for
+            elif e.status == "scheduled":
+                prev = e.scheduled_for
+    return out
+
+
+class RespaceIn(BaseModel):
+    confirm: bool = False
+
+
+@router.post("/scheduled/respace")
+def respace(body: RespaceIn | None = None, c: Ctx = Depends(ctx)):
+    """Move follow-ups on the old spacing to 3 working days after the email before them. Without confirm it only
+    counts them, so the founder decides."""
+    rows = _respace_plan(c)
+    if not (body and body.confirm):
+        return {"count": len(rows)}
+    c.require_editor()
+    for e, due in rows:
+        e.scheduled_for = due
+    c.audit("sequence.respace", str(c.ws_id), after={"emails": len(rows)})
+    c.db.commit()
+    return {"count": len(rows), "moved": len(rows)}
+
+
 @router.post("/scheduled/{eid}/send-now")
 def scheduled_send_now(eid: str, background: BackgroundTasks, body: SendNowIn | None = None, c: Ctx = Depends(ctx)):
     """Send now from the Scheduled list: an outreach email (same rules as on its sequence) or a progress update."""

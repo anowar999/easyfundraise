@@ -70,6 +70,17 @@ export function UpcomingList() {
     },
   });
   const [find, setFind] = useState("");
+  const rs = useQuery<{ count: number }>({ queryKey: ["respace"], queryFn: () => api("/sequences/scheduled/respace", { method: "POST", json: { confirm: false } }) });
+  const [respacing, setRespacing] = useState(false);
+  const respace = useMutation({
+    mutationFn: () => api<{ moved: number }>("/sequences/scheduled/respace", { method: "POST", json: { confirm: true } }),
+    onSuccess: (r) => {
+      setRespacing(false);
+      for (const k of ["upcoming", "respace", "sequences", "sequence"]) qc.invalidateQueries({ queryKey: [k] });
+      toast(`Moved ${r.moved} follow-up${r.moved === 1 ? "" : "s"} to 3 working days after the email before.`);
+    },
+    onError: (e) => toast(errText(e), "err"),
+  });
   const [open, setOpen] = useState<string | null>(null);  // previewed email
 
   const cancel = useMutation({
@@ -95,6 +106,22 @@ export function UpcomingList() {
       <p className="px-4 py-2.5 text-xs text-muted">
         Scheduled emails go out from your Gmail at these times and only appear in Gmail Sent once they&apos;re sent. Follow-ups and updates reply in email 1&apos;s thread.
       </p>
+      {!!rs.data?.count && (
+        <div className="px-4 py-2.5 text-sm bg-brand/5 flex flex-wrap items-center gap-2">
+          <CalendarClock size={15} className="text-brand" />
+          <span className="flex-1">
+            {rs.data.count} follow-up{rs.data.count === 1 ? " is" : "s are"} on the old 1-week spacing. Move {rs.data.count === 1 ? "it" : "them"} to 3 working days after the email before?
+          </span>
+          {respacing ? (
+            <>
+              <button className="btn-primary btn-sm" disabled={respace.isPending} onClick={() => respace.mutate()}>{respace.isPending ? "Moving…" : "Yes, move"}</button>
+              <button className="btn-ghost btn-sm" onClick={() => setRespacing(false)}>No</button>
+            </>
+          ) : (
+            <button className="btn-ghost btn-sm" onClick={() => setRespacing(true)}>Move them</button>
+          )}
+        </div>
+      )}
       <div className="px-4 py-2">
         <ListSearch value={find} onChange={setFind} className="max-w-xs" />
       </div>

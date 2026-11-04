@@ -1,5 +1,6 @@
 """A round & progress update to every investor already emailed: written (or AI-polished) once, sent as a reply in
-each investor's existing Gmail thread at 08:35 their time, never within a day of another email to them."""
+each investor's existing Gmail thread at 08:35 their time tomorrow (or a day and time the founder picks, in each
+investor's time zone), or straight away."""
 
 import re
 from datetime import UTC, date, datetime, time, timedelta
@@ -13,7 +14,6 @@ from . import ai
 from .outreach import first_name
 
 SEND_AT = time(8, 35)
-GAP_DAYS = 3  # moved this far when another email lands within a day
 TEMPLATE = "progress"
 NO_SEND = ("negative", "opt_out", "bounce")
 
@@ -95,36 +95,38 @@ def _busy_days(db: Session, ws_id, to: str, tz: ZoneInfo, now: datetime) -> set[
     return days
 
 
-def slot(db: Session, ws_id, to: str, tz_name: str, now: datetime) -> tuple[datetime, bool]:
-    """08:35 their time on the next weekday morning; moved 3 days on (and again) while another email to them is
-    scheduled or sent within a day of it. Returns (UTC time, moved)."""
+def slot(db: Session, ws_id, to: str, tz_name: str, now: datetime, day: date | None = None,
+         at: time = SEND_AT) -> tuple[datetime, bool]:
+    """08:35 their time tomorrow (the next weekday), or on the day and time the founder picked, in the investor's
+    own time zone. Returns (UTC time, clash): clash = another email reaches them that day (shown, not moved)."""
     tz = _tz(tz_name)
     local = now.astimezone(tz)
-    d = local.date() if local.time() < SEND_AT else local.date() + timedelta(days=1)
-    busy = _busy_days(db, ws_id, to, tz, now)
-    moved = False
-    for _ in range(12):
+    if day is None:
+        d = local.date() + timedelta(days=1)
         while d.weekday() >= 5:  # Saturday / Sunday -> Monday
             d += timedelta(days=1)
-        if not busy & {d - timedelta(days=1), d, d + timedelta(days=1)}:
-            break
-        d += timedelta(days=GAP_DAYS)
-        moved = True
-    return datetime.combine(d, SEND_AT, tz).astimezone(UTC), moved
+    else:
+        d = day
+    t = datetime.combine(d, at, tz)
+    if t <= now:  # already past in their time zone: same time the next day
+        t += timedelta(days=1)
+    clash = t.astimezone(tz).date() in _busy_days(db, ws_id, to, tz, now)
+    return t.astimezone(UTC), clash
 
 
-def plan(db: Session, ws_id, now: datetime) -> list[dict]:
+def plan(db: Session, ws_id, now: datetime, day: date | None = None, at: time = SEND_AT) -> list[dict]:
     out = []
     for r in recipients(db, ws_id):
-        at, moved = slot(db, ws_id, r["to"], r["timezone"], now)
-        out.append({**r, "scheduled_for": at, "moved": moved})
+        when, clash = slot(db, ws_id, r["to"], r["timezone"], now, day, at)
+        out.append({**r, "scheduled_for": when, "moved": False, "clash": clash})
     return out
 
 
-def schedule(db: Session, ws: Workspace, user: User, text: str, now: datetime, send_now: bool = False) -> tuple[Broadcast, int]:
+def schedule(db: Session, ws: Workspace, user: User, text: str, now: datetime, send_now: bool = False,
+             day: date | None = None, at: time = SEND_AT) -> tuple[Broadcast, int]:
     """send_now: everyone straight away (the sender still spaces them out and keeps the daily cap) instead of
     08:35 their time."""
-    rows = plan(db, ws.id, now)
+    rows = plan(db, ws.id, now, day, at)
     if send_now:
         rows = [{**r, "scheduled_for": now, "moved": False} for r in rows]
     b = Broadcast(workspace_id=ws.id, user_id=user.id, kind="round_update", template=TEMPLATE,
