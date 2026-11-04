@@ -8,72 +8,121 @@ import { Field, Sheet, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { COLUMNS, PRIORITY_LABEL, isoToday, shortDate, useUpdateTask, type Task, type TaskStatus } from "@/lib/tasks";
 
-/** Sticky-note colours: P1 warm and loud, P2 classic yellow, P3 quiet. Due today gets a pink ring on top. */
-const NOTE = {
-  1: "bg-orange-100 border-orange-300 dark:bg-orange-500/15 dark:border-orange-400/40",
-  2: "bg-yellow-50 border-yellow-200 dark:bg-yellow-500/10 dark:border-yellow-400/30",
-  3: "bg-slate-50 border-slate-200 dark:bg-white/5 dark:border-white/10",
+/**
+ * Sticky-note paper colours (stay pastel in dark mode, just dimmed a touch):
+ * done -> faded green, overdue/urgent -> pink, in progress -> blue, P1 to-do -> peach,
+ * other to-do -> classic yellow, archived -> grey.
+ */
+const PAPER = {
+  todo: "#fff3a3",
+  p1: "#ffd9a8",
+  doing: "#cfe8ff",
+  hot: "#ffc9de",
+  done: "#d9f2d0",
+  archived: "#e8e6df",
 } as const;
+
+function paperFor(t: Task): string {
+  if (t.status === "archived") return PAPER.archived;
+  if (t.status === "done") return PAPER.done;
+  if (t.overdue || t.urgent) return PAPER.hot;
+  if (t.status === "doing") return PAPER.doing;
+  if (t.priority === 1) return PAPER.p1;
+  return PAPER.todo;
+}
+
+/** Stable pseudo-random tilt between -2deg and 2deg derived from the task id. */
+function tiltFor(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.round((((h >>> 0) % 401) / 100 - 2) * 100) / 100;
+}
+
+const HAND_FONT = '"Segoe Print", "Bradley Hand", "Chalkboard SE", "Comic Sans MS", cursive';
+const CHIP = "inline-flex items-center gap-0.5 rounded-full bg-black/[0.07] px-1.5 py-0.5";
 
 export function TaskNote({ t, onOpen, dragging }: { t: Task; onOpen?: () => void; dragging?: boolean }) {
   const update = useUpdateTask();
   const next: Record<string, TaskStatus> = { todo: "doing", doing: "done" };
   const done = t.status === "done";
+  const tilt = dragging ? 3 : tiltFor(t.id);
   return (
     <div
       onClick={onOpen}
+      style={{ backgroundColor: paperFor(t), ["--rot" as string]: `${tilt}deg` }}
       className={clsx(
-        "relative rounded-lg border p-3 text-sm shadow-[0_1px_0_rgba(0,0,0,0.04),0_4px_10px_-6px_rgba(0,0,0,0.25)] cursor-pointer select-none",
-        NOTE[t.priority],
-        t.due_today && !done && "ring-2 ring-pink-500",
-        t.overdue && "ring-2 ring-red-500",
-        done && "opacity-70",
-        dragging && "rotate-1 shadow-xl",
+        "group relative flex flex-col min-h-[150px] rounded-[2px] px-3.5 pt-5 pb-3 text-sm text-[#2b2b2b] cursor-pointer select-none",
+        "[transform:rotate(var(--rot))] transition-[transform,box-shadow,filter,opacity] duration-200 ease-out",
+        "shadow-[0_1px_1px_rgba(0,0,0,0.12),0_8px_14px_-8px_rgba(0,0,0,0.35),10px_14px_14px_-12px_rgba(0,0,0,0.4)]",
+        "hover:[transform:rotate(0deg)_translateY(-4px)_scale(1.02)] hover:shadow-[0_2px_3px_rgba(0,0,0,0.12),0_18px_26px_-10px_rgba(0,0,0,0.4),14px_22px_22px_-14px_rgba(0,0,0,0.45)] hover:z-10",
+        "dark:brightness-[0.88] dark:hover:brightness-95",
+        done && "opacity-75 saturate-[0.7] hover:opacity-100",
+        dragging && "[transform:rotate(var(--rot))_scale(1.04)] shadow-[0_24px_36px_-12px_rgba(0,0,0,0.5)]",
       )}
     >
+      {/* Tape strip */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -top-2.5 left-1/2 h-5 w-16 -translate-x-1/2 -rotate-2 rounded-[1px] bg-white/55 shadow-[0_1px_2px_rgba(0,0,0,0.12)] ring-1 ring-black/5 backdrop-blur-[1px]"
+      />
+      {/* Paper curl: soft darkening towards the bottom-right corner */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute bottom-0 right-0 h-10 w-10 rounded-br-[2px]"
+        style={{ background: "linear-gradient(135deg, transparent 55%, rgba(0,0,0,0.06) 75%, rgba(0,0,0,0.12) 100%)" }}
+      />
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className={clsx("font-semibold leading-snug break-words", done && "line-through")}>{t.title}</div>
-          {t.description && <div className="text-xs text-ink/70 mt-0.5 line-clamp-2 break-words">{t.description}</div>}
+          <div
+            className={clsx("text-[15px] font-bold leading-snug break-words text-[#1f1f1f]", done && "line-through decoration-2 decoration-black/50")}
+            style={{ fontFamily: HAND_FONT }}
+          >
+            {t.title}
+          </div>
+          {t.description && <div className="text-xs text-black/65 mt-1 line-clamp-3 break-words">{t.description}</div>}
         </div>
         {t.urgent && <Pin size={14} className="text-red-600 shrink-0 mt-0.5" aria-label="Urgent" />}
       </div>
-      <div className="flex flex-wrap gap-1 mt-2 text-[11px]">
+      <div className="flex-1" />
+      <div className="flex flex-wrap gap-1 mt-2 pr-6 text-[11px]">
         {t.priority === 1 && <span className="rounded-full bg-orange-500 text-white px-1.5 py-0.5 font-semibold">P1</span>}
         {t.due_today && !done && <span className="rounded-full bg-pink-600 text-white px-1.5 py-0.5 font-semibold">Due today</span>}
         {t.overdue && <span className="rounded-full bg-red-600 text-white px-1.5 py-0.5 font-semibold">Overdue</span>}
         {t.deadline && !t.overdue && !(t.due_today && t.deadline === isoToday()) && (
-          <span className="inline-flex items-center gap-0.5 rounded-full bg-black/5 px-1.5 py-0.5">
+          <span className={CHIP}>
             <Flag size={10} /> {shortDate(t.deadline)}
           </span>
         )}
         {t.next_follow_up && !done && (
-          <span className="inline-flex items-center gap-0.5 rounded-full bg-black/5 px-1.5 py-0.5" title="Next follow-up">
+          <span className={CHIP} title="Next follow-up">
             <CalendarClock size={10} /> {shortDate(t.next_follow_up)}
           </span>
         )}
         {t.owner && (
-          <span className="inline-flex items-center gap-0.5 rounded-full bg-black/5 px-1.5 py-0.5">
+          <span className={CHIP}>
             <User size={10} /> {t.owner}
           </span>
         )}
         {t.depends_on && (
-          <span className="inline-flex items-center gap-0.5 rounded-full bg-black/5 px-1.5 py-0.5 max-w-full truncate" title={`Depends on: ${t.depends_on}`}>
+          <span className={clsx(CHIP, "max-w-full truncate")} title={`Depends on: ${t.depends_on}`}>
             <Link2 size={10} /> {t.depends_on}
           </span>
         )}
       </div>
       {(t.progress > 0 || t.status === "doing") && (
-        <div className="flex items-center gap-2 mt-2">
+        <div className="flex items-center gap-2 mt-2 pr-6">
           <div className="h-1.5 flex-1 rounded-full bg-black/10 overflow-hidden">
-            <div className="h-full bg-emerald-500" style={{ width: `${t.progress}%` }} />
+            <div className="h-full bg-emerald-600" style={{ width: `${t.progress}%` }} />
           </div>
           <span className="text-[11px] font-medium tabular-nums">{t.progress}%</span>
         </div>
       )}
       {next[t.status] && (
         <button
-          className="absolute bottom-1.5 right-1.5 rounded-md p-1 text-ink/50 hover:bg-black/5 hover:text-ink"
+          className="absolute bottom-1.5 right-1.5 z-[1] rounded-md p-1 text-black/50 hover:bg-black/10 hover:text-black"
           title={t.status === "todo" ? "Start" : "Mark done"}
           aria-label={t.status === "todo" ? "Start" : "Mark done"}
           onPointerDown={(e) => e.stopPropagation()}

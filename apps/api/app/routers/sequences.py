@@ -2,6 +2,7 @@
 approve & schedule, WhatsApp nudge (SEQ-07). Approved emails are queued as `scheduled` in the investor's local
 send window; the worker sends them from the founder's Gmail (services/mailer.py)."""
 
+import logging
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -19,6 +20,7 @@ from ..services.entitlements import can, consume, limit
 from .investors import _exclusions, auto_reveal, is_excluded
 
 FOLLOW_UP_GAP = timedelta(hours=24)
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sequences", tags=["sequences"])
 
@@ -137,14 +139,20 @@ def _get(c: Ctx, sid: str) -> Sequence:
 def list_sequences(c: Ctx = Depends(ctx)):
     rows = c.db.execute(select(Sequence, Investor).join(Investor).where(Sequence.workspace_id == c.ws_id)
                         .order_by(Sequence.created_at.desc()).limit(500)).all()
-    return {"auto_send": auto_send_on(c.workspace),
-            "items": [{"id": str(s.id), "status": s.status, "investor": {"id": str(i.id), "name": i.name,
-                       "firm": i.current_firm or i.company}, "created_at": s.created_at,
-                       "email": next((e.to_email for e in s.emails if e.to_email), ""),
-                       "blocker": blocker(c, s) if s.status == "draft" else None,
-                       "sent": sum(e.status == "sent" for e in s.emails),
-                       "next_at": min((e.scheduled_for for e in s.emails if e.status == "scheduled"), default=None)}
-                      for s, i in rows]}
+    items = []
+    for s, i in rows:
+        why = blocker(c, s) if s.status == "draft" else None
+        items.append({"id": str(s.id), "status": s.status, "investor": {"id": str(i.id), "name": i.name,
+                      "firm": i.current_firm or i.company}, "created_at": s.created_at,
+                      "country": i.country or "",
+                      "email": next((e.to_email for e in s.emails if e.to_email), ""),
+                      "blocker": why, "ready": s.status == "draft" and why is None,
+                      "seen": any(e.status == "sent" and (e.open_count or 0) > 0 for e in s.emails),
+                      "replied": any(e.replied_at is not None and e.reply_kind not in ("bounce", "auto")
+                                     for e in s.emails),
+                      "sent": sum(e.status == "sent" for e in s.emails),
+                      "next_at": min((e.scheduled_for for e in s.emails if e.status == "scheduled"), default=None)})
+    return {"auto_send": auto_send_on(c.workspace), "items": items}
 
 
 @router.get("/scheduled")
@@ -221,7 +229,7 @@ class SendNowIn(BaseModel):
 
 
 def _respace_plan(c: Ctx) -> list[tuple[Email, datetime]]:
-    """Follow-ups scheduled later than 3 working days after the email before them (the old 1-week spacing)."""
+    """Follow-ups scheduled later than 2 working days after the email before them (the old 1-week spacing)."""
     out = []
     seqs = c.db.scalars(select(Sequence).where(Sequence.workspace_id == c.ws_id, Sequence.status == "approved")).all()
     for s in seqs:
@@ -249,7 +257,7 @@ class RespaceIn(BaseModel):
 
 @router.post("/scheduled/respace")
 def respace(body: RespaceIn | None = None, c: Ctx = Depends(ctx)):
-    """Move follow-ups on the old spacing to 3 working days after the email before them. Without confirm it only
+    """Move follow-ups on the old spacing to 2 working days after the email before them. Without confirm it only
     counts them, so the founder decides."""
     rows = _respace_plan(c)
     if not (body and body.confirm):
@@ -301,6 +309,70 @@ def scheduled_cancel(eid: str, c: Ctx = Depends(ctx)):
     return result
 
 
+class BulkIn(BaseModel):
+    action: str = Field(pattern="^(send|regenerate|remove)$")
+    ids: list[str] = Field(max_length=500)
+    confirm: bool = False
+
+
+@router.post("/bulk")
+def bulk(body: BulkIn, background: BackgroundTasks, c: Ctx = Depends(ctx)):
+    """Send, regenerate or remove the ticked sequences. Without confirm=true it only reports how many qualify and
+    which are skipped (and why); nothing changes. Regenerate is queued: the AI redrafts in the background."""
+    c.require_editor()
+    wanted = []
+    for x in dict.fromkeys(body.ids):
+        try:
+            wanted.append(uuid.UUID(x))
+        except ValueError:
+            pass
+    rows = c.db.execute(select(Sequence, Investor).join(Investor).where(
+        Sequence.workspace_id == c.ws_id, Sequence.id.in_(wanted)).order_by(Sequence.created_at)).all() if wanted else []
+    found = {s.id for s, _ in rows}
+    skipped = [{"id": str(x), "name": "", "reason": "Not found"} for x in wanted if x not in found]
+    eligible: list[tuple] = []
+    for s, inv in rows:
+        if body.action == "remove":
+            eligible.append((s, inv, ""))
+            continue
+        if s.status != "draft":
+            why = "Already scheduled or sent" if body.action == "send" else "Only drafts can be regenerated"
+            skipped.append({"id": str(s.id), "name": inv.name, "reason": why})
+            continue
+        if body.action == "send":
+            try:
+                inv, to, _ = _ready(c, s, reveal=body.confirm)
+            except ApiError as e:
+                skipped.append({"id": str(s.id), "name": inv.name, "reason": e.title})
+                continue
+            eligible.append((s, inv, to))
+        else:
+            eligible.append((s, inv, ""))
+    if not body.confirm:
+        c.db.rollback()
+        return {"needs_confirm": True, "eligible": len(eligible), "skipped": skipped}
+    ids = [str(s.id) for s, _, _ in eligible]
+    if body.action == "send":
+        now = datetime.now(UTC)
+        for s, inv, to in eligible:
+            outreach.schedule(s.emails, now, inv.timezone)
+            _schedule(c, s, inv, to)
+        c.audit("sequence.bulk_send", str(c.ws_id), after={"ids": ids})
+        c.db.commit()
+        return {"done": len(eligible), "skipped": skipped}
+    if body.action == "regenerate":
+        for s, _, _ in eligible:
+            s.engine = DRAFTING  # the list shows them as being redrafted until the background task finishes
+        c.audit("sequence.bulk_regenerate", str(c.ws_id), after={"ids": ids})
+        c.db.commit()
+        background.add_task(bulk_redraft, [s.id for s, _, _ in eligible], c.user.id)
+        return {"queued": len(eligible), "skipped": skipped}
+    kept = sum(remove_one(c, s) for s, _, _ in eligible)
+    c.audit("sequence.bulk_remove", str(c.ws_id), after={"ids": ids, "kept_history": kept})
+    c.db.commit()
+    return {"done": len(eligible), "kept_history": kept}
+
+
 @router.get("/{sid}")
 def get_sequence(sid: str, c: Ctx = Depends(ctx)):
     s = _get(c, sid)
@@ -334,6 +406,45 @@ class RegenIn(BaseModel):
     persona: str = Field("momentum", pattern="^(momentum|warm-intro|technical-founder|humble-expert)$")
 
 
+PERSONAS = ("momentum", "warm-intro", "technical-founder", "humble-expert")
+
+
+def redraft(db, ws: Workspace, s: Sequence, persona: str, signature: str) -> Investor:
+    """Redraft every email of a draft sequence with this persona (Claude or the template engine). No commit."""
+    inv = db.get(Investor, s.investor_id)
+    emails, engine = agent.draft_sequence(db, ws, inv, db.get(CompanyProfile, s.workspace_id), persona, signature)
+    by_step = {e["step"]: e for e in emails}
+    for em in s.emails:
+        e = by_step[em.step]
+        em.hook, em.subject, em.body, em.facts = e["hook"], e["subject"], e["body"], e["facts"]
+        em.pre_update_body = e.get("pre_update_body")
+    s.persona, s.engine = persona, engine
+    return inv
+
+
+def bulk_redraft(seq_ids: list[uuid.UUID], user_id: uuid.UUID) -> None:
+    """Background half of bulk regenerate: redraft each still-draft sequence with its own persona. One failing
+    sequence is logged and skipped; the rest still get redrafted."""
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        signature = user.signature if user else ""
+        for sid in seq_ids:
+            try:
+                s = db.get(Sequence, sid)
+                if s is None or s.status != "draft":
+                    continue
+                persona = s.persona if s.persona in PERSONAS else "momentum"
+                redraft(db, db.get(Workspace, s.workspace_id), s, persona, signature)
+                db.commit()
+            except Exception:
+                log.exception("bulk regenerate failed for sequence %s", sid)
+                db.rollback()
+                s = db.get(Sequence, sid)
+                if s is not None and s.engine == DRAFTING:
+                    s.engine = "template"
+                    db.commit()
+
+
 @router.post("/{sid}/regenerate")
 def regenerate(sid: str, body: RegenIn, c: Ctx = Depends(ctx)):
     """SEQ-05 "Change the approach": redraft unsent emails with another persona."""
@@ -341,15 +452,7 @@ def regenerate(sid: str, body: RegenIn, c: Ctx = Depends(ctx)):
     s = _get(c, sid)
     if s.status != "draft":
         raise ApiError(409, "EF-SEQ-006", "Only drafts can be regenerated")
-    inv = c.db.get(Investor, s.investor_id)
-    emails, engine = agent.draft_sequence(c.db, c.workspace, inv, c.db.get(CompanyProfile, c.ws_id), body.persona,
-                                          c.user.signature)
-    by_step = {e["step"]: e for e in emails}
-    for em in s.emails:
-        e = by_step[em.step]
-        em.hook, em.subject, em.body, em.facts = e["hook"], e["subject"], e["body"], e["facts"]
-        em.pre_update_body = e.get("pre_update_body")
-    s.persona, s.engine = body.persona, engine
+    inv = redraft(c.db, c.workspace, s, body.persona, c.user.signature)
     c.db.commit()
     return s_out(s, inv, c.user.signature)
 
@@ -482,7 +585,14 @@ def remove(sid: str, c: Ctx = Depends(ctx)):
     """Remove an investor from outreach. Nothing sent yet: the sequence is deleted. Something sent: it stops, unsent
     emails are cancelled and the sent ones stay in Activity."""
     c.require_editor()
-    s = _get(c, sid)
+    kept = remove_one(c, _get(c, sid))
+    c.db.commit()
+    return {"ok": True, "kept_history": kept}
+
+
+def remove_one(c: Ctx, s: Sequence) -> bool:
+    """DELETE /{sid} without the commit. Returns True when sent history was kept (stopped, not deleted)."""
+    sid = str(s.id)
     if any(e.status in ("sent", "sending") for e in s.emails):
         s.status = "stopped"
         for e in s.emails:
@@ -493,8 +603,7 @@ def remove(sid: str, c: Ctx = Depends(ctx)):
         c.db.delete(s)
         kept = False
     c.audit("sequence.remove", sid, after={"kept_history": kept})
-    c.db.commit()
-    return {"ok": True, "kept_history": kept}
+    return kept
 
 
 @router.post("/{sid}/stop")

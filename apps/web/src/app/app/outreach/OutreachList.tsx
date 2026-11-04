@@ -6,13 +6,41 @@ import { AlertTriangle, CheckCircle2, Eye, MailPlus, Search, Send, Trash2, Zap }
 import { useRouter } from "next/navigation";
 import { from } from "@/components/Crumbs";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ListSearch, matches } from "@/components/ListSearch";
 import { ConfirmSend, type SendPreview } from "@/components/ConfirmSend";
 import { Empty, IconBtn, ListSkeleton, Sheet, errText, useToast } from "@/components/ui";
 import { api, ApiError, fmtDate } from "@/lib/api";
+import { BulkBar } from "./BulkBar";
 
-type Item = { id: string; status: string; blocker: string | null; sent: number; next_at: string | null; created_at: string; email?: string; investor: { id: string; name: string; firm: string } };
+/** A draft with nothing blocking it. Falls back to "draft without a blocker" if the API hasn't sent `ready`. */
+const isReady = (x: Item) => x.ready ?? (x.status === "draft" && !x.blocker);
+
+const STATUS_FILTERS = [
+  { key: "all", label: "All", test: () => true },
+  { key: "draft", label: "Draft", test: (x: Item) => x.status === "draft" && !isReady(x) },
+  { key: "ready", label: "Ready to send", test: isReady },
+  { key: "scheduled", label: "Scheduled", test: (x: Item) => Boolean(x.next_at) },
+  { key: "seen", label: "Seen", test: (x: Item) => Boolean(x.seen) },
+  { key: "replied", label: "Replied", test: (x: Item) => Boolean(x.replied) },
+] as const;
+type StatusKey = (typeof STATUS_FILTERS)[number]["key"];
+const UNKNOWN = "__unknown";
+
+type Item = {
+  id: string;
+  status: string;
+  blocker: string | null;
+  sent: number;
+  next_at: string | null;
+  created_at: string;
+  email?: string;
+  investor: { id: string; name: string; firm: string };
+  country?: string;
+  seen?: boolean;
+  replied?: boolean;
+  ready?: boolean;
+};
 type List = { auto_send: boolean; items: Item[] };
 type Bulk = { needs_confirm: true; from: string; ready: { id: string; name: string; to: string }[]; skipped: { id: string; name: string; reason: string }[] };
 
@@ -102,8 +130,14 @@ function AutoSend({ on }: { on: boolean }) {
 export function OutreachList() {
   const qc = useQueryClient();
   const toast = useToast();
-  const q = useQuery<List>({ queryKey: ["sequences"], queryFn: () => api("/sequences") });
+  // After a bulk regenerate, poll for ~60s so the rewritten drafts show up without a reload.
+  const pollUntil = useRef(0);
+  const q = useQuery<List>({ queryKey: ["sequences"], queryFn: () => api("/sequences"), refetchInterval: () => (Date.now() < pollUntil.current ? 5000 : false) });
   const [find, setFind] = useState("");
+  const [status, setStatus] = useState<StatusKey>("all");
+  const [country, setCountry] = useState("all");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const allRef = useRef<HTMLInputElement>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const router = useRouter();
   const remove = useMutation({
@@ -140,9 +174,45 @@ export function OutreachList() {
       preview.mutate();
     }
   }, [q.data, preview]);
+  const items = useMemo(() => (q.data?.items ?? []).filter((x) => x.status !== "stopped"), [q.data]);
+  const statusCounts = useMemo(() => Object.fromEntries(STATUS_FILTERS.map((f) => [f.key, items.filter(f.test).length])) as Record<StatusKey, number>, [items]);
+  const countries = useMemo(() => {
+    const n = new Map<string, number>();
+    for (const x of items) {
+      const c = x.country?.trim() || UNKNOWN;
+      n.set(c, (n.get(c) ?? 0) + 1);
+    }
+    const known = [...n.entries()].filter(([c]) => c !== UNKNOWN).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    return { known, unknown: n.get(UNKNOWN) ?? 0 };
+  }, [items]);
+  const statusTest = STATUS_FILTERS.find((f) => f.key === status)?.test ?? (() => true);
+  const shown = items.filter(
+    (x) => matches(find, x.investor.name, x.investor.firm, x.email) && statusTest(x) && (country === "all" || (x.country?.trim() || UNKNOWN) === country),
+  );
+  const selected = items.filter((x) => picked.has(x.id));
+  const pickedShown = shown.filter((x) => picked.has(x.id)).length;
+  const allShown = shown.length > 0 && pickedShown === shown.length;
+  useEffect(() => {
+    if (allRef.current) allRef.current.indeterminate = pickedShown > 0 && !allShown;
+  });
+  const toggle = (id: string) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const toggleAll = () =>
+    setPicked((p) => {
+      const n = new Set(p);
+      for (const x of shown) {
+        if (allShown) n.delete(x.id);
+        else n.add(x.id);
+      }
+      return n;
+    });
+  const filtered = Boolean(find) || status !== "all" || country !== "all";
   if (q.isLoading) return <ListSkeleton rows={4} />;
-  const items = (q.data?.items ?? []).filter((x) => x.status !== "stopped");
-  const shown = items.filter((x) => matches(find, x.investor.name, x.investor.firm, x.email));
   const drafts = items.filter((x) => x.status === "draft");
   const ready = drafts.filter((x) => !x.blocker).length;
   return (
@@ -171,15 +241,65 @@ export function OutreachList() {
               </button>
             )}
           </div>
-          {items.length > 0 ? (
-            <div className="px-4 py-2 border-b border-line">
-              <ListSearch value={find} onChange={setFind} className="max-w-xs" />
-            </div>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-line">
+            <input
+              ref={allRef}
+              type="checkbox"
+              className="h-4 w-4 accent-[var(--brand)] shrink-0"
+              checked={allShown}
+              disabled={!shown.length}
+              onChange={toggleAll}
+              aria-label={allShown ? "Unselect all shown" : "Select all shown"}
+            />
+            <ListSearch value={find} onChange={setFind} className="flex-1 min-w-[10rem] max-w-xs" />
+            <select className="input h-8 text-sm w-auto py-0" value={status} onChange={(e) => setStatus(e.target.value as StatusKey)} aria-label="Filter by status">
+              {STATUS_FILTERS.map((f) => (
+                <option key={f.key} value={f.key}>
+                  {f.label} ({statusCounts[f.key]})
+                </option>
+              ))}
+            </select>
+            {(countries.known.length > 0 || country !== "all") && (
+              <select className="input h-8 text-sm w-auto py-0" value={country} onChange={(e) => setCountry(e.target.value)} aria-label="Filter by country">
+                <option value="all">All countries ({items.length})</option>
+                {countries.known.map(([c, n]) => (
+                  <option key={c} value={c}>
+                    {c} ({n})
+                  </option>
+                ))}
+                {countries.unknown > 0 && <option value={UNKNOWN}>Unknown ({countries.unknown})</option>}
+              </select>
+            )}
+          </div>
+          {selected.length > 0 && (
+            <BulkBar
+              ids={{
+                send: selected.filter(isReady).map((x) => x.id),
+                regenerate: selected.filter((x) => x.status === "draft").map((x) => x.id),
+                remove: selected.map((x) => x.id),
+              }}
+              onClear={() => setPicked(new Set())}
+              onRegenerated={() => {
+                pollUntil.current = Date.now() + 60_000;
+                q.refetch();
+              }}
+            />
+          )}
           <div className="divide-y divide-line">
-            {find && shown.length === 0 && <p className="px-4 py-6 text-sm text-muted text-center">No one on your outreach list matches &ldquo;{find}&rdquo;.</p>}
+            {filtered && shown.length === 0 && (
+              <p className="px-4 py-6 text-sm text-muted text-center">
+                {find ? <>No one on your outreach list matches &ldquo;{find}&rdquo; with these filters.</> : "No one on your outreach list matches these filters."}
+              </p>
+            )}
             {shown.map((x) => (
               <div key={x.id} className="flex items-center gap-3 px-4 py-3">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-[var(--brand)] shrink-0"
+                  checked={picked.has(x.id)}
+                  onChange={() => toggle(x.id)}
+                  aria-label={`Select ${x.investor.name}`}
+                />
                 <Link href={from(`/app/sequences/${x.id}`, "outreach")} className="flex-1 min-w-0">
                   <div className="font-medium truncate">{x.investor.name}</div>
                   <div className="text-xs text-muted truncate">{x.investor.firm}</div>

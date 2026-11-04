@@ -15,7 +15,10 @@ function DraggableNote({ t, onOpen }: { t: Task; onOpen: () => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: t.id });
   const drop = useDroppable({ id: `task:${t.id}`, data: { status: t.status, beforeId: t.id } });
   return (
-    <div ref={drop.setNodeRef} className={clsx(drop.isOver && "pt-1 border-t-2 border-brand rounded")}>
+    <div
+      ref={drop.setNodeRef}
+      className={clsx("relative", drop.isOver && "before:absolute before:-top-3 before:inset-x-2 before:h-1 before:rounded-full before:bg-brand")}
+    >
       <div ref={setNodeRef} {...listeners} {...attributes} className={clsx(isDragging && "opacity-30")}>
         <TaskNote t={t} onOpen={onOpen} />
       </div>
@@ -32,9 +35,13 @@ function Column({ status, label, tasks, onOpen, className }: { status: TaskStatu
         <span className="text-xs text-muted tabular-nums">{tasks.length}</span>
       </div>
       {status === "todo" && <QuickAdd />}
-      {tasks.map((t) => (
-        <DraggableNote key={t.id} t={t} onOpen={() => onOpen(t)} />
-      ))}
+      {tasks.length > 0 && (
+        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-1 2xl:grid-cols-2 gap-x-5 gap-y-7 px-1.5 pt-5 pb-3">
+          {tasks.map((t) => (
+            <DraggableNote key={t.id} t={t} onOpen={() => onOpen(t)} />
+          ))}
+        </div>
+      )}
       {tasks.length === 0 && <div className="text-xs text-muted text-center py-6 border border-dashed border-line rounded-lg">Drop tasks here</div>}
     </div>
   );
@@ -46,11 +53,11 @@ function ArchivedList({ onOpen }: { onOpen: (t: Task) => void }) {
   if (!q.data) return <ListSkeleton rows={2} />;
   if (!q.data.items.length) return <p className="text-sm text-muted">Nothing archived.</p>;
   return (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+    <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-5 gap-y-7 px-1.5 pt-4 pb-3">
       {q.data.items.map((t) => (
         <div key={t.id} className="relative">
           <TaskNote t={t} onOpen={() => onOpen(t)} />
-          <button className="absolute top-2 right-2 btn-ghost btn-sm h-7 bg-card" onClick={() => update.mutate({ id: t.id, status: "todo" }, { onSuccess: () => q.refetch() })}>
+          <button className="absolute top-3 right-2 z-20 btn-ghost btn-sm h-7 bg-card" onClick={() => update.mutate({ id: t.id, status: "todo" }, { onSuccess: () => q.refetch() })}>
             <Undo2 size={13} /> Restore
           </button>
         </div>
@@ -66,17 +73,17 @@ export default function TasksPage() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [tab, setTab] = useState<TaskStatus>("todo"); // phones show one column at a time
   const [archived, setArchived] = useState(false);
-  const [view, setView] = useState<"table" | "board">("table");
+  const [view, setView] = useState<"table" | "board">("board");
   useEffect(() => {
     try {
-      const v = localStorage.getItem("ef_tasks_view");
+      const v = localStorage.getItem("ef_tasks_view_v2");
       if (v === "board" || v === "table") setView(v);
     } catch {}
   }, []);
   const pickView = (v: "table" | "board") => {
     setView(v);
     try {
-      localStorage.setItem("ef_tasks_view", v);
+      localStorage.setItem("ef_tasks_view_v2", v);
     } catch {}
   };
   const sensors = useSensors(

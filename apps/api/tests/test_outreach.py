@@ -46,7 +46,7 @@ def test_sequence_draft_limits_and_lint(client):
     assert london[0] < london[1] < london[2]
     gap = sum(1 for i in range(1, (london[1].date() - london[0].date()).days + 1)
               if (london[0].date() + timedelta(days=i)).weekday() < 5)
-    assert gap == 3  # follow-up 3 working days after email 1
+    assert gap == 2  # follow-up 2 working days after email 1
 
 
 def test_trial_can_draft_three_samples(client):
