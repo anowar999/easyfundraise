@@ -188,10 +188,10 @@ def stats(days: int = 90, c: Ctx = Depends(ctx)):
     total = agg(Email.workspace_id)
     queued = c.db.scalar(select(func.count()).select_from(Email).where(Email.workspace_id == c.ws_id,
                                                                       Email.status == "scheduled"))
-    recent = c.db.execute(select(Email, FunnelCard.name).outerjoin(FunnelCard, FunnelCard.id == Email.card_id)
+    recent = c.db.execute(select(Email, FunnelCard.name, FunnelCard.firm).outerjoin(FunnelCard, FunnelCard.id == Email.card_id)
                           .where(Email.workspace_id == c.ws_id, Email.status.in_(["sent", "scheduled", "sending", "failed", "cancelled"]),
                                  Email.scheduled_for.is_not(None) | Email.sent_at.is_not(None))
-                          .order_by(func.coalesce(Email.sent_at, Email.scheduled_for).desc()).limit(50)).all()
+                          .order_by(func.coalesce(Email.sent_at, Email.scheduled_for).desc()).limit(200)).all()
     replied_seqs = {sid for (sid,) in c.db.execute(select(Email.sequence_id).where(
         Email.workspace_id == c.ws_id, Email.sequence_id.is_not(None), Email.replied_at.is_not(None))).all()}
     return {
@@ -199,12 +199,12 @@ def stats(days: int = 90, c: Ctx = Depends(ctx)):
                                          "open_rate": 0, "reply_rate": 0},
         "queued": queued, "tracking": tracking_state(c), "by_step": agg(Email.step), "by_hook": agg(Email.hook), "by_persona": agg(Sequence.persona),
         "by_hour": agg(func.extract("hour", Email.sent_at)),
-        "recent": [{"id": str(e.id), "to": name or e.to_email, "card_id": str(e.card_id) if e.card_id else None,
+        "recent": [{"id": str(e.id), "to": name or e.to_email, "email": e.to_email, "firm": firm or "", "card_id": str(e.card_id) if e.card_id else None,
                     "subject": e.subject, "step": e.step, "status": e.status, "sent_at": e.sent_at,
                     "scheduled_for": e.scheduled_for, "opened": e.open_count, "reply": e.reply_kind,
                     "error": ("They replied, so this follow-up won't be sent" if e.status == "cancelled"
                               and e.sequence_id in replied_seqs else e.error)}
-                   for e, name in recent],
+                   for e, name, firm in recent],
     }
 
 
