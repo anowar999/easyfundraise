@@ -97,7 +97,9 @@ def test_bulk_ignores_other_workspaces(client):
 
 
 def test_nav_counts(client):
-    assert client.get("/nav/counts").json() == {"outreach": 0, "tracker": 0, "shortlist": 0, "tasks": 0}
+    n = client.get("/nav/counts").json()
+    assert isinstance(n.pop("company"), str)
+    assert n == {"outreach": 0, "tracker": 0, "shortlist": 0, "tasks": 0}
     a, b = _two_drafts(client)
     client.post("/sequences", json={"investor_id": a["investor_id"]})  # same investor twice counts once
     ada = a["investor_id"]
@@ -109,4 +111,6 @@ def test_nav_counts(client):
     client.post("/tasks", json={"title": "Two", "status": "doing"})
     client.post("/tasks", json={"title": "Three"})
     client.patch(f"/tasks/{t1['id']}", json={"status": "done"})
-    assert client.get("/nav/counts").json() == {"outreach": 2, "tracker": 1, "shortlist": 1, "tasks": 2}
+    n = client.get("/nav/counts").json()
+    n.pop("company")
+    assert n == {"outreach": 2, "tracker": 1, "shortlist": 1, "tasks": 2}
