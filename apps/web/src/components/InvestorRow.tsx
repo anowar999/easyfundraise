@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { flag, SHORT } from "@/lib/countries";
 import type { InvestorCard } from "@/lib/types";
+import { TicketChip } from "./InvestorChips";
 import { Avatar, Badge, FitScore, Tip, errText, useToast } from "./ui";
 
 const iconBtn = (size: "md" | "lg") =>
@@ -228,6 +229,7 @@ export function InvestorRow({ inv }: { inv: InvestorCard }) {
             >
               {inv.investor_type_label}
             </Badge>
+            <TicketChip t={inv} />
             {inv.verified_recent_deal && (
               <Badge tone="green">
                 <BadgeCheck size={12} /> recent deal

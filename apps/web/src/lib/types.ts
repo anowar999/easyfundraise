@@ -1,6 +1,14 @@
 export type Fit = { score: number; reasons: string[]; warnings: string[] };
 
-export type InvestorCard = {
+/** How much an investor puts in per deal, parsed by the API (tracker entry > research > directory tag). */
+export type Ticket = {
+  ticket_min?: number | null;
+  ticket_max?: number | null;
+  ticket_currency?: string | null;
+  ticket_source?: "tracker" | "research" | "directory" | null;
+};
+
+export type InvestorCard = Ticket & {
   id: string;
   name: string;
   title: string;
@@ -28,7 +36,7 @@ export type InvestorCard = {
   fit?: Fit;
 };
 
-export type Card = {
+export type Card = Ticket & {
   id: string;
   number: number;
   investor_id: string | null;
