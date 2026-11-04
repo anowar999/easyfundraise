@@ -314,7 +314,7 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
         return 0
 
     em.status, em.sent_at, em.error = "sent", now, ""
-    if seq is not None:  # keep each later follow-up at least 3 working days after this one (never earlier)
+    if seq is not None:  # keep each later follow-up at least 2 working days after this one (never earlier)
         prev = now
         for later in sorted((e for e in seq.emails if e.step > em.step and e.status == "scheduled"), key=lambda e: e.step):
             due = follow_up_slot(prev, tz)

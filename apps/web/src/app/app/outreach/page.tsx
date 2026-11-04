@@ -13,6 +13,7 @@ import { ListSearch, matches } from "@/components/ListSearch";
 import { Empty, ErrorState, ListSkeleton } from "@/components/ui";
 import { InsightsBox } from "./Insights";
 import { OutreachAgent } from "./OutreachAgent";
+import { OutreachGuideCard } from "./OutreachGuide";
 import { OutreachList } from "./OutreachList";
 import { UpcomingList, useUpcoming } from "./Upcoming";
 import { api, fmtDate } from "@/lib/api";
@@ -249,6 +250,7 @@ export default function Outreach() {
           </div>
           <PlaybookCard />
           <ProgressUpdateCard />
+          <OutreachGuideCard />
         </aside>
       </div>
     </>

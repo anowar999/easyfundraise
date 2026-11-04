@@ -8,6 +8,7 @@ import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { Empty, ErrorState, IconBtn, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
+import { SpamChip } from "./SpamChip";
 
 export type Upcoming = {
   email_id: string;
@@ -77,7 +78,7 @@ export function UpcomingList() {
     onSuccess: (r) => {
       setRespacing(false);
       for (const k of ["upcoming", "respace", "sequences", "sequence"]) qc.invalidateQueries({ queryKey: [k] });
-      toast(`Moved ${r.moved} follow-up${r.moved === 1 ? "" : "s"} to 3 working days after the email before.`);
+      toast(`Moved ${r.moved} follow-up${r.moved === 1 ? "" : "s"} to 2 working days after the email before.`);
     },
     onError: (e) => toast(errText(e), "err"),
   });
@@ -110,7 +111,7 @@ export function UpcomingList() {
         <div className="px-4 py-2.5 text-sm bg-brand/5 flex flex-wrap items-center gap-2">
           <CalendarClock size={15} className="text-brand" />
           <span className="flex-1">
-            {rs.data.count} follow-up{rs.data.count === 1 ? " is" : "s are"} on the old 1-week spacing. Move {rs.data.count === 1 ? "it" : "them"} to 3 working days after the email before?
+            {rs.data.count} follow-up{rs.data.count === 1 ? " is" : "s are"} on the old spacing. Move {rs.data.count === 1 ? "it" : "them"} to 2 working days after the email before?
           </span>
           {respacing ? (
             <>
@@ -159,11 +160,7 @@ export function UpcomingList() {
               <IconBtn label={open === u.email_id ? "Hide the email" : "Preview the email"} active={open === u.email_id} onClick={() => setOpen(open === u.email_id ? null : u.email_id)}>
                 {open === u.email_id ? <EyeOff size={14} /> : <Eye size={14} />}
               </IconBtn>
-              {u.spam && u.spam.level !== "good" && (
-                <span className={u.spam.level === "high" ? "chip text-red-600" : "chip text-warn"} title={u.spam.reasons.join("; ")}>
-                  Spam risk {u.spam.score}
-                </span>
-              )}
+              {u.spam && <SpamChip spam={u.spam} compact />}
               {onWay ? (
                 <span className="chip inline-flex items-center gap-1 text-green-700">
                   <RefreshCw size={12} className="animate-spin" /> Sending

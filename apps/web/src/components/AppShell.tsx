@@ -11,13 +11,16 @@ import { AgentChat } from "./AgentChat";
 import { UrgentPin } from "./FounderTasks";
 import { Sheet, ToastProvider } from "./ui";
 
-const NAV = [
+type CountKey = "outreach" | "tracker" | "shortlist" | "tasks";
+type NavItem = { href: string; label: string; short?: string; icon: typeof Home; exact?: boolean; count?: CountKey };
+
+const NAV: NavItem[] = [
   { href: "/app", label: "Home", icon: Home, exact: true },
-  { href: "/app/tasks", label: "My tasks", short: "Tasks", icon: ListTodo },
+  { href: "/app/tasks", label: "My tasks", short: "Tasks", icon: ListTodo, count: "tasks" },
   { href: "/app/investors", label: "Investors", icon: Search },
-  { href: "/app/shortlist", label: "Shortlist", icon: Heart },
-  { href: "/app/outreach", label: "Outreach", icon: Mail },
-  { href: "/app/funnel", label: "Investor tracker", short: "Tracker", icon: KanbanSquare },
+  { href: "/app/shortlist", label: "Shortlist", icon: Heart, count: "shortlist" },
+  { href: "/app/outreach", label: "Outreach", icon: Mail, count: "outreach" },
+  { href: "/app/funnel", label: "Investor tracker", short: "Tracker", icon: KanbanSquare, count: "tracker" },
   { href: "/app/updates", label: "Updates", icon: Megaphone },
   { href: "/app/data-room", label: "Data room", icon: Globe },
   { href: "/app/notifications", label: "Alerts", icon: Bell },
@@ -87,11 +90,24 @@ function useUnread() {
   });
 }
 
+/** Per-section counts for the sidebar. Failures are silent: the numbers just don't show. */
+function useNavCounts() {
+  return useQuery<Partial<Record<CountKey, number>>>({
+    queryKey: ["nav-counts"],
+    queryFn: () => api("/nav/counts").catch(() => ({})),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
 export function AppShell({ children, admin = false }: { children: ReactNode; admin?: boolean }) {
   const path = usePathname();
   const router = useRouter();
   const me = useMe();
   const unread = useUnread();
+  const navCounts = useNavCounts();
+  const countFor = (k?: CountKey) => { const v = k ? navCounts.data?.[k] : undefined; return typeof v === "number" ? v : 0; };
   const [more, setMore] = useState(false);
 
   useEffect(() => {
@@ -130,7 +146,7 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
           </span>
         </Link>
         <nav className="flex flex-col gap-1" aria-label="Main">
-          {NAV.map(({ href, label, icon: Icon, exact }) => (
+          {NAV.map(({ href, label, icon: Icon, exact, count: ck }) => (
             <Link
               key={href}
               href={href}
@@ -142,6 +158,11 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
               <Icon size={18} className={active(href, exact) ? "text-[#8ab8ff]" : ""} />
               {label}
               {label === "Alerts" && count > 0 && <span className="ml-auto text-xs font-semibold rounded-full bg-brand text-white px-1.5">{count}</span>}
+              {countFor(ck) > 0 && (
+                <span className={clsx("ml-auto min-w-6 text-center text-[11px] font-medium tabular-nums rounded-full px-1.5 py-px", active(href, exact) ? "bg-white/15 text-white/85" : "bg-white/[0.07] text-white/55")}>
+                  {countFor(ck) > 999 ? "999+" : countFor(ck)}
+                </span>
+              )}
             </Link>
           ))}
           {me.data?.is_admin && (
@@ -231,9 +252,10 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
       </nav>
       <Sheet open={more} onClose={() => setMore(false)} title="More">
         <div className="grid grid-cols-2 gap-2">
-          {NAV.filter((n) => !TABS.includes(n.href)).map(({ href, label, icon: Icon }) => (
+          {NAV.filter((n) => !TABS.includes(n.href)).map(({ href, label, icon: Icon, count: ck }) => (
             <Link key={href} href={href} onClick={() => setMore(false)} className="card p-4 flex items-center gap-2 text-sm">
               <Icon size={18} className="text-brand" /> {label}
+              {countFor(ck) > 0 && <span className="ml-auto text-xs text-muted tabular-nums">{countFor(ck)}</span>}
             </Link>
           ))}
           {me.data?.is_admin && (

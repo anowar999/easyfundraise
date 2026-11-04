@@ -16,7 +16,7 @@ from .fit import sector_overlap
 LIMITS = {1: 140, 2: 120, 3: 100}  # word limits including the opt-out line (a "Quick update:" line is extra)
 SUBJECT_MAX_WORDS = 7
 DEFAULT_DAYS = {1: 0, 2: 4, 3: 10}  # legacy calendar-day spacing (kept for reference)
-FOLLOW_UP_WORKDAYS = 3  # a follow-up goes 3 working days after the email before it, if no reply
+FOLLOW_UP_WORKDAYS = 2  # a follow-up goes 2 working days after the email before it, if no reply
 WEEKDAYS = (0, 1, 2, 3, 4)
 OPT_OUT = ""  # founders asked for no "reply 'no'" line; replies like "no" / "unsubscribe" still stop a sequence
 SPAM_PHRASES = ("guaranteed", "act now", "100% free", "risk-free", "click here", "limited time", "urgent",
@@ -239,7 +239,7 @@ def follow_up_slot(prev: datetime, tz_name: str) -> datetime:
 
 
 def schedule(emails: list, start: datetime, tz_name: str) -> None:
-    """Email 1 in the next Tue-Thu send window; each follow-up 3 working days after the one before."""
+    """Email 1 in the next Tue-Thu send window; each follow-up 2 working days after the one before."""
     prev = None
     for em in sorted(emails, key=lambda e: e.step):
         if em.status == "sent":
