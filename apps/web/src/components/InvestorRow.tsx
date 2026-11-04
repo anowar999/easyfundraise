@@ -87,17 +87,14 @@ export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "
     if (inv.in_outreach) setOn(true);  // added elsewhere (e.g. "Add all to outreach")
   }, [inv.in_outreach]);
   const m = useMutation({
-    mutationFn: () => api<{ id: string; auto: { scheduled: boolean; reason: string } | null }>("/sequences", { method: "POST", json: { investor_id: inv.id } }),
-    onMutate: () => {
-      setOn(true);
-      toast(`Adding ${inv.name} to your email outreach list. Drafting their emails…`);
-    },
+    mutationFn: () => api<{ id: string; auto: { scheduled: boolean; reason: string; when?: "window" | "now" } | null }>("/sequences", { method: "POST", json: { investor_id: inv.id } }),
+    onMutate: () => setOn(true),  // one toast, on success
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["sequences"] });
       qc.invalidateQueries({ queryKey: ["home"] });
       toast(
         r.auto?.scheduled
-          ? `✓ ${inv.name} is in your email outreach list. Auto-send is on, so their emails are scheduled.`
+          ? `✓ ${inv.name} is in your email outreach list. Auto-send is on: ${r.auto.when === "now" ? "email 1 goes in about 2 minutes" : "email 1 goes in their morning send window"}.`
           : r.auto
             ? `✓ ${inv.name} is in your email outreach list. Not sent yet: ${r.auto.reason.toLowerCase()}.`
             : `✓ ${inv.name} is in your email outreach list. Emails are drafted for you to review before anything is sent.`,

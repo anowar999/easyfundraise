@@ -16,6 +16,7 @@ from ..errors import ApiError, not_found
 from ..models import (
     AuditLog,
     CompanyProfile,
+    DataAccessEvent,
     Exclusion,
     FunnelCard,
     Investor,
@@ -318,6 +319,28 @@ def auto_reveal(c: Ctx, inv: Investor, dry: bool = False) -> bool:
 
 def contacts(inv: Investor) -> dict:
     return {"email": inv.email, "linkedin": inv.linkedin, "x": inv.x_url}
+
+
+@router.get("/recent")
+def recent(limit: int = 3, c: Ctx = Depends(ctx)):
+    """The investor profiles this user opened most recently (newest first, one entry per investor)."""
+    rows = c.db.execute(select(DataAccessEvent.investor_id, DataAccessEvent.created_at).where(
+        DataAccessEvent.user_id == c.user.id, DataAccessEvent.workspace_id == c.ws_id,
+        DataAccessEvent.kind == "profile", DataAccessEvent.investor_id.is_not(None))
+        .order_by(DataAccessEvent.created_at.desc()).limit(60)).all()
+    out, seen = [], set()
+    for iid, at in rows:
+        if iid in seen:
+            continue
+        seen.add(iid)
+        inv = c.db.get(Investor, iid)
+        if not test_investors.visible(inv, c.user.email):
+            continue
+        out.append({"id": str(inv.id), "name": inv.name, "firm": inv.current_firm or inv.company, "title": inv.title,
+                    "country": inv.country or "", "viewed_at": at})
+        if len(out) >= max(1, min(limit, 10)):
+            break
+    return {"items": out}
 
 
 @router.get("/{iid}")
