@@ -1,6 +1,6 @@
 """Background worker (TZ-03/04, MAIL-03, AGT-02). Run: python -m app.worker
 
-Every minute: fire due reminders, send due emails, prepare call briefs, daily briefs.
+Every 15 seconds: send due emails. Every minute: fire due reminders, prepare call briefs, daily briefs.
 Every 5 minutes: poll Gmail threads for replies and bounces.
 Jobs are idempotent and safe to run in more than one process (row locks with SKIP LOCKED).
 """
@@ -31,9 +31,13 @@ def release_stuck_drafts(db) -> int:
 
 
 def tick(n: int) -> None:
-    jobs = [("stuck drafts", release_stuck_drafts), ("reminders", fire_due_reminders), ("send", send_due), ("call briefs", prepare_call_briefs),
-            ("daily briefs", send_daily_briefs)]
-    if n % 5 == 0:
+    """Runs every 15 seconds: sending (so a queue of Send now emails moves along promptly); the other jobs every
+    minute, and reply polling every 5 minutes."""
+    jobs = [("send", send_due)]
+    if n % 4 == 0:
+        jobs += [("stuck drafts", release_stuck_drafts), ("reminders", fire_due_reminders), ("call briefs", prepare_call_briefs),
+                 ("daily briefs", send_daily_briefs)]
+    if n % 20 == 0:
         jobs.append(("replies", poll_replies))
     for name, fn in jobs:
         try:
@@ -51,7 +55,7 @@ def main() -> None:
     while True:
         tick(n)
         n += 1
-        time.sleep(60)
+        time.sleep(15)
 
 
 if __name__ == "__main__":
