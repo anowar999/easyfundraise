@@ -90,7 +90,16 @@ export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "
   const [quick, setQuick] = useState<string | null>(null);  // the sequence shown in the quick preview
   const m = useMutation({
     // Draft only (hold): the quick preview decides Send now / Schedule / Keep as draft, whatever auto-send says.
-    mutationFn: () => api<{ id: string }>("/sequences", { method: "POST", json: { investor_id: inv.id, hold: true } }),
+    mutationFn: async () => {
+      try {
+        return await api<{ id: string }>("/sequences", { method: "POST", json: { investor_id: inv.id, hold: true } });
+      } catch (e) {
+        // Removed from outreach a moment ago: ask before adding them back (it's easy to click the icon again by mistake)
+        if (e instanceof ApiError && e.problem.needs_readd && window.confirm(`${e.problem.title}. ${e.problem.detail || "Add them again?"}`))
+          return api<{ id: string }>("/sequences", { method: "POST", json: { investor_id: inv.id, hold: true, readd: true } });
+        throw e;
+      }
+    },
     onMutate: () => setOn(true),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["sequences"] });
@@ -99,6 +108,7 @@ export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "
     },
     onError: (e) => {
       setOn(false);
+      if (e instanceof ApiError && e.problem.needs_readd) return;  // they chose not to add them again
       toast(e instanceof ApiError && e.problem.upgrade ? "You've used your sample drafts. Upgrade to draft more." : errText(e), "err");
     },
   });

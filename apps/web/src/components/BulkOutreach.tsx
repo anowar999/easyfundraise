@@ -67,13 +67,13 @@ export function BulkOutreachBar({ ids, onClear }: { ids: string[]; onClear: () =
         <div className="sticky top-2 z-20 card p-2.5 flex flex-wrap items-center gap-2 border-brand/40 shadow-lg">
           <span className="text-sm font-medium px-1">{ids.length} selected</span>
           <button className="btn-primary btn-sm" disabled={busy} onClick={() => go("window")}>
-            <CalendarClock size={14} /> {LABEL.window}
+            <CalendarClock size={14} /> {LABEL.window} ({ids.length})
           </button>
           <button className="btn-ghost btn-sm border border-line" disabled={busy} onClick={() => go("now")}>
-            <Send size={14} /> {LABEL.now}
+            <Send size={14} /> {LABEL.now} ({ids.length})
           </button>
           <button className="btn-ghost btn-sm border border-line" disabled={busy} onClick={() => go("draft")}>
-            <FileText size={14} /> {LABEL.draft}
+            <FileText size={14} /> {LABEL.draft} ({ids.length})
           </button>
           {busy && (
             <span className="inline-flex items-center gap-1.5 text-xs text-muted">

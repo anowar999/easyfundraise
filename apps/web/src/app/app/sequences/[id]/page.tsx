@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import clsx from "clsx";
 import { AlertTriangle, ArrowLeft, CalendarCheck, CheckCircle2, Eye, Info, Mail, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Crumbs } from "@/components/Crumbs";
 import Link from "next/link";
@@ -19,7 +20,7 @@ const PERSONAS = [
   ["technical-founder", "Technical founder"],
   ["humble-expert", "Humble expert"],
 ];
-const STATUS_TEXT: Record<string, string> = { draft: "Draft", scheduled: "Scheduled", sending: "Sending", sent: "Sent", cancelled: "Cancelled", failed: "Failed" };
+const STATUS_TEXT: Record<string, string> = { draft: "Draft", scheduled: "Scheduled", sending: "Sending…", sent: "Sent", cancelled: "Cancelled", failed: "Failed", paused: "Paused: they replied" };
 const LIMITS: Record<number, number> = { 1: 120, 2: 80, 3: 60 };
 const words = (s: string) => (s.match(/\b[\w'’-]+\b/g) ?? []).length;
 
@@ -48,14 +49,24 @@ function EmailEditor({ seqId, e, disabled }: { seqId: string; e: Email; disabled
   });
   const dirty = subject !== e.subject || body !== e.body;
   return (
-    <div className="card p-4">
+    <div className={clsx("card p-4", e.status === "sent" && "border-emerald-600/40")}>
       <div className="flex items-center justify-between mb-2">
         <div className="font-semibold text-sm">
           Email {e.step} <span className="text-muted font-normal">· {e.hook.replace(/-/g, " ")}</span>
         </div>
-        <span className={words(body) > LIMITS[e.step] + 40 ? "text-xs text-danger" : "text-xs text-muted"}>
+        <span
+          className={
+            e.sent_at
+              ? "chip text-xs font-medium text-emerald-700 border-emerald-600/40 bg-emerald-500/10 inline-flex items-center gap-1"
+              : e.status === "paused"
+                ? "chip text-xs text-amber-700 border-amber-500/50"
+                : words(body) > LIMITS[e.step] + 40
+                  ? "text-xs text-danger"
+                  : "text-xs text-muted"
+          }
+        >
           {e.sent_at
-            ? `Sent ${fmtDate(e.sent_at, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
+            ? `✓ Sent ${fmtDate(e.sent_at, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
             : e.scheduled_for && e.status === "scheduled"
               ? `Scheduled ${fmtDate(e.scheduled_for, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
               : e.status !== "draft"

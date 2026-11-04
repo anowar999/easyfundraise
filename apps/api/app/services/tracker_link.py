@@ -18,6 +18,15 @@ def card_of(db: Session, ws_id, investor_id) -> FunnelCard | None:
                                               FunnelCard.deleted_at.is_(None)))
 
 
+AUTO_TAG = "auto-added"
+
+
+def touched(card: FunnelCard) -> None:
+    """The founder acted on the card (edit, move, note...): it no longer shows as automatically added."""
+    if AUTO_TAG in (card.tags or []):
+        card.tags = [t for t in card.tags if t != AUTO_TAG]
+
+
 def new_card(db: Session, ws_id, inv: Investor, source: str, stage: int = 1) -> FunnelCard:
     pos = (db.scalar(select(func.max(FunnelCard.position)).where(FunnelCard.workspace_id == ws_id,
                                                                  FunnelCard.stage == stage)) or 0) + 1
@@ -66,6 +75,7 @@ def for_positive_reply(db: Session, em: Email) -> FunnelCard | None:
     card = card_of(db, em.workspace_id, s.investor_id)
     if card is None and inv is not None:
         card = new_card(db, em.workspace_id, inv, "Outreach")
+        card.tags = [AUTO_TAG]  # shown highlighted in the tracker until the founder does something with it
         db.add(CardEvent(workspace_id=em.workspace_id, card_id=card.id, kind="created",
                          body="Added to investor tracker after a positive reply", meta={"source": "Outreach"}))
     if card is not None:

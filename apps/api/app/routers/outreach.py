@@ -200,9 +200,11 @@ def stats(days: int = 90, c: Ctx = Depends(ctx)):
     queued = c.db.scalar(select(func.count()).select_from(Email).where(Email.workspace_id == c.ws_id,
                                                                       Email.status == "scheduled"))
     recent = c.db.execute(select(Email, FunnelCard.name, FunnelCard.firm).outerjoin(FunnelCard, FunnelCard.id == Email.card_id)
-                          .where(Email.workspace_id == c.ws_id, Email.status.in_(["sent", "scheduled", "sending", "failed", "cancelled"]),
+                          # Activity is what happened, newest first: sent, failed, and cancelled (with the reason).
+                          # Upcoming emails are under Scheduled; follow-ups paused by a reply are in the Outreach list.
+                          .where(Email.workspace_id == c.ws_id, Email.status.in_(["sent", "sending", "failed", "cancelled"]),
                                  Email.scheduled_for.is_not(None) | Email.sent_at.is_not(None))
-                          .order_by(func.coalesce(Email.sent_at, Email.scheduled_for).desc()).limit(200)).all()
+                          .order_by(func.coalesce(Email.sent_at, Email.updated_at).desc()).limit(200)).all()
     replied_seqs = {sid for (sid,) in c.db.execute(select(Email.sequence_id).where(
         Email.workspace_id == c.ws_id, Email.sequence_id.is_not(None), Email.replied_at.is_not(None))).all()}
     return {
