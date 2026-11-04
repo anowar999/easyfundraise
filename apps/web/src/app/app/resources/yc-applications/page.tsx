@@ -3,15 +3,15 @@
 import { useState } from "react";
 import { PageHeader } from "@/components/AppShell";
 import { NoMatches, OpenLink, ResourceSearch, ResourceTabs, SourceNote, matches } from "@/components/Resources";
-import { YC_APPS, YC_GUIDES } from "@/lib/resources/ycApplications";
+import { YC_APPS, YC_GUIDES, batchOrder } from "@/lib/resources/ycApplications";
 
 export default function YcApplicationsPage() {
   const [q, setQ] = useState("");
-  const shown = YC_APPS.filter((a) => matches(q, a.company, a.batch, a.sector, a.what, a.outcome)).sort((a, b) => b.year - a.year);
+  const shown = YC_APPS.filter((a) => matches(q, a.company, a.batch, a.sector, a.what, a.outcome)).sort((a, b) => batchOrder(b.batch, b.year) - batchOrder(a.batch, a.year));
 
   return (
     <>
-      <PageHeader title="YC applications" sub="Applications that got into Y Combinator, published by the founders who wrote them." />
+      <PageHeader title="YC applications" sub="Applications that got into Y Combinator, newest batch first. Founders rarely publish recent ones, so the latest here is 2021." />
       <ResourceTabs />
       <div className="grid gap-3 sm:grid-cols-2 mb-5">
         {YC_GUIDES.map((g) => (

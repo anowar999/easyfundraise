@@ -107,10 +107,13 @@ def test_nav_counts(client):
     card = client.post("/funnel", json={"name": "Nina Nav"}).json()
     client.post("/funnel", json={"name": "Gone Card"})
     client.delete(f"/funnel/{card['id']}")
+    client.post("/funnel", json={"name": "Quiet Card", "status": "Inactive"})  # not counted
+    client.post("/funnel", json={"name": "Passed Card", "status": "Rejection"})  # not counted
+    client.post("/funnel", json={"name": "Ghost Card", "status": "Ghosting"})  # still counted
     t1 = client.post("/tasks", json={"title": "One"}).json()
     client.post("/tasks", json={"title": "Two", "status": "doing"})
     client.post("/tasks", json={"title": "Three"})
     client.patch(f"/tasks/{t1['id']}", json={"status": "done"})
     n = client.get("/nav/counts").json()
     n.pop("company")
-    assert n == {"outreach": 2, "tracker": 1, "shortlist": 1, "tasks": 2}
+    assert n == {"outreach": 2, "tracker": 2, "shortlist": 1, "tasks": 2}
