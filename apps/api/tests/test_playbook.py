@@ -51,9 +51,9 @@ def test_template_drafts_follow_the_shape(client):
     assert got["saved_at"] and not got["money_warning"] and got["emails"][2]["focus"].startswith("Market")
     seq = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()
     e1, e2, e3 = (e["body"] for e in seq["emails"])
-    assert "Medibot" in e1 and "closes the books in one day" in e1 and "$750k pre-seed" in e1  # about them, building, ask
-    assert "9 days" in e2 and "Medibot" not in e2 and "$750k" in e2  # the problem replaces the synergy
-    assert "40 SaaS customers" in e3 and "$750k" in e3
+    assert "Medibot" in e1 and "closes the books in one day" in e1 and "USD 750k pre-seed" in e1  # about them, building, ask
+    assert "9 days" in e2 and "Medibot" not in e2 and "USD 750k" in e2  # the problem replaces the synergy
+    assert "40 SaaS customers" in e3 and "USD 750k" in e3
     assert sum("5 years" in b for b in (e1, e2, e3)) == 1 and sum("founder program" in b for b in (e1, e2, e3)) == 1
     assert [e["hook"] for e in seq["emails"]] == ["playbook-1", "playbook-2", "playbook-3"]
     assert all(e["issues"] == [] for e in seq["emails"]), [e["issues"] for e in seq["emails"]]
@@ -68,7 +68,7 @@ def test_update_becomes_the_next_follow_up_and_clears_back(client):
     assert r["changed"] == 1 and r["update"].startswith("We just closed") and r["unsent"] >= 1
     e = client.get(f"/sequences/{seq['id']}").json()["emails"]
     assert e[1]["body"].startswith("Hi Ada,\n\nWe just closed half the round with two angels.")
-    assert "$750k pre-seed" in e[1]["body"] and "20-minute call" in e[1]["body"] and "9 days" not in e[1]["body"]
+    assert "USD 750k pre-seed" in e[1]["body"] and "20-minute call" in e[1]["body"] and "9 days" not in e[1]["body"]
     assert e[0]["body"] == seq["emails"][0]["body"] and e[2]["body"] == seq["emails"][2]["body"]
     assert e[1]["issues"] == []
     new = client.post("/sequences", json={"investor_id": _ada(client)["id"]}).json()  # new drafts carry it too
@@ -97,7 +97,7 @@ def test_preview_shows_three_emails_without_saving(client):
     client.put(f"/shortlist/{_ada(client)['id']}")
     draft = {**PB, "ask": "We're raising $1m seed."}
     r = client.post("/outreach/playbook/preview", json=draft).json()
-    assert r["investor"]["name"] and len(r["emails"]) == 3 and "$1m seed" in r["emails"][0]["body"]
+    assert r["investor"]["name"] and len(r["emails"]) == 3 and "USD 1m seed" in r["emails"][0]["body"]
     assert client.get("/outreach/playbook").json()["saved_at"] is None  # nothing saved
     assert client.get("/sequences").json()["items"] == []  # nothing drafted
     other = client.post("/outreach/playbook/preview", json={**draft, "skip": [r["investor"]["id"]]}).json()

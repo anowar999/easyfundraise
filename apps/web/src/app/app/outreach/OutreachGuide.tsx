@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Activity, ArrowLeft, ArrowRight, BarChart3, Check, CalendarClock, ListChecks, Mail, PenLine, Reply, UserPlus, type LucideIcon } from "lucide-react";
+import { Activity, ArrowLeft, ArrowRight, BarChart3, Check, CalendarClock, ListChecks, Mail, PenLine, Reply, UserPlus, Zap, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Sheet } from "@/components/ui";
 
@@ -31,6 +31,15 @@ const SLIDES: { icon: LucideIcon; title: string; body: string[] }[] = [
     body: [
       "Emails go from your own Gmail. Email 1 goes Tuesday to Thursday morning in the investor's own time zone, and follow-ups go 2 working days apart.",
       "You confirm before anything is scheduled, or use Send now.",
+    ],
+  },
+  {
+    icon: Zap,
+    title: "One by one or Auto-send",
+    body: [
+      "One by one (the default): you review each investor's emails and press Send, or send all the ready ones at once.",
+      "Auto-send: every investor you add is emailed automatically from your Gmail, in their send window, without a review step.",
+      "Switch at the top of the Outreach list. Your daily limit and the spam check apply either way.",
     ],
   },
   {
@@ -132,7 +141,7 @@ function GuideSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   );
 }
 
-/** Small card in the Outreach right column that opens a 7-slide guide. Shows a "New" dot until opened once. */
+/** Small card in the Outreach right column that opens a 8-slide guide. Shows a "New" dot until opened once. */
 export function OutreachGuideCard() {
   const [open, setOpen] = useState(false);
   const [seen, setSeen] = useState(true);
@@ -160,7 +169,7 @@ export function OutreachGuideCard() {
           Read
         </button>
       </div>
-      <p className="mt-1.5 text-xs text-muted">From adding investors to replies and follow-ups, in 7 short steps.</p>
+      <p className="mt-1.5 text-xs text-muted">From adding investors to replies and follow-ups, in 8 short steps.</p>
       <GuideSheet open={open} onClose={() => setOpen(false)} />
     </div>
   );

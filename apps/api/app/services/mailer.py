@@ -38,7 +38,7 @@ from ..models import (
 from . import ai, follow_up
 from .entitlements import consume, limit, usage
 from .gmail import GmailRevoked, build_mime, client_for, strip_quoted
-from .outreach import fill_first_name, follow_up_slot, next_send_slot
+from .outreach import fill_first_name, follow_up_slot, for_send, next_send_slot, usd
 
 log = logging.getLogger("easyfundraise.mailer")
 ROLE_PREFIXES = ("info@", "press@", "hello@", "contact@", "admin@", "support@", "team@", "office@")
@@ -291,6 +291,7 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     if "first" in (em.body + em.subject).lower():
         em.body, em.subject = fill_first_name(em.body, who), fill_first_name(em.subject, who)
 
+    em.body, em.subject = for_send(em.body, em.step if seq is not None else 1), usd(em.subject)
     em.open_token = em.open_token or secrets.token_urlsafe(18)
     html_part = pixel_html(em.body, em.open_token) if ws.tracking_enabled else None
     unsub = ""

@@ -58,3 +58,17 @@ def test_spammy_email_blocks_scheduling_and_remove_from_outreach(client):
     assert client.delete(f"/sequences/{seq['id']}").json() == {"ok": True, "kept_history": False}
     assert client.get(f"/sequences/{seq['id']}").status_code == 404
     assert all(x["id"] != seq["id"] for x in client.get("/sequences").json()["items"])
+
+
+def test_usd_and_no_link_lines_in_follow_ups(client):
+    from app.services.outreach import for_send, usd
+
+    assert usd("Raising $1.5M at a $10m cap; $40k MRR") == "Raising USD 1.5M at a USD 10m cap; USD 40k MRR"
+    body = ("Hi Ada,\n\nWe now have $40k MRR. Our data room: https://dr.example.com/x if useful.\n\n"
+            "Sam\nCEO, DocAI\nhttps://docai.example.com\nlinkedin.com/in/sam")
+    two = for_send(body, 2)
+    assert "USD 40k" in two and "https://dr.example.com/x" in two  # links in a sentence stay
+    assert "docai.example.com" not in two and "linkedin" not in two and two.endswith("CEO, DocAI")
+    assert "linkedin.com/in/sam" in for_send(body, 1)  # email 1 keeps the signature links
+    seq = client.post("/sequences", json={"investor_id": _ready_to_send(client)["id"]}).json()
+    assert all("$" not in e["body"] for e in seq["emails"])
