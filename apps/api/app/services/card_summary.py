@@ -10,10 +10,11 @@ from sqlalchemy.orm import Session
 
 from ..models import STAGES, CardEvent, Email, FunnelCard, Workspace
 from . import ai
+from .cache import BoundedCache
 
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["headline", "next_step"],
           "properties": {"headline": {"type": "string"}, "next_step": {"type": "string"}}}
-_cache: dict[tuple, dict] = {}  # (card id, last change) -> summary; a new note or edit makes a new key
+_cache = BoundedCache(5000)  # (card id, last change) -> summary; a new note or edit makes a new key
 
 ASKED_FOR = re.compile(r"\b(deck|data ?room|numbers|metrics|financials|model|one[- ]pager|intro|references?|"
                        r"follow[- ]?up|send|share)\b", re.I)

@@ -3,6 +3,7 @@ import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.gzip import GZipMiddleware
 
 from .config import get_settings
 from .errors import ApiError, api_error_handler, problem, unhandled_error_handler
@@ -41,6 +42,10 @@ def csrf_ok(request: Request) -> bool:
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
     allowed = {settings.web_origin.rstrip("/"), f"http://{host}", f"https://{host}"}
     return not origin or any(origin == a or origin.startswith(a + "/") for a in allowed)
+
+
+# JSON lists (search results, tracker, outreach) shrink 5-10x on the wire; tiny responses are left alone
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.middleware("http")

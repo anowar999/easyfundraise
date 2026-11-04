@@ -17,6 +17,7 @@ from ..errors import ApiError, not_found
 from ..models import CARD_TYPES, STAGES, STATUSES, CardEvent, FunnelCard, Investor, Notification, Reminder
 from ..services import test_investors, ticket, tracker_link
 from ..services import tracker_import as ti
+from ..services.cache import BoundedCache
 from ..services.dataset_import import norm_linkedin, norm_name
 from ..services.notes import parse_note
 
@@ -514,7 +515,7 @@ def card_mail(cid: str, c: Ctx = Depends(ctx)):
             "subject": ra["subject"]}
 
 
-_synced: dict[str, datetime] = {}  # card id -> last Gmail check, so opening a card doesn't hit Gmail every time
+_synced = BoundedCache(20_000)  # card id -> last Gmail check, so opening a card doesn't hit Gmail every time
 
 
 @router.post("/{cid}/mail/sync")

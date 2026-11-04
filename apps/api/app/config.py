@@ -9,6 +9,13 @@ class Settings(BaseSettings):
 
     env: str = "dev"  # dev | uat | prod
     database_url: str = "postgresql+psycopg://ef:ef@localhost:5432/easyfundraise"
+    # Connection pool per process. FastAPI runs sync routes on a 40-thread pool, so 10 + 20 overflow keeps requests
+    # from queueing on a connection under load. Keep processes x (size + overflow) below Postgres max_connections.
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_statement_timeout_ms: int = 30_000  # a runaway query is cancelled instead of holding a connection forever
+    # Background worker: Gmail mailboxes polled for replies in parallel
+    worker_poll_threads: int = 8
     secret_key: str = "dev-insecure-change-me"
     web_origin: str = "http://localhost:3000"
 

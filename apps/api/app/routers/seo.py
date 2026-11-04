@@ -11,11 +11,12 @@ from ..db import get_db
 from ..deps import client_ip
 from ..errors import ApiError
 from ..models import Investor
+from ..services.cache import BoundedCache
 from ..services.entitlements import rate_limit
 
 router = APIRouter(prefix="/public/investor-stats", tags=["public"])
 MIN_FIRM = 2  # a firm is only listed when several of its investors are in the segment
-_cache: dict[str, tuple[float, dict]] = {}
+_cache = BoundedCache(2000)  # key -> (expiry, value); keys come from URLs, so the size is capped
 TTL = 6 * 3600
 
 
