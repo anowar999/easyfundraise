@@ -121,8 +121,12 @@ def plan(db: Session, ws_id, now: datetime) -> list[dict]:
     return out
 
 
-def schedule(db: Session, ws: Workspace, user: User, text: str, now: datetime) -> tuple[Broadcast, int]:
+def schedule(db: Session, ws: Workspace, user: User, text: str, now: datetime, send_now: bool = False) -> tuple[Broadcast, int]:
+    """send_now: everyone straight away (the sender still spaces them out and keeps the daily cap) instead of
+    08:35 their time."""
     rows = plan(db, ws.id, now)
+    if send_now:
+        rows = [{**r, "scheduled_for": now, "moved": False} for r in rows]
     b = Broadcast(workspace_id=ws.id, user_id=user.id, kind="round_update", template=TEMPLATE,
                   title="Round & progress update", inputs={"text": tidy(text)}, audience={"previously_emailed": True},
                   status="scheduled")

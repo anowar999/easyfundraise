@@ -451,6 +451,7 @@ def redraft(body: RedraftIn | None = None, c: Ctx = Depends(ctx)):
 
 class ProgressIn(BaseModel):
     text: str = Field(min_length=3, max_length=1500)
+    when: str = Field("morning", pattern="^(morning|now)$")  # 08:35 their time, or straight away
 
 
 def _progress_plan(c: Ctx) -> list[dict]:
@@ -503,13 +504,17 @@ def schedule_progress(body: ProgressIn, c: Ctx = Depends(ctx)):
     if r["level"] == "high":
         raise ApiError(422, "EF-UPD-002", f"This update looks like spam (score {r['score']}/100)",
                        "Fix: " + "; ".join(r["reasons"][:3]))
-    b, n = pu.schedule(c.db, c.workspace, c.user, body.text, datetime.now(UTC))
+    b, n = pu.schedule(c.db, c.workspace, c.user, body.text, datetime.now(UTC), send_now=body.when == "now")
     if n == 0:
         c.db.rollback()
         raise ApiError(422, "EF-UPD-001", "Nobody to update yet", "Updates go to investors you've already emailed.")
-    c.audit("progress_update.schedule", str(b.id), after={"emails": n})
+    c.audit("progress_update.schedule", str(b.id), after={"emails": n, "when": body.when})
+    if body.when == "now":
+        acc = c.db.get(GmailAccount, c.user.id)
+        if acc is not None and acc.next_send_at and acc.next_send_at > datetime.now(UTC):
+            acc.next_send_at = datetime.now(UTC)
     c.db.commit()
-    return {"ok": True, "scheduled": n, "broadcast_id": str(b.id)}
+    return {"ok": True, "scheduled": n, "broadcast_id": str(b.id), "when": body.when}
 
 
 @router.get("/outreach/insights")
