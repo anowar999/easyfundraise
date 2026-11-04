@@ -135,10 +135,11 @@ def _get(c: Ctx, sid: str) -> Sequence:
 @router.get("")
 def list_sequences(c: Ctx = Depends(ctx)):
     rows = c.db.execute(select(Sequence, Investor).join(Investor).where(Sequence.workspace_id == c.ws_id)
-                        .order_by(Sequence.created_at.desc()).limit(100)).all()
+                        .order_by(Sequence.created_at.desc()).limit(500)).all()
     return {"auto_send": auto_send_on(c.workspace),
             "items": [{"id": str(s.id), "status": s.status, "investor": {"id": str(i.id), "name": i.name,
                        "firm": i.current_firm or i.company}, "created_at": s.created_at,
+                       "email": next((e.to_email for e in s.emails if e.to_email), ""),
                        "blocker": blocker(c, s) if s.status == "draft" else None,
                        "sent": sum(e.status == "sent" for e in s.emails),
                        "next_at": min((e.scheduled_for for e in s.emails if e.status == "scheduled"), default=None)}
@@ -213,13 +214,17 @@ def _scheduled_email(c: Ctx, eid: str) -> Email:
     return em
 
 
+class SendNowIn(BaseModel):
+    anyway: bool = False  # the founder confirmed sending a follow-up within a day of the email before it
+
+
 @router.post("/scheduled/{eid}/send-now")
-def scheduled_send_now(eid: str, c: Ctx = Depends(ctx)):
+def scheduled_send_now(eid: str, body: SendNowIn | None = None, c: Ctx = Depends(ctx)):
     """Send now from the Scheduled list: an outreach email (same rules as on its sequence) or a progress update."""
     c.require_editor()
     em = _scheduled_email(c, eid)
     if em.sequence_id:
-        return send_now(str(em.sequence_id), eid, c)
+        return send_now(str(em.sequence_id), eid, body, c)
     now = datetime.now(UTC)
     em.scheduled_for, em.error = now, ""
     acc = c.db.get(GmailAccount, c.user.id)
@@ -432,7 +437,7 @@ def stop(sid: str, c: Ctx = Depends(ctx)):
 
 
 @router.post("/{sid}/emails/{eid}/send-now")
-def send_now(sid: str, eid: str, c: Ctx = Depends(ctx)):
+def send_now(sid: str, eid: str, body: SendNowIn | None = None, c: Ctx = Depends(ctx)):
     """Move one scheduled email to now; the sender picks it up within a minute (daily cap and safety checks still
     apply). A follow-up can only go once email 1 has been sent, so it stays in the same thread."""
     c.require_editor()
@@ -448,7 +453,7 @@ def send_now(sid: str, eid: str, c: Ctx = Depends(ctx)):
         if prev is None:
             raise ApiError(409, "EF-SEQ-012", f"Email {em.step - 1} hasn't gone out yet",
                            "Follow-ups reply in the same thread, so they go after the email before them.")
-        if prev.sent_at and prev.sent_at + FOLLOW_UP_GAP > now:
+        if prev.sent_at and prev.sent_at + FOLLOW_UP_GAP > now and not (body and body.anyway):
             raise ApiError(409, "EF-SEQ-014", "Too soon after the last email",
                            f"A follow-up can go a day after email {prev.step}, so they don't land minutes apart.")
     em.scheduled_for, em.error = now, ""

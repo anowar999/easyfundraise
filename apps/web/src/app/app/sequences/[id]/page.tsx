@@ -141,7 +141,8 @@ export default function SequencePage() {
   const toast = useToast();
   const qc = useQueryClient();
   // Add to outreach answers at once; the personalised AI versions land a few seconds later, so poll until then.
-  const [going, setGoing] = useState<string | null>(null);  // the email just sent with Send now
+  const [going, setGoing] = useState<string | null>(null);
+  const [confirmSend, setConfirmSend] = useState(false);  // the email just sent with Send now
   const q = useQuery<Seq>({
     queryKey: ["sequence", id],
     queryFn: () => api(`/sequences/${id}`),
@@ -239,9 +240,19 @@ export default function SequencePage() {
             <CalendarCheck size={15} className="text-brand" />
             {onWay ? `Email ${next.step} is on its way.` : `Email ${next.step} is scheduled for ${when} (your time).`}
             {ok ? (
-              <button className="btn-primary btn-sm ml-auto" disabled={sendNow.isPending} onClick={() => sendNow.mutate(next.id)}>
-                {sendNow.isPending ? "Sending…" : "Send now"}
-              </button>
+              confirmSend ? (
+                <span className="ml-auto inline-flex items-center gap-1.5 text-xs">
+                  Send email {next.step} to {s.investor.name} now?
+                  <button className="btn-primary btn-sm" disabled={sendNow.isPending} onClick={() => { setConfirmSend(false); sendNow.mutate(next.id); }}>
+                    {sendNow.isPending ? "Sending…" : "Yes, send"}
+                  </button>
+                  <button className="btn-ghost btn-sm" onClick={() => setConfirmSend(false)}>No</button>
+                </span>
+              ) : (
+                <button className="btn-primary btn-sm ml-auto" disabled={sendNow.isPending} onClick={() => setConfirmSend(true)}>
+                  Send now
+                </button>
+              )
             ) : (
               !onWay && opensAt && <span className="ml-auto text-xs text-muted">Send now opens {fmtDate(opensAt.toISOString(), { weekday: "short", hour: "2-digit", minute: "2-digit" })}, a day after email {prev?.step}</span>
             )}

@@ -6,11 +6,12 @@ import { AlertTriangle, CheckCircle2, MailPlus, Search, Send, Zap } from "lucide
 import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { ListSearch, matches } from "@/components/ListSearch";
 import { ConfirmSend, type SendPreview } from "@/components/ConfirmSend";
 import { Empty, ListSkeleton, Sheet, errText, useToast } from "@/components/ui";
 import { api, ApiError, fmtDate } from "@/lib/api";
 
-type Item = { id: string; status: string; blocker: string | null; sent: number; next_at: string | null; created_at: string; investor: { id: string; name: string; firm: string } };
+type Item = { id: string; status: string; blocker: string | null; sent: number; next_at: string | null; created_at: string; email?: string; investor: { id: string; name: string; firm: string } };
 type List = { auto_send: boolean; items: Item[] };
 type Bulk = { needs_confirm: true; from: string; ready: { id: string; name: string; to: string }[]; skipped: { id: string; name: string; reason: string }[] };
 
@@ -101,6 +102,7 @@ export function OutreachList() {
   const qc = useQueryClient();
   const toast = useToast();
   const q = useQuery<List>({ queryKey: ["sequences"], queryFn: () => api("/sequences") });
+  const [find, setFind] = useState("");
   const [bulk, setBulk] = useState<Bulk | null>(null);
   const preview = useMutation({
     mutationFn: () => api<Bulk>("/sequences/send-all", { method: "POST", json: { confirm: false } }),
@@ -128,6 +130,7 @@ export function OutreachList() {
   }, [q.data, preview]);
   if (q.isLoading) return <ListSkeleton rows={4} />;
   const items = (q.data?.items ?? []).filter((x) => x.status !== "stopped");
+  const shown = items.filter((x) => matches(find, x.investor.name, x.investor.firm, x.email));
   const drafts = items.filter((x) => x.status === "draft");
   const ready = drafts.filter((x) => !x.blocker).length;
   return (
@@ -156,8 +159,14 @@ export function OutreachList() {
               </button>
             )}
           </div>
+          {items.length > 0 ? (
+            <div className="px-4 py-2 border-b border-line">
+              <ListSearch value={find} onChange={setFind} className="max-w-xs" />
+            </div>
+          ) : null}
           <div className="divide-y divide-line">
-            {items.map((x) => (
+            {find && shown.length === 0 && <p className="px-4 py-6 text-sm text-muted text-center">No one on your outreach list matches &ldquo;{find}&rdquo;.</p>}
+            {shown.map((x) => (
               <div key={x.id} className="flex items-center gap-3 px-4 py-3">
                 <Link href={from(`/app/sequences/${x.id}`, "outreach")} className="flex-1 min-w-0">
                   <div className="font-medium truncate">{x.investor.name}</div>
