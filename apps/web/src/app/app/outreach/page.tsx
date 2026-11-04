@@ -62,7 +62,7 @@ function Breakdown({ title, rows, label }: { title: string; rows: Row[]; label: 
   );
 }
 
-const STATUS: Record<string, string> = { sent: "Sent", scheduled: "Scheduled", failed: "Not sent" };
+const STATUS: Record<string, string> = { sent: "Sent", scheduled: "Scheduled", sending: "Sending", failed: "Not sent", cancelled: "Cancelled" };
 
 /** Email templates 1-3 at a glance, a button to review and change them, and the round & progress update. Opens on
  *  the first visit when they've never been set up (and on ?playbook=1). */
@@ -119,7 +119,8 @@ export default function Outreach() {
     const t = new URLSearchParams(window.location.search).get("tab");
     if (t === "scheduled" || t === "activity") setTab(t);
   }, []);
-  const s = useQuery<Stats>({ queryKey: ["outreach-stats"], queryFn: () => api("/outreach/stats") });
+  // Replies are picked up in the background, so keep results and activity fresh while the page is open.
+  const s = useQuery<Stats>({ queryKey: ["outreach-stats"], queryFn: () => api("/outreach/stats"), refetchInterval: 30_000 });
   const g = useQuery<Gmail>({ queryKey: ["gmail"], queryFn: () => api("/gmail") });
   const pb = usePlaybook();
   if (s.isLoading) return <ListSkeleton rows={4} />;
@@ -128,6 +129,7 @@ export default function Outreach() {
   const nUp = up.data?.items.length ?? 0;
   const go = (t: Tab) => {
     setTab(t);
+    if (t === "activity") s.refetch();
     try {
       const u = new URL(window.location.href);
       if (t === "list") u.searchParams.delete("tab");
@@ -179,7 +181,7 @@ export default function Outreach() {
                           {e.to} <span className="text-muted font-normal">· email {e.step}</span>
                         </div>
                         <div className="text-xs text-muted truncate">{e.subject}</div>
-                        {e.error && e.status === "failed" && <div className="text-xs text-warn">{e.error}</div>}
+                        {e.error && (e.status === "failed" || e.status === "cancelled") && <div className={clsx("text-xs", e.status === "failed" ? "text-warn" : "text-muted")}>{e.error}</div>}
                       </div>
                       <div className="text-right shrink-0 text-xs">
                         <div className={e.status === "failed" ? "text-warn" : "text-muted"}>{STATUS[e.status] ?? e.status}</div>
