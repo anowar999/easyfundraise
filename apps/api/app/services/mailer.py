@@ -201,6 +201,8 @@ def send_now_one(email_id) -> int:
                        .with_for_update(skip_locked=True))
         if em is None:
             return 0
+        if em.user_id:  # one send at a time per mailbox, so the pacing gap holds when several finish together
+            db.get(GmailAccount, em.user_id, with_for_update=True, populate_existing=True)
         try:
             n = _send_one(db, em, now)
         except Exception as e:
@@ -355,6 +357,8 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     em.gmail_message_id, em.gmail_thread_id, em.rfc_message_id = res.message_id, res.thread_id, res.rfc_message_id
     n = consume(db, ws, sent_metric(user.id), day, None) if counted else used
     lo, hi = cfg(db, "sending", {}).get("pace_seconds", [45, 180])
+    if not get_settings().is_prod:  # dev/UAT: a short gap so testing a queue of sends doesn't take minutes
+        lo, hi = min(int(lo), 15), min(int(hi), 30)
     acc.next_send_at = now + timedelta(seconds=random.randint(int(lo), int(hi)))
     warn = int(cfg(db, "sending", {}).get("warn_at_pct", 80))
     if counted and cap and n == max(1, cap * warn // 100) and n < cap:

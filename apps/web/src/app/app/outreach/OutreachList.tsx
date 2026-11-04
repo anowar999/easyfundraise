@@ -219,7 +219,7 @@ export function OutreachList() {
   // close behind it are "Queued #n" rather than all flashing "Sending…".
   const queue = useMemo(() => {
     const due = (q.data?.items ?? [])
-      .filter((x) => x.status === "approved" && x.next_at && new Date(x.next_at).getTime() <= now + 5 * 60_000)
+      .filter((x) => x.status === "approved" && !x.drafting && x.next_at && new Date(x.next_at).getTime() <= now + 5 * 60_000)
       .sort((a, b) => new Date(a.next_at!).getTime() - new Date(b.next_at!).getTime() || a.id.localeCompare(b.id));
     if (!due.length || new Date(due[0].next_at!).getTime() > now) return new Map<string, number>();
     return new Map(due.map((x, i) => [x.id, i + 1]));
@@ -464,7 +464,7 @@ export function OutreachList() {
                 </Link>
                 {x.drafting ? (
                   <span className="chip text-xs text-brand border-brand/40 inline-flex items-center gap-1">
-                    <RefreshCw size={12} className="animate-spin" /> Rewriting…
+                    <RefreshCw size={12} className="animate-spin" /> {x.status === "approved" ? "Writing… then sending" : "Rewriting…"}
                   </span>
                 ) : regen.includes(x.id) ? (
                   <span className="chip text-xs text-emerald-700 border-emerald-600/30 inline-flex items-center gap-1">
@@ -477,6 +477,7 @@ export function OutreachList() {
                 ) : queue.has(x.id) ? (
                   <span className="chip text-xs text-sky-700 border-sky-500/40 bg-sky-500/10 inline-flex items-center gap-1" title="Emails go one at a time, a minute or two apart, so they don't look like a bulk send">
                     Queued #{queue.get(x.id)}
+                    {x.next_at && new Date(x.next_at).getTime() > now ? ` · ≈ ${fmtDate(x.next_at, { hour: "2-digit", minute: "2-digit" })}` : ""}
                   </span>
                 ) : (
                   <span className={clsx("chip text-xs hidden sm:inline-flex", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>

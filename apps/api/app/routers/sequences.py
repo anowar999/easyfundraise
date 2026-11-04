@@ -90,6 +90,14 @@ def finish_ai_draft(seq_id: uuid.UUID, user_id: uuid.UUID, placed: dict[int, str
         finally:
             s.engine = engine
             db.commit()
+        # Send now was pressed while this was being written: send email 1 the moment it's ready (or queue it behind
+        # the one before it), instead of waiting for the worker's next pass
+        if s.status == "approved":
+            first = next((e for e in s.emails if e.step == 1 and e.status == "scheduled"), None)
+            if first is not None and first.scheduled_for and first.scheduled_for <= datetime.now(UTC) + timedelta(seconds=40):
+                first.scheduled_for = min(first.scheduled_for, datetime.now(UTC))
+                db.commit()
+                mailer.send_now_one(first.id)
 
 
 def _addable(c: Ctx, inv: Investor | None, excl=None) -> Investor:
@@ -581,7 +589,7 @@ def try_auto_send(c: Ctx, s: Sequence) -> dict:
     now = datetime.now(UTC)
     # "As soon as added": a couple of minutes' grace so the AI version (written in the background) goes, not the
     # template; the mailer still spaces sends out and keeps the daily limit. Otherwise their morning send window.
-    first_at = now + timedelta(minutes=2) if auto_send_when(c.workspace) == "now" else None
+    first_at = now if auto_send_when(c.workspace) == "now" else None  # the mailer waits for the AI version
     outreach.schedule(s.emails, now, inv.timezone, first_at=_planner(c, now).place(inv.timezone, first_at))
     _schedule(c, s, inv, to, {"via": "auto_send_setting", "when": "now" if first_at else "window"})
     c.db.commit()
@@ -601,7 +609,8 @@ def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
     outreach.schedule(s.emails, now, inv.timezone, first_at=plan.place(
         inv.timezone,
         # "now": a short grace, longer while the AI version is still being written so that one goes
-        now + timedelta(seconds=90 if s.engine == DRAFTING else 30) if body and body.first_at == "now" else None))
+        # "now" means now: if the AI version is still being written the mailer holds it and finish_ai_draft sends it
+        now if body and body.first_at == "now" else None))
     if not (body and body.confirm):
         preview = {"from": acc.email, "to": to, "investor": inv.name, "timezone": inv.timezone,
                    "allowance": plan.summary(),
@@ -708,7 +717,7 @@ def bulk_add(body: BulkAddIn, request: Request, c: Ctx = Depends(ctx), backgroun
     if sending and not body.confirm:
         sim = _planner(c, now)  # where each first email would land, within the daily allowance
         for inv in ok:
-            sim.place(inv.timezone, now + timedelta(seconds=90) if body.action == "now" else None)
+            sim.place(inv.timezone, now if body.action == "now" else None)
         return {"needs_confirm": True, **plan, "allowance": sim.summary()}
     later = background is not None and ai.available()
     done, drafts, failed, jobs = [], [], [], []
@@ -731,7 +740,7 @@ def bulk_add(body: BulkAddIn, request: Request, c: Ctx = Depends(ctx), backgroun
             continue
         # "now": 90s grace so the AI-personalised version goes; the mailer spaces sends and keeps the daily limit
         outreach.schedule(seq.emails, now, inv.timezone, first_at=planner.place(
-            inv.timezone, now + timedelta(seconds=90) if body.action == "now" else None))
+            inv.timezone, now if body.action == "now" else None))
         _schedule(c, seq, inv, to, {"via": "investor_list_bulk", "when": body.action, "confirmed": True,
                                     "from": acc.email})
         c.db.commit()
