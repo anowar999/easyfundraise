@@ -84,3 +84,13 @@ def test_follow_ups_do_not_use_the_allowance(client):
         ws = db.get(Workspace, client.get("/workspace").json()["id"])
         days = {mailer.user_day(db.get(User, e.user_id), e.sent_at) for e in ems}
         assert sum(usage(db, ws, mailer.sent_metric(ems[0].user_id), d) for d in days) == 1
+
+
+def test_readd_after_remove_asks_first(client):
+    set_tier(client, "pro")
+    inv = client.get("/investors", params={"q": "Ada"}).json()["items"][0]
+    seq = client.post("/sequences", json={"investor_id": inv["id"], "hold": True}).json()
+    assert client.delete(f"/sequences/{seq['id']}").status_code == 200
+    r = client.post("/sequences", json={"investor_id": inv["id"], "hold": True})
+    assert r.status_code == 409 and r.json()["needs_readd"]
+    assert client.post("/sequences", json={"investor_id": inv["id"], "hold": True, "readd": True}).status_code == 200

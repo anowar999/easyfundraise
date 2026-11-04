@@ -24,6 +24,7 @@ const STATUS_FILTERS = [
   { key: "scheduled", label: "Scheduled", test: (x: Item) => Boolean(x.next_at) },
   { key: "seen", label: "Seen", test: (x: Item) => Boolean(x.seen) },
   { key: "replied", label: "Replied", test: (x: Item) => Boolean(x.replied) },
+  { key: "paused", label: "Paused", test: (x: Item) => Boolean(x.paused) },
 ] as const;
 type StatusKey = (typeof STATUS_FILTERS)[number]["key"];
 const UNKNOWN = "__unknown";
@@ -40,6 +41,9 @@ type Item = {
   country?: string;
   seen?: boolean;
   replied?: boolean;
+  reply?: string;  // positive | neutral | negative | opt_out
+  paused?: number;  // follow-ups held because they replied
+  bounced?: boolean;
   ready?: boolean;
   drafting?: boolean;
   card_id?: string | null;
@@ -50,9 +54,17 @@ type Bulk = { needs_confirm: true; from: string; ready: { id: string; name: stri
 /** Its next email's time has come: the worker is sending it now (it may wait a minute or two for pacing). */
 const isDue = (x: Item, now: number) => x.status === "approved" && !!x.next_at && new Date(x.next_at).getTime() <= now;
 
+const REPLY: Record<string, { text: string; cls: string }> = {
+  positive: { text: "Replied · interested", cls: "text-emerald-700 border-emerald-600/40 bg-emerald-500/10" },
+  neutral: { text: "Replied · needs review", cls: "text-amber-700 border-amber-500/50 bg-amber-500/10" },
+  negative: { text: "Replied · passing", cls: "text-slate-600 border-slate-400/50 bg-slate-500/10" },
+  opt_out: { text: "Asked not to be contacted", cls: "text-slate-600 border-slate-400/50" },
+};
+
 function statusText(x: Item) {
   if (x.status === "draft") return x.blocker ? "Needs attention" : "Ready to send";
   if (x.status === "stopped") return "Stopped";
+  if (x.status === "replied") return `${x.sent} of 3 sent${x.paused ? " · follow-ups paused" : ""}`;
   if (x.next_at) return `${x.sent} of 3 sent · next ${fmtDate(x.next_at, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`;
   return x.sent ? `${x.sent} of 3 sent` : "Scheduled";
 }
@@ -225,6 +237,21 @@ export function OutreachList() {
       setRemoving(null);
       for (const k of ["sequences", "upcoming", "outreach-stats", "investors", "investor"]) qc.invalidateQueries({ queryKey: [k] });
       toast(r.kept_history ? `${x.investor.name} removed. Sent emails stay in Activity.` : `${x.investor.name} removed from outreach.`);
+    },
+    onError: (e) => toast(errText(e), "err"),
+  });
+  const follow = useMutation({
+    mutationFn: ({ x, action }: { x: Item; action: "resume" | "send_now" | "cancel" }) =>
+      api(`/sequences/${x.id}/followups`, { method: "POST", json: { action } }),
+    onSuccess: (_, { x, action }) => {
+      for (const k of ["sequences", "upcoming", "outreach-stats"]) qc.invalidateQueries({ queryKey: [k] });
+      toast(
+        action === "cancel"
+          ? `Follow-ups to ${x.investor.name} cancelled.`
+          : action === "send_now"
+            ? `Sending the next follow-up to ${x.investor.name} now. Any after it keep their 2 working day gap.`
+            : `Follow-ups to ${x.investor.name} resumed: the next one goes in 2 working days, in their morning.`,
+      );
     },
     onError: (e) => toast(errText(e), "err"),
   });
@@ -411,6 +438,13 @@ export function OutreachList() {
                 <Link href={from(`/app/sequences/${x.id}`, "outreach")} className="flex-1 min-w-0">
                   <div className="font-medium truncate">{x.investor.name}</div>
                   <div className="text-xs text-muted truncate">{x.investor.firm}</div>
+                  {(x.reply || x.bounced) && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {x.bounced && <span className="chip text-[11px] text-danger border-danger/40 bg-danger/5">Invalid email · bounced</span>}
+                      {x.reply && REPLY[x.reply] && <span className={clsx("chip text-[11px]", REPLY[x.reply].cls)}>{REPLY[x.reply].text}</span>}
+                      {!!x.paused && <span className="chip text-[11px] text-amber-700 border-amber-500/50">{x.paused} follow-up{x.paused > 1 ? "s" : ""} paused</span>}
+                    </div>
+                  )}
                   {x.blocker && (
                     <div className="text-xs text-warn flex items-center gap-1 mt-0.5">
                       <AlertTriangle size={12} /> {x.blocker}
@@ -455,6 +489,19 @@ export function OutreachList() {
                       <Eye size={14} />
                     </IconBtn>
                     {x.status === "draft" && !x.blocker && <SendOne x={x} />}
+                    {!!x.paused && (
+                      <span className="inline-flex items-center gap-1">
+                        <button className="btn-ghost btn-sm border border-line" disabled={follow.isPending} title="Next follow-up in 2 working days, in their morning" onClick={() => follow.mutate({ x, action: "resume" })}>
+                          <CalendarClock size={13} /> Resume
+                        </button>
+                        <button className="btn-ghost btn-sm border border-line" disabled={follow.isPending} title="Send the next follow-up now" onClick={() => follow.mutate({ x, action: "send_now" })}>
+                          <Send size={13} /> Send next
+                        </button>
+                        <button className="btn-ghost btn-sm text-warn" disabled={follow.isPending} title="Cancel the paused follow-ups" onClick={() => follow.mutate({ x, action: "cancel" })}>
+                          Cancel
+                        </button>
+                      </span>
+                    )}
                     {x.card_id ? (
                       <IconBtn label="Open in Investor tracker" onClick={() => router.push(from(`/app/funnel/${x.card_id}`, "outreach"))}>
                         <KanbanSquare size={14} className="text-brand" />

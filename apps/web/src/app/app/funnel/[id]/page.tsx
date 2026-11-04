@@ -125,7 +125,7 @@ export default function CardPage() {
             <span className="chip">{c.stage_label}</span>
             <StatusBadge status={c.status} />
             <span className="chip">{c.priority}</span>
-            {c.tags.map((t) => (
+            {c.tags.filter((t) => t !== "auto-added").map((t) => (
               <span key={t} className="chip text-muted">
                 {t}
               </span>

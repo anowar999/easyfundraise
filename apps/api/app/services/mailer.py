@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import (
+    AuditLog,
     Broadcast,
     CardEvent,
     ConfigKV,
@@ -223,9 +224,10 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     if em.to_email.lower().startswith(ROLE_PREFIXES) and not (seq and seq.persona == "allow-role"):
         em.status, em.error = "cancelled", "Role address (info@, press@...) skipped"
         return 0
-    if seq is not None:  # stop on any reply (SEQ-01)
+    if seq is not None:  # stop on any reply (SEQ-01), unless the founder resumed the follow-ups after it
         if db.scalar(select(func.count()).select_from(Email).where(Email.sequence_id == seq.id,
-                                                                    Email.replied_at.is_not(None))):
+                                                                    Email.replied_at.is_not(None),
+                                                                    Email.replied_at > seq.updated_at)):
             em.status = "cancelled"
             return 0
     if em.broadcast_id and em.step > 1 and db.scalar(select(func.count()).select_from(Email).where(
@@ -364,13 +366,16 @@ NEGATIVE = re.compile(r"\b(not (a )?fit|pass(ing)?\b|not interested|no thanks|no
                       r"we don'?t invest|not investing|decline)\b", re.I)
 OPT_OUT = re.compile(r"^\s*(no|no thanks|stop|unsubscribe|remove me)[.!]?\s*$|\bunsubscribe\b|\bremove me\b", re.I)
 AUTO = re.compile(r"\b(out of (the )?office|ooo|on vacation|on leave|auto(matic)? reply|away until)\b", re.I)
+BOUNCE = re.compile(r"\b(address not found|delivery status notification \(failure\)|message (was )?not delivered|"
+                    r"undeliverable|recipient address rejected|user unknown|no such user|mailbox unavailable)\b", re.I)
 DECK = re.compile(r"\b(deck|data ?room|materials|one[- ]pager)\b", re.I)
 
 
 def classify(db: Session, ws: Workspace, text: str, headers: dict, sender: str) -> dict:
     """MAIL-03: positive / neutral / negative / auto / bounce / opt_out, plus extracted signals (TRK-03)."""
     low_sender = sender.lower()
-    if "mailer-daemon" in low_sender or "postmaster" in low_sender or "delivery-status" in headers.get("content-type", ""):
+    if ("mailer-daemon" in low_sender or "postmaster" in low_sender or "mail delivery subsystem" in low_sender
+            or "delivery-status" in headers.get("content-type", "") or BOUNCE.search(text)):
         return {"kind": "bounce", "signals": []}
     if headers.get("auto-submitted", "no").lower() not in ("", "no") or AUTO.search(text):
         return {"kind": "auto", "signals": []}
@@ -407,15 +412,31 @@ def handle_reply(db: Session, em: Email, msg, now: datetime) -> None:
     link = f"/app/funnel/{card.id}" if card else "/app/outreach"
     if kind == "bounce":  # MAIL-04
         em.bounced_at = now
-        if not excluded(db, ws.id, primary(em.to_email)):
-            db.add(Exclusion(workspace_id=ws.id, kind="email", value=primary(em.to_email).lower(), reason="bounced"))
+        addr = primary(em.to_email).lower()
+        if not excluded(db, ws.id, addr):
+            db.add(Exclusion(workspace_id=ws.id, kind="email", value=addr, reason="bounced"))
         _stop(db, em)
-        notify(db, ws.id, em.user_id, "bounce", f"Email to {name} bounced", "The address is marked invalid.", link)
+        # Nothing else goes to this address: every scheduled or paused email to it (other follow-ups, updates)
+        why = "Cancelled: address not found (the email bounced)"
+        gone = db.scalars(select(Email).where(Email.workspace_id == ws.id, Email.status.in_(("scheduled", "paused")),
+                                              func.lower(Email.to_email).like(f"%{addr}%"))).all()
+        for other in gone:
+            other.status, other.error = "cancelled", why
+        em.error = "Bounced: address not found"
+        db.add(AuditLog(actor_id=em.user_id, action="email.bounce", target=str(em.id),
+                        after={"to": addr, "reason": "address not found", "snippet": msg.snippet[:200],
+                               "cancelled": [str(o.id) for o in gone]}))
+        notify(db, ws.id, em.user_id, "bounce", f"Email to {name} bounced: address not found",
+               f"We cancelled {len(gone)} scheduled email{'s' if len(gone) != 1 else ''} to this address and won't email it again.",
+               link)
         return
     if kind == "auto":
         return  # out-of-office: keep the sequence going
     em.replied_at, em.reply_kind = now, kind
-    _stop(db, em, "replied")
+    if kind == "opt_out":
+        _stop(db, em, "replied")
+    else:  # any real reply (yes, no or unclear) pauses the follow-ups; the founder resumes, sends or cancels them
+        _pause(db, em)
     if kind == "positive" and card is None:  # an interested reply puts them in the tracker
         card = tracker_link.for_positive_reply(db, em)
         if card is not None:
@@ -439,11 +460,23 @@ def handle_reply(db: Session, em: Email, msg, now: datetime) -> None:
                              meta={"from": card.stage, "to": target, "auto": True}))
             card.stage = target
     title = {"positive": f"{name} replied: interested", "negative": f"{name} replied: passing",
-             "neutral": f"{name} replied"}[kind]
-    body = msg.snippet[:200]
+             "neutral": f"{name} replied: needs your review"}[kind]
+    body = msg.snippet[:200] + "\n\nFollow-ups are paused. Resume, send or cancel them in Outreach (filter: Paused)."
+    if kind == "neutral" and em.card_id is None:
+        body += " Add them to your tracker from the Outreach list if it's promising."
     if kind == "negative" and _auto(ws, "rejection_suggestion"):
         body += "\n\nMark as Rejection? Open the card to confirm."
     notify(db, ws.id, em.user_id, "reply", title, body, link)
+
+
+def _pause(db: Session, em: Email) -> None:
+    """A reply holds the rest of the sequence: unsent follow-ups wait as 'paused' until the founder decides."""
+    if em.sequence_id:
+        seq = db.get(Sequence, em.sequence_id)
+        seq.status = "replied"
+        for other in seq.emails:
+            if other.status == "scheduled":
+                other.status, other.error = "paused", "Paused: they replied"
 
 
 def _stop(db: Session, em: Email, status: str = "stopped") -> None:

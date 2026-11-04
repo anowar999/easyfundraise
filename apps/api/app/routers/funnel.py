@@ -248,6 +248,7 @@ def patch_card(cid: str, body: CardIn, c: Ctx = Depends(ctx)):
     c.require_editor()
     _validate(body)
     card = _get(c, cid)
+    tracker_link.touched(card)
     apply(c, card, body)
     c.db.commit()
     return out(card)
@@ -263,6 +264,7 @@ def move_card(cid: str, body: MoveIn, c: Ctx = Depends(ctx)):
     """Drag-and-drop between columns; fractional positions avoid renumbering the column."""
     c.require_editor()
     card = _get(c, cid)
+    tracker_link.touched(card)
     col = c.db.scalars(select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.stage == body.stage,
                                                 FunnelCard.deleted_at.is_(None), FunnelCard.id != card.id)
                        .order_by(FunnelCard.position)).all()
@@ -284,6 +286,7 @@ def add_note(cid: str, body: NoteIn, c: Ctx = Depends(ctx)):
     """AGT-06: notes are parsed; dates become reminders, other signals become one-click suggestions."""
     c.require_editor()
     card = _get(c, cid)
+    tracker_link.touched(card)
     _event(c, card, "note", body.body.strip())
     try:
         today = datetime.now(ZoneInfo(c.user.timezone or "UTC")).date()
@@ -309,6 +312,7 @@ def mark_contacted(cid: str, body: ContactIn, c: Ctx = Depends(ctx)):
     """Quick action from mobile: logs a touch (e.g. WhatsApp nudge sent, SEQ-07) and updates Last contacted."""
     c.require_editor()
     card = _get(c, cid)
+    tracker_link.touched(card)
     card.last_contacted_at = datetime.now(UTC)
     card.contact_method = card.contact_method or body.method
     if card.stage < 3:

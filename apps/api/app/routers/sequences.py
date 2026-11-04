@@ -9,12 +9,12 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..db import SessionLocal
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
-from ..models import CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence, User, Workspace
+from ..models import AuditLog, CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence, User, Workspace
 from ..services import agent, ai, mailer, outreach, send_plan, spam, test_investors, tracker_link
 from ..services.entitlements import can, consume, limit
 from .investors import _exclusions, auto_reveal, is_excluded
@@ -49,6 +49,7 @@ class DraftIn(BaseModel):
     first_email: FirstEmail | None = None  # written on the investor profile; replaces email 1
     persona: str = Field("momentum", pattern="^(momentum|warm-intro|technical-founder|humble-expert)$")
     hold: bool = False  # the quick preview: draft only, even with auto-send on; the founder decides in the sheet
+    readd: bool = False  # yes, add them again although they were removed from outreach a moment ago
 
 
 def with_opt_out(body: str, signature: str) -> str:
@@ -133,6 +134,13 @@ def _new_sequence(c: Ctx, inv: Investor, persona: str, later: bool, first_email:
 def draft(body: DraftIn, c: Ctx = Depends(ctx), background: BackgroundTasks = None):
     c.require_editor()
     inv = _addable(c, c.db.get(Investor, uuid.UUID(body.investor_id)))
+    if not body.readd and (gone := c.db.scalar(select(AuditLog.created_at).where(
+            AuditLog.actor_id == c.user.id, AuditLog.action == "sequence.remove",
+            AuditLog.after["investor_id"].astext == str(inv.id),
+            AuditLog.created_at > datetime.now(UTC) - timedelta(minutes=30)).order_by(AuditLog.created_at.desc()).limit(1))):
+        mins = max(int((datetime.now(UTC) - gone).total_seconds() // 60), 0)
+        raise ApiError(409, "EF-SEQ-031", f"You removed {inv.name} from outreach {'just now' if mins < 1 else f'{mins} min ago'}",
+                       "Add them again?", {"needs_readd": True})
     auto = auto_send_on(c.workspace)
     # Answer at once with lint-clean template drafts; the AI versions (10-20s) are written in the background.
     later = background is not None and ai.available()
@@ -169,6 +177,10 @@ def list_sequences(c: Ctx = Depends(ctx)):
                       "seen": any(e.status == "sent" and (e.open_count or 0) > 0 for e in s.emails),
                       "replied": any(e.replied_at is not None and e.reply_kind not in ("bounce", "auto")
                                      for e in s.emails),
+                      "reply": max(((e.replied_at, e.reply_kind) for e in s.emails
+                                    if e.replied_at and e.reply_kind not in ("bounce", "auto")), default=(None, ""))[1],
+                      "paused": sum(e.status == "paused" for e in s.emails),
+                      "bounced": any(e.bounced_at is not None for e in s.emails),
                       "sent": sum(e.status == "sent" for e in s.emails),
                       "next_at": min((e.scheduled_for for e in s.emails if e.status == "scheduled"), default=None)})
     return {"auto_send": auto_send_on(c.workspace), "auto_send_when": auto_send_when(c.workspace), "items": items}
@@ -740,6 +752,47 @@ BULK_TERMS = {  # what the confirm screen says; stored with the acceptance in th
 }
 
 
+class FollowUpsIn(BaseModel):
+    action: str = Field(pattern="^(resume|send_now|cancel)$")
+
+
+@router.post("/{sid}/followups")
+def followups(sid: str, body: FollowUpsIn, c: Ctx = Depends(ctx), background: BackgroundTasks = None):
+    """Follow-ups paused by a reply: resume them (next one 2 working days from now, then spaced as usual), send
+    the next one now, or cancel them. Resuming or sending is the founder's explicit choice, recorded in the log."""
+    c.require_editor()
+    s = _get(c, sid)
+    held = sorted((e for e in s.emails if e.status == "paused"), key=lambda e: e.step)
+    if not held:
+        raise ApiError(409, "EF-SEQ-030", "No paused follow-ups", "This investor has no follow-ups waiting.")
+    inv = c.db.get(Investor, s.investor_id)
+    if body.action == "cancel":
+        for e in held:
+            e.status, e.error = "cancelled", "Cancelled after their reply"
+        c.audit("sequence.followups_cancel", str(s.id), after={"investor": inv.name, "steps": [e.step for e in held]})
+        c.db.commit()
+        return s_out(s, inv, c.user.signature)
+    acc = c.db.get(GmailAccount, c.user.id)
+    if acc is None or acc.status != "connected":
+        raise ApiError(409, "EF-SEQ-007", "Connect Gmail to send", "Emails go out from your own Gmail.", {"needs_gmail": True})
+    now = datetime.now(UTC)
+    tz = inv.timezone if inv else "UTC"
+    prev = None
+    for e in held:
+        e.scheduled_for = (now if body.action == "send_now" and prev is None
+                           else outreach.follow_up_slot(prev or now, tz))
+        e.status, e.error = "scheduled", ""
+        prev = e.scheduled_for
+    s.status = "approved"  # updated_at moves past the reply, so the mailer's stop-on-reply lets these go
+    c.audit("sequence.followups_" + body.action, str(s.id), after={
+        "investor": inv.name, "confirmed": True,
+        "emails": [{"step": e.step, "scheduled_for": e.scheduled_for.isoformat()} for e in held]})
+    c.db.commit()
+    if body.action == "send_now" and background is not None:
+        background.add_task(mailer.send_now_one, held[0].id)  # goes in seconds, not at the next worker tick
+    return s_out(s, inv, c.user.signature)
+
+
 @router.delete("/{sid}")
 def remove(sid: str, c: Ctx = Depends(ctx)):
     """Remove an investor from outreach. Nothing sent yet: the sequence is deleted. Something sent: it stops, unsent
@@ -762,7 +815,18 @@ def remove_one(c: Ctx, s: Sequence) -> bool:
     else:
         c.db.delete(s)
         kept = False
-    c.audit("sequence.remove", sid, after={"kept_history": kept})
+    # Their pending progress updates go too: removing someone from outreach means nothing more goes to them
+    inv = c.db.get(Investor, s.investor_id)
+    to = {e.to_email.lower() for e in s.emails if e.to_email} | ({inv.email.lower()} if inv and inv.email else set())
+    cond = Email.card_id == s.card_id if s.card_id else None
+    if to:
+        cond = func.lower(Email.to_email).in_(to) if cond is None else cond | func.lower(Email.to_email).in_(to)
+    updates = c.db.scalars(select(Email).where(Email.workspace_id == c.ws_id, Email.broadcast_id.is_not(None),
+                                               Email.status == "scheduled", cond)).all() if cond is not None else []
+    for e in updates:
+        e.status, e.error = "cancelled", "Removed from outreach"
+    c.audit("sequence.remove", sid, after={"kept_history": kept, "investor_id": str(s.investor_id),
+                                           "investor": inv.name if inv else "", "updates_cancelled": len(updates)})
     return kept
 
 

@@ -81,13 +81,41 @@ def test_positive_reply_stops_sequence_and_moves_card(client):
         assert mailer.poll_replies(db) == 0  # idempotent
         s = db.get(Sequence, first.sequence_id)
         assert s.status == "replied"
-        assert {e.status for e in s.emails if e.step > 1} == {"cancelled"}
+        assert {e.status for e in s.emails if e.step > 1} == {"paused"}  # held until the founder decides
         card = db.get(FunnelCard, s.card_id)
         assert card.stage == 5 and card.source == "Outreach"  # a positive reply adds them; deck requested → 05
+        assert card.tags == ["auto-added"]
         kinds = [e.kind for e in db.scalars(select(CardEvent).where(CardEvent.card_id == card.id)).all()]
         assert kinds.count("reply") == 1 and "email" in kinds and "created" in kinds  # history copied, reply once
     notes = client.get("/notifications").json()["items"]
     assert any("interested" in n["title"] for n in notes)
+    item = next(x for x in client.get("/sequences").json()["items"] if x["id"] == seq["id"])
+    assert item["paused"] == 2 and item["reply"] == "positive"
+    client.post(f"/funnel/{card.id}/move", json={"stage": 6})  # the founder acts on it: no longer "auto-added"
+    assert client.get(f"/funnel/{card.id}").json()["tags"] == []
+    # resume: the follow-ups are scheduled again and the mailer lets them go despite the earlier reply
+    r = client.post(f"/sequences/{seq['id']}/followups", json={"action": "resume"})
+    assert r.status_code == 200, r.text
+    assert [e["status"] for e in r.json()["emails"] if e["step"] > 1] == ["scheduled", "scheduled"]
+    ems = _send_all(seq["id"])
+    assert [e.status for e in ems] == ["sent", "sent", "sent"]
+
+
+def test_reply_pause_then_cancel_and_activity(client):
+    FakeGmail.reset()
+    seq = _approved(client)
+    with SessionLocal() as db:
+        first = db.scalar(select(Email).where(Email.sequence_id == seq["id"], Email.step == 1))
+        db.get(GmailAccount, first.user_id).next_send_at = None
+        db.commit()
+        mailer.send_due(db, first.scheduled_for + timedelta(seconds=1))
+        db.refresh(first)
+        FakeGmail.inbound(first.gmail_thread_id, "Ada <ada@seedfund.vc>", "Thanks, noted.")
+        assert mailer.poll_replies(db) == 1
+    r = client.post(f"/sequences/{seq['id']}/followups", json={"action": "cancel"}).json()
+    assert [e["status"] for e in r["emails"] if e["step"] > 1] == ["cancelled", "cancelled"]
+    recent = client.get("/outreach/stats").json()["recent"]
+    assert recent[0]["status"] in ("cancelled", "sent") and any(x["status"] == "sent" for x in recent)
 
 
 def test_opt_out_and_bounce_exclude(client):
@@ -104,6 +132,31 @@ def test_opt_out_and_bounce_exclude(client):
         ex = db.scalars(select(Exclusion).where(Exclusion.workspace_id == first.workspace_id)).all()
         assert [(x.value, x.reason) for x in ex] == [("ada@seedfund.vc", "opt_out")]
         assert db.scalar(select(FunnelCard).where(FunnelCard.workspace_id == first.workspace_id)) is None  # a "no" doesn't
+
+
+def test_bounce_cancels_everything_to_that_address_and_logs(client):
+    from app.models import AuditLog
+
+    FakeGmail.reset()
+    seq = _approved(client)
+    with SessionLocal() as db:
+        first = db.scalar(select(Email).where(Email.sequence_id == seq["id"], Email.step == 1))
+        db.get(GmailAccount, first.user_id).next_send_at = None
+        db.commit()
+        mailer.send_due(db, first.scheduled_for + timedelta(seconds=1))
+        db.refresh(first)
+        other = Email(workspace_id=first.workspace_id, user_id=first.user_id, to_email=first.to_email, step=1,
+                      subject="Update", body="b", status="scheduled", scheduled_for=first.sent_at + timedelta(days=3))
+        db.add(other)
+        db.commit()
+        FakeGmail.inbound(first.gmail_thread_id, "Mail Delivery Subsystem <mailer-daemon@googlemail.com>",
+                          "Address not found. Your message wasn't delivered to ada@seedfund.vc")
+        mailer.poll_replies(db)
+        db.refresh(other)
+        assert other.status == "cancelled" and "address not found" in other.error
+        assert {e.status for e in db.get(Sequence, first.sequence_id).emails if e.step > 1} == {"cancelled"}
+        log = db.scalars(select(AuditLog).where(AuditLog.action == "email.bounce", AuditLog.target == str(first.id))).one()
+        assert str(other.id) in log.after["cancelled"]
 
 
 def test_classifier_rules():
