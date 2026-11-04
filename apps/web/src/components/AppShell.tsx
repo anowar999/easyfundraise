@@ -2,12 +2,13 @@
 
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bell, Globe, Home, KanbanSquare, Heart, ListTodo, LogOut, Mail, Megaphone, Menu, Search, Settings, Shield, Sparkles } from "lucide-react";
+import { Bell, ChevronDown, Globe, Home, KanbanSquare, Heart, Library, ListTodo, LogOut, Mail, Megaphone, Menu, Search, Settings, Shield, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, getWorkspace, setWorkspace } from "@/lib/api";
 import { AgentChat } from "./AgentChat";
+import { RESOURCE_PAGES } from "./Resources";
 import { UrgentPin } from "./FounderTasks";
 import { Sheet, ToastProvider } from "./ui";
 
@@ -145,7 +146,7 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
             Easy<span className="logo-accent">Fundraise</span>
           </span>
         </Link>
-        <nav className="flex flex-col gap-1" aria-label="Main">
+        <nav className="flex flex-col gap-1 min-h-0 overflow-y-auto scrollbar-none" aria-label="Main">
           {NAV.map(({ href, label, icon: Icon, exact, count: ck }) => (
             <Link
               key={href}
@@ -165,6 +166,7 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
               )}
             </Link>
           ))}
+          <ResourcesNav path={navPath} />
           {me.data?.is_admin && (
             <Link
               href="/admin"
@@ -258,6 +260,11 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
               {countFor(ck) > 0 && <span className="ml-auto text-xs text-muted tabular-nums">{countFor(ck)}</span>}
             </Link>
           ))}
+          {RESOURCE_PAGES.map(({ href, label, icon: Icon }) => (
+            <Link key={href} href={href} onClick={() => setMore(false)} className="card p-4 flex items-center gap-2 text-sm">
+              <Icon size={18} className="text-brand" /> {label}
+            </Link>
+          ))}
           {me.data?.is_admin && (
             <Link href="/admin" onClick={() => setMore(false)} className="card p-4 flex items-center gap-2 text-sm">
               <Shield size={18} className="text-brand" /> Admin
@@ -271,6 +278,45 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
           </div>
         )}
       </Sheet>
+    </div>
+  );
+}
+
+/** Sidebar group for the founder resource library. One line until opened, so the sidebar stays short. */
+function ResourcesNav({ path }: { path: string }) {
+  const inside = path.startsWith("/app/resources");
+  const [open, setOpen] = useState(inside);
+  useEffect(() => { if (inside) setOpen(true); }, [inside]);
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className={clsx(
+          "w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14px] font-medium transition",
+          inside ? "text-white" : "text-white/65 hover:bg-white/[0.06] hover:text-white",
+        )}
+      >
+        <Library size={18} className={inside ? "text-[#8ab8ff]" : ""} />
+        Resources
+        <ChevronDown size={15} className={clsx("ml-auto transition", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="ml-[22px] pl-3 border-l border-white/10 flex flex-col gap-0.5 mt-0.5">
+          {RESOURCE_PAGES.map(({ href, label }) => (
+            <Link
+              key={href}
+              href={href}
+              className={clsx(
+                "rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition",
+                path.startsWith(href) ? "bg-white/[0.12] text-white" : "text-white/60 hover:bg-white/[0.06] hover:text-white",
+              )}
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
