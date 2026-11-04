@@ -42,7 +42,9 @@ def test_reply_poll_failure_in_one_mailbox_is_contained(client, monkeypatch):
         first = db.scalar(select(Email).where(Email.sequence_id == seq["id"], Email.step == 1))
         db.get(GmailAccount, first.user_id).next_send_at = None
         db.commit()
-        assert mailer.send_due(db, first.scheduled_for + timedelta(seconds=1)) == 1
+        mailer.send_due(db, first.scheduled_for + timedelta(seconds=1))  # other tests' due mail may go too
+        db.refresh(first)
+        assert first.status == "sent"
 
         def broken(db, acc):
             raise RuntimeError("gmail is down")
