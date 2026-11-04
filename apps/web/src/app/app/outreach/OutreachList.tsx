@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertTriangle, Check, CheckCircle2, Eye, MailPlus, RefreshCw, Search, Send, Trash2, Zap } from "lucide-react";
+import { AlertTriangle, CalendarClock, Check, CheckCircle2, Eye, MailPlus, RefreshCw, Search, Send, Trash2, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { from } from "@/components/Crumbs";
 import Link from "next/link";
@@ -85,11 +85,12 @@ function AutoSend({ on, when = "window" }: { on: boolean; when?: "window" | "now
   const toast = useToast();
   const [asking, setAsking] = useState(false);
   const save = useMutation({
-    mutationFn: (v: boolean) => api("/workspace", { method: "PATCH", json: { auto_send: v } }),
+    mutationFn: (v: boolean | "window" | "now") =>
+      api("/workspace", { method: "PATCH", json: v === false ? { auto_send: false } : { auto_send: true, auto_send_when: v === true ? when : v } }),
     onSuccess: (_, v) => {
       setAsking(false);
       qc.invalidateQueries({ queryKey: ["sequences"] });
-      toast(v ? "Auto-send is on" : "Back to sending one by one");
+      toast(v === false ? "Back to sending one by one" : v === "now" ? "Auto-send is on: new investors are emailed as soon as they're added" : v === "window" ? "Auto-send is on: email 1 goes in each investor's morning send window" : "Auto-send is on");
     },
     onError: (e) => toast(errText(e), "err"),
   });
@@ -115,7 +116,7 @@ function AutoSend({ on, when = "window" }: { on: boolean; when?: "window" | "now
       <div className="font-semibold mb-2">How should emails go out?</div>
       <div className="flex flex-col sm:flex-row gap-2">
         {opt(!on, "One by one", "You review each investor's emails and press Send, or send all ready ones at once.", () => on && save.mutate(false), <Send size={15} />)}
-        {opt(on, "Auto-send", when === "now" ? "Every investor you add to outreach is emailed automatically from your Gmail, a couple of minutes after you add them." : "Every investor you add to outreach is emailed automatically from your Gmail, in their send window.", () => !on && setAsking(true), <Zap size={15} />)}
+        {opt(on, "Auto-send", when === "now" ? "Every investor you add to outreach is emailed automatically from your Gmail, a couple of minutes after you add them." : "Every investor you add to outreach is emailed automatically from your Gmail, in their send window.", () => setAsking(true), <Zap size={15} />)}
       </div>
       {on && (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-sm" role="radiogroup" aria-label="When auto-send sends email 1">
@@ -140,15 +141,26 @@ function AutoSend({ on, when = "window" }: { on: boolean; when?: "window" | "now
           <span className="text-[11px] text-muted basis-full">Follow-ups go 2 working days apart either way, and every sequence stops on a reply.</span>
         </div>
       )}
-      <Sheet open={asking} onClose={() => setAsking(false)} title="Turn on auto-send?">
+      <Sheet open={asking} onClose={() => setAsking(false)} title={on ? "When should auto-send email new investors?" : "Turn on auto-send?"}>
         <ul className="text-sm space-y-2 list-disc pl-5">
           <li>From now on, when you add an investor to outreach, their 3 emails are drafted and scheduled straight away. You won&apos;t review them first.</li>
-          <li>Emails go from your connected Gmail, within your daily limit. Email 1 goes in the investor&apos;s local morning send window by default; you can switch to &ldquo;As soon as added&rdquo; after turning it on.</li>
+          <li>Emails go from your connected Gmail, within your daily limit. Follow-ups go 2 working days apart.</li>
           <li>Each sequence stops as soon as the investor replies. Drafts already on your list are not sent; use Send all for those.</li>
         </ul>
-        <div className="flex gap-2 mt-4">
-          <button className="btn-primary" disabled={save.isPending} onClick={() => save.mutate(true)}>
-            <Zap size={16} /> Turn on auto-send
+        <div className="grid gap-2 mt-4">
+          <button className="btn-primary justify-start text-left h-auto py-2.5" disabled={save.isPending} onClick={() => save.mutate("now")}>
+            <Zap size={16} className="shrink-0" />
+            <span>
+              <span className="block">{on ? "Send immediately" : "Turn on auto-send: send immediately"}</span>
+              <span className="block text-xs font-normal opacity-80">Email 1 goes about 2 minutes after you add an investor, any day and time.</span>
+            </span>
+          </button>
+          <button className="btn-ghost border border-line justify-start text-left h-auto py-2.5" disabled={save.isPending} onClick={() => save.mutate("window")}>
+            <CalendarClock size={16} className="shrink-0 text-brand" />
+            <span>
+              <span className="block">{on ? "Their morning send window" : "Turn on auto-send: their morning"}</span>
+              <span className="block text-xs font-normal text-muted">Email 1 goes Tuesday to Thursday morning in the investor&apos;s own time zone (recommended).</span>
+            </span>
           </button>
           <button className="btn-ghost" onClick={() => setAsking(false)}>
             Cancel
