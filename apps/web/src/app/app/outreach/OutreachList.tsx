@@ -44,6 +44,7 @@ type Item = {
   reply?: string;  // positive | neutral | negative | opt_out
   paused?: number;  // follow-ups held because they replied
   bounced?: boolean;
+  note?: string;  // why the next email moved (allowance, per-firm limit)
   ready?: boolean;
   drafting?: boolean;
   card_id?: string | null;
@@ -209,11 +210,20 @@ export function OutreachList() {
     refetchInterval: (query) =>
       query.state.data?.items.some((x) => x.drafting) || Date.now() < pollUntil.current
         ? 2500
-        : query.state.data?.items.some((x) => isDue(x, Date.now() + 5000))
+        : query.state.data?.items.some((x) => isDue(x, Date.now() + 5 * 60_000))
           ? 4000
           : 60_000,
   });
   const now = useNow(5000);
+  // The send queue: emails go one at a time, a minute or two apart (pacing), so once one is due the others
+  // close behind it are "Queued #n" rather than all flashing "Sending…".
+  const queue = useMemo(() => {
+    const due = (q.data?.items ?? [])
+      .filter((x) => x.status === "approved" && x.next_at && new Date(x.next_at).getTime() <= now + 5 * 60_000)
+      .sort((a, b) => new Date(a.next_at!).getTime() - new Date(b.next_at!).getTime() || a.id.localeCompare(b.id));
+    if (!due.length || new Date(due[0].next_at!).getTime() > now) return new Map<string, number>();
+    return new Map(due.map((x, i) => [x.id, i + 1]));
+  }, [q.data, now]);
   // Bulk regenerate progress: the rows queued in this batch, and the ones that have finished since.
   const [regen, setRegen] = useState<string[]>([]);
   const drafting = (q.data?.items ?? []).filter((x) => x.drafting);
@@ -438,6 +448,7 @@ export function OutreachList() {
                 <Link href={from(`/app/sequences/${x.id}`, "outreach")} className="flex-1 min-w-0">
                   <div className="font-medium truncate">{x.investor.name}</div>
                   <div className="text-xs text-muted truncate">{x.investor.firm}</div>
+                  {x.note && <div className="text-xs text-amber-700 mt-0.5">{x.note}</div>}
                   {(x.reply || x.bounced) && (
                     <div className="mt-1 flex flex-wrap gap-1">
                       {x.bounced && <span className="chip text-[11px] text-danger border-danger/40 bg-danger/5">Invalid email · bounced</span>}
@@ -459,9 +470,13 @@ export function OutreachList() {
                   <span className="chip text-xs text-emerald-700 border-emerald-600/30 inline-flex items-center gap-1">
                     <Check size={12} /> New draft ready
                   </span>
-                ) : isDue(x, now) ? (
+                ) : queue.get(x.id) === 1 ? (
                   <span className="chip text-xs text-emerald-700 border-emerald-600/40 bg-emerald-500/10 font-medium inline-flex items-center gap-1">
                     <Send size={12} className="animate-pulse" /> Sending email {x.sent + 1}…
+                  </span>
+                ) : queue.has(x.id) ? (
+                  <span className="chip text-xs text-sky-700 border-sky-500/40 bg-sky-500/10 inline-flex items-center gap-1" title="Emails go one at a time, a minute or two apart, so they don't look like a bulk send">
+                    Queued #{queue.get(x.id)}
                   </span>
                 ) : (
                   <span className={clsx("chip text-xs hidden sm:inline-flex", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>

@@ -136,8 +136,12 @@ export function UpcomingList() {
           <CheckCircle2 size={15} /> Sent to {who}. It&apos;s in your Gmail Sent.
         </div>
       ))}
-      {items.map((u) => {
-        const onWay = u.sending || !!going[u.email_id] || new Date(u.scheduled_for).getTime() <= clock;
+      {items.map((u, i) => {
+        // One at a time: the soonest due email is the one going; the others due around now wait their turn
+        const due = new Date(u.scheduled_for).getTime() <= clock;
+        const anyDueBefore = items.slice(0, i).some((p) => p.sending || new Date(p.scheduled_for).getTime() <= clock);
+        const onWay = u.sending || !!going[u.email_id] || (due && !anyDueBefore);
+        const queued = !onWay && (due || (items.some((p) => new Date(p.scheduled_for).getTime() <= clock) && new Date(u.scheduled_for).getTime() <= clock + 5 * 60_000));
         const href = u.sequence_id ? from(`/app/sequences/${u.sequence_id}`, "outreach-scheduled") : u.card_id ? from(`/app/funnel/${u.card_id}`, "outreach-scheduled") : null;
         const label = (
           <>
@@ -165,7 +169,9 @@ export function UpcomingList() {
                 {open === u.email_id ? <EyeOff size={14} /> : <Eye size={14} />}
               </IconBtn>
               {u.spam && <SpamChip spam={u.spam} compact />}
-              {onWay ? (
+              {queued && !onWay ? (
+                <span className="chip inline-flex items-center gap-1 text-sky-700 border-sky-500/40 bg-sky-500/10">Queued</span>
+              ) : onWay ? (
                 <span className="chip inline-flex items-center gap-1 text-emerald-700 border-emerald-600/40 bg-emerald-500/10 font-medium">
                   <RefreshCw size={12} className="animate-spin" /> Sending…
                 </span>
