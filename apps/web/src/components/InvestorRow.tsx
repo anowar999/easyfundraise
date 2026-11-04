@@ -9,6 +9,7 @@ import { api, ApiError } from "@/lib/api";
 import { flag, SHORT } from "@/lib/countries";
 import type { InvestorCard } from "@/lib/types";
 import { TicketChip } from "./InvestorChips";
+import { QuickOutreach } from "./QuickOutreach";
 import { Avatar, Badge, FitScore, Tip, errText, useToast } from "./ui";
 
 const iconBtn = (size: "md" | "lg") =>
@@ -77,8 +78,8 @@ export function ShortlistButton({
   );
 }
 
-/** Adds the investor to the email outreach list: drafts a personalised 3-email sequence. Nothing is sent from here.
- *  The button turns green straight away (drafting can take a few seconds with AI) and a toast confirms it. */
+/** Adds the investor to the email outreach list as a draft and opens a quick preview of the 3 emails, with Send
+ *  now, Schedule for their morning, or Keep as draft. Nothing is sent without the confirm screen. */
 export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "id" | "name" | "in_outreach">; size?: "md" | "lg" }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -86,27 +87,30 @@ export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "
   useEffect(() => {
     if (inv.in_outreach) setOn(true);  // added elsewhere (e.g. "Add all to outreach")
   }, [inv.in_outreach]);
+  const [quick, setQuick] = useState<string | null>(null);  // the sequence shown in the quick preview
   const m = useMutation({
-    mutationFn: () => api<{ id: string; auto: { scheduled: boolean; reason: string; when?: "window" | "now" } | null }>("/sequences", { method: "POST", json: { investor_id: inv.id } }),
-    onMutate: () => setOn(true),  // one toast, on success
+    // Draft only (hold): the quick preview decides Send now / Schedule / Keep as draft, whatever auto-send says.
+    mutationFn: () => api<{ id: string }>("/sequences", { method: "POST", json: { investor_id: inv.id, hold: true } }),
+    onMutate: () => setOn(true),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["sequences"] });
       qc.invalidateQueries({ queryKey: ["home"] });
-      toast(
-        r.auto?.scheduled
-          ? `✓ ${inv.name} is in your email outreach list. Auto-send is on: ${r.auto.when === "now" ? "email 1 goes in about 2 minutes" : "email 1 goes in their morning send window"}.`
-          : r.auto
-            ? `✓ ${inv.name} is in your email outreach list. Not sent yet: ${r.auto.reason.toLowerCase()}.`
-            : `✓ ${inv.name} is in your email outreach list. Emails are drafted for you to review before anything is sent.`,
-      );
+      setQuick(r.id);
     },
     onError: (e) => {
       setOn(false);
       toast(e instanceof ApiError && e.problem.upgrade ? "You've used your sample drafts. Upgrade to draft more." : errText(e), "err");
     },
   });
+  // Rows are links to the profile: keep clicks inside the (portalled) sheet from bubbling up to them.
+  const sheet = quick ? (
+    <span onClick={(e) => e.stopPropagation()}>
+      <QuickOutreach seqId={quick} name={inv.name} onClose={() => setQuick(null)} onDropped={() => setOn(false)} />
+    </span>
+  ) : null;
   if (on)
     return (
+      <>
       <Tip text={m.isPending ? "Adding to your email outreach list…" : "In your email outreach list. Open Outreach"}>
         <Link
           href="/app/outreach"
@@ -122,8 +126,11 @@ export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "
           {m.isPending && <span className="absolute inset-0 rounded-full border-2 border-white/80 border-t-transparent animate-spin" aria-hidden />}
         </Link>
       </Tip>
+      {sheet}
+      </>
     );
   return (
+    <>
     <Tip text="Add to email outreach list">
       <button
         type="button"
@@ -138,6 +145,8 @@ export function OutreachButton({ inv, size = "md" }: { inv: Pick<InvestorCard, "
         <MailPlus size={17} />
       </button>
     </Tip>
+    {sheet}
+    </>
   );
 }
 

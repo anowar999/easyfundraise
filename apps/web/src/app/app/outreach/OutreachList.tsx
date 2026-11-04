@@ -114,7 +114,15 @@ function AutoSend({ on, when = "window" }: { on: boolean; when?: "window" | "now
   );
   return (
     <div className="card p-4 mb-4">
-      <div className="font-semibold mb-2">How should emails go out?</div>
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <div className="font-semibold">How should emails go out?</div>
+        <span
+          className={clsx("chip text-xs ml-auto", on ? "text-brand border-brand/40 bg-brand/5" : "text-muted")}
+          title="What happens when you add an investor to outreach"
+        >
+          Now: {!on ? "One by one" : when === "now" ? "Auto-send, immediately" : "Auto-send, their morning"}
+        </span>
+      </div>
       <div className="flex flex-col sm:flex-row gap-2">
         {opt(!on, "One by one", "You review each investor's emails and press Send, or send all ready ones at once.", () => on && save.mutate(false), <Send size={15} />)}
         {opt(on, "Auto-send", when === "now" ? "Every investor you add to outreach is emailed automatically from your Gmail, a couple of minutes after you add them." : "Every investor you add to outreach is emailed automatically from your Gmail, in their send window.", () => setAsking(true), <Zap size={15} />)}
