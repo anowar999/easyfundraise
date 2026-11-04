@@ -257,14 +257,18 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
 
     day = user_day(user, now)
     cap = daily_cap(db, ws, acc, now)
+    # The daily allowance counts investors, not emails: only a first email counts, never a follow-up or a reply
+    # in a conversation that is already going (services/send_plan.py places first emails within it).
+    counted = em.step == 1 and not em.broadcast_id and not (direct and em.gmail_thread_id)
     used = usage(db, ws, sent_metric(user.id), day)
-    if used >= cap:
-        _reschedule(em, now, tz, "Daily send cap reached")
+    if counted and used >= cap:
+        _reschedule(em, now, tz, f"Daily allowance reached ({cap} new investors a day): moved to the next send day")
         if not db.scalar(select(func.count()).select_from(Notification).where(
                 Notification.user_id == user.id, Notification.kind == "cap_reached",
                 Notification.created_at > now - timedelta(hours=20))):
-            notify(db, ws.id, user.id, "cap_reached", f"Daily send cap reached ({cap})",
-                   "Remaining emails move to your next send window.", "/app/outreach")
+            notify(db, ws.id, user.id, "cap_reached", f"Today's allowance used: {cap} new investors",
+                   "First emails to the rest go in the next send window. Follow-ups still go as planned.",
+                   "/app/outreach")
         return 0
     per_domain = int(cfg(db, "sending", {}).get("per_domain_daily_cap", 3))
     start = now - timedelta(hours=24)
@@ -280,6 +284,11 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
         own = Email.sequence_id == seq.id if seq is not None else (Email.broadcast_id == em.broadcast_id) & (
             Email.card_id == em.card_id)
         first = db.scalar(select(Email).where(own, Email.step == 1, Email.status == "sent"))
+        waiting = None if first else db.scalar(select(Email).where(own, Email.step == 1,
+                                                                   Email.status.in_(("scheduled", "sending"))))
+        if waiting is not None:  # email 1 was held back (e.g. daily allowance): keep the follow-up after it
+            em.scheduled_for = follow_up_slot(max(waiting.scheduled_for or now, now), tz)
+            return 0
         if first is None:
             em.status, em.error = "cancelled", "First email was not sent"
             return 0
@@ -326,12 +335,13 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
                 later.scheduled_for = due
             prev = later.scheduled_for
     em.gmail_message_id, em.gmail_thread_id, em.rfc_message_id = res.message_id, res.thread_id, res.rfc_message_id
-    n = consume(db, ws, sent_metric(user.id), day, None)
+    n = consume(db, ws, sent_metric(user.id), day, None) if counted else used
     lo, hi = cfg(db, "sending", {}).get("pace_seconds", [45, 180])
     acc.next_send_at = now + timedelta(seconds=random.randint(int(lo), int(hi)))
     warn = int(cfg(db, "sending", {}).get("warn_at_pct", 80))
-    if cap and n == max(1, cap * warn // 100) and n < cap:
-        notify(db, ws.id, user.id, "cap_warning", f"{n} of {cap} emails sent today", "", "/app/outreach")
+    if counted and cap and n == max(1, cap * warn // 100) and n < cap:
+        notify(db, ws.id, user.id, "cap_warning", f"{n} of {cap} new investors emailed today",
+               "Follow-ups don't count towards this.", "/app/outreach")
     if card:
         card.last_contacted_at = now
         db.add(CardEvent(workspace_id=ws.id, card_id=card.id, user_id=user.id, kind="email",

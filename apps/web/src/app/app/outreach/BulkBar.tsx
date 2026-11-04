@@ -5,10 +5,11 @@ import { RefreshCw, Send, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
+import { allowanceNote, type Allowance } from "@/lib/allowance";
 
 type Action = "send" | "regenerate" | "remove";
 type Skip = { id: string; name: string; reason: string };
-type Result = { done?: number; queued?: number; skipped?: Skip[]; kept_history?: boolean };
+type Result = { allowance?: Allowance; done?: number; queued?: number; skipped?: Skip[]; kept_history?: boolean };
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -22,7 +23,7 @@ export function BulkBar({ ids, onClear, onRegenerated, busy = false }: { ids: { 
     onSuccess: (r, action) => {
       const skipped = r.skipped?.length ?? 0;
       const skip = skipped ? ` ${plural(skipped, "was", "were")} skipped${r.skipped?.[0] ? ` (e.g. ${r.skipped[0].name}: ${r.skipped[0].reason})` : ""}.` : "";
-      if (action === "send") toast(`Scheduled outreach to ${plural(r.done ?? 0, "investor")}. Emails go in their local send window and stop on any reply.${skip}`);
+      if (action === "send") toast(`Scheduled outreach to ${plural(r.done ?? 0, "investor")}. Emails go in their local send window and stop on any reply.${skip}${r.allowance?.moved ? ` ${allowanceNote(r.allowance)}` : ""}`);
       if (action === "regenerate") {
         toast(`Rewriting drafts for ${plural(r.queued ?? 0, "investor")}. Each row unlocks as soon as its new emails are ready.${skip}`);
         onRegenerated(ids.regenerate.filter((id) => !r.skipped?.some((s) => s.id === id)));

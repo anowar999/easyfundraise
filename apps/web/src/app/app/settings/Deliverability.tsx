@@ -28,7 +28,7 @@ export function Deliverability() {
         ))}
       </ul>
       <p className="mt-2 text-[11px] text-muted">
-        Also built in: a 20 a day limit, a slow warm-up for new mailboxes, spaced-out sending, a per-firm limit, a spam score on every email, and every sequence stops on a reply or bounce.
+        Also built in: a limit of 20 new investors a day (follow-ups don&apos;t count), a slow warm-up for new mailboxes, spaced-out sending, a per-firm limit, a spam score on every email, and every sequence stops on a reply or bounce.
       </p>
     </div>
   );

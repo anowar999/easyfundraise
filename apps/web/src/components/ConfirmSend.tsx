@@ -3,6 +3,7 @@
 import { Lock, Send } from "lucide-react";
 import { useState } from "react";
 import { Sheet } from "./ui";
+import { allowanceNote, type Allowance } from "@/lib/allowance";
 
 export type SendPreview = {
   from: string;
@@ -11,6 +12,7 @@ export type SendPreview = {
   investor?: string;
   timezone?: string;
   emails?: { step: number; subject: string; scheduled_for: string }[];
+  allowance?: Allowance;
 };
 
 const when = (iso: string, tz?: string) =>
@@ -48,6 +50,9 @@ export function ConfirmSend({ preview, onCancel, onConfirm, busy }: { preview: S
             </li>
           ))}
         </ol>
+      )}
+      {preview.allowance && allowanceNote(preview.allowance) && (
+        <p className={`mt-4 rounded-lg px-3 py-2 text-sm ${preview.allowance.moved ? "border border-amber-500/40 bg-amber-500/5" : "text-muted"}`}>{allowanceNote(preview.allowance)}</p>
       )}
       <p className="mt-4 text-sm text-muted">
         {preview.emails ? "Follow-ups only go if they haven't replied. Stop the sequence any time before a send." : "Each email goes a few minutes apart. You can stop unsent emails any time."}

@@ -150,7 +150,7 @@ export default function Outreach() {
     <>
       <PageHeader
         title="Outreach"
-        sub={g.data?.connected ? `Sending from ${g.data.email} · ${g.data.sent_today} of ${g.data.daily_cap} today` : undefined}
+        sub={g.data?.connected ? `Sending from ${g.data.email} · ${g.data.sent_today} of ${g.data.daily_cap} new investors today` : undefined}
         actions={
           !g.data?.connected && (
             <Link className="btn-primary" href="/app/settings#gmail">

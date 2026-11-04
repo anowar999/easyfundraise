@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, FileText, Loader2, Send, X } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/api";
+import { allowanceNote, type Allowance } from "@/lib/allowance";
 import { Sheet, errText, useToast } from "./ui";
 
 type Action = "window" | "now" | "draft";
@@ -15,8 +16,9 @@ type Plan = {
   investors: { id: string; name: string; firm: string }[];
   skipped: { id: string; name: string; reason: string }[];
   terms: string;
+  allowance?: Allowance;
 };
-type Done = { scheduled: number; drafts: { id: string; name: string; reason?: string }[]; skipped: { name: string; reason: string }[]; action: Action };
+type Done = { allowance?: Allowance; scheduled: number; drafts: { id: string; name: string; reason?: string }[]; skipped: { name: string; reason: string }[]; action: Action };
 
 const LABEL: Record<Action, string> = { window: "Schedule all for their morning", now: "Send all now", draft: "Add all as drafts" };
 
@@ -50,6 +52,7 @@ export function BulkOutreachBar({ ids, onClear }: { ids: string[]; onClear: () =
                 : "Nothing was scheduled.",
               held.length ? `${held.length} kept as drafts (${held[0].reason}).` : "",
             ];
+      if (r.action !== "draft" && r.allowance?.moved) parts.push(allowanceNote(r.allowance));
       if (r.skipped.length) parts.push(`${r.skipped.length} skipped: ${r.skipped[0].name ? `${r.skipped[0].name}, ` : ""}${r.skipped[0].reason.toLowerCase()}.`);
       toast(parts.filter(Boolean).join(" "), r.scheduled || r.drafts.length ? "ok" : "err");
     },
@@ -95,6 +98,9 @@ export function BulkOutreachBar({ ids, onClear }: { ids: string[]; onClear: () =
                 {plan.count > 6 ? ` and ${plan.count - 6} more` : ""}
               </dd>
             </dl>
+            {allowanceNote(plan.allowance) && (
+              <p className={`rounded-lg px-3 py-2 ${plan.allowance?.moved ? "border border-amber-500/40 bg-amber-500/5" : "text-muted text-xs px-0 py-0"}`}>{allowanceNote(plan.allowance)}</p>
+            )}
             {plan.skipped.length > 0 && (
               <div className="rounded-lg border border-line px-3 py-2 text-xs text-muted">
                 <div className="font-medium text-ink mb-1">{plan.skipped.length} not included</div>

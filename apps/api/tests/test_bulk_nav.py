@@ -49,7 +49,7 @@ def test_bulk_send_needs_confirm_then_schedules(client):
     assert r == {"needs_confirm": True, "eligible": 1, "skipped": []}
     assert client.get(f"/sequences/{a['id']}").json()["status"] == "draft"  # nothing changed
     r = client.post("/sequences/bulk", json={"action": "send", "ids": [a["id"]], "confirm": True}).json()
-    assert r == {"done": 1, "skipped": []}
+    assert {k: r[k] for k in ("done", "skipped")} == {"done": 1, "skipped": []} and r["allowance"]["cap"]
     s = client.get(f"/sequences/{a['id']}").json()
     assert s["status"] == "approved" and all(e["status"] == "scheduled" for e in s["emails"])
     assert client.get(f"/sequences/{b['id']}").json()["status"] == "draft"  # not ticked
