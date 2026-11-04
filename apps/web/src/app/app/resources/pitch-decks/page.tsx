@@ -1,7 +1,9 @@
 "use client";
 
 import clsx from "clsx";
+import { Play } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Sheet } from "@/components/ui";
 import { PageHeader } from "@/components/AppShell";
 import { FilterPills, NoMatches, OpenLink, ResourceSearch, ResourceTabs, SourceNote, fmtUsd, matches } from "@/components/Resources";
 import { DECK_STAGES, PITCH_DECKS, type DeckStage, type PitchDeck } from "@/lib/resources/pitchDecks";
@@ -39,6 +41,7 @@ function StageSummary({ stage, active, onPick }: { stage: (typeof DECK_STAGES)[n
 }
 
 function DeckCard({ d }: { d: PitchDeck }) {
+  const [open, setOpen] = useState(false);
   return (
     <article className="card p-4 flex flex-col">
       <div className="flex items-start justify-between gap-3">
@@ -54,9 +57,33 @@ function DeckCard({ d }: { d: PitchDeck }) {
       </div>
       <p className="text-sm text-muted mt-1.5 flex-1">{d.what}</p>
       <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-line">
-        <OpenLink href={d.url}>View deck</OpenLink>
+        {d.embed ? (
+          <button className="btn-primary btn-sm" onClick={() => setOpen(true)}>
+            <Play size={13} /> View deck
+          </button>
+        ) : (
+          <OpenLink href={d.url}>Open deck</OpenLink>
+        )}
         <span className="text-[11px] text-muted truncate">{d.source}</span>
       </div>
+      {d.embed && (
+        <Sheet open={open} onClose={() => setOpen(false)} title={`${d.company} · ${d.amount} ${STAGE_LABEL[d.stage]} (${d.year})`} xl>
+          <div className="relative w-full aspect-[4/3] sm:aspect-[16/10] rounded-xl overflow-hidden bg-surface border border-line">
+            <iframe
+              src={d.embed}
+              title={`${d.company} pitch deck`}
+              className="absolute inset-0 w-full h-full"
+              allowFullScreen
+              loading="lazy"
+              referrerPolicy="strict-origin-when-cross-origin"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-2 mt-3">
+            <p className="text-sm text-muted">{d.what}</p>
+            <OpenLink href={d.url}>Source</OpenLink>
+          </div>
+        </Sheet>
+      )}
     </article>
   );
 }
@@ -66,13 +93,14 @@ export default function PitchDecksPage() {
   const [sector, setSector] = useState("all");
   const [sort, setSort] = useState<Sort>("amount");
   const [q, setQ] = useState("");
+  const [viewable, setViewable] = useState(false);
 
   const sectors = useMemo(() => [...new Set(PITCH_DECKS.map((d) => d.sector))].sort(), []);
-  const searched = PITCH_DECKS.filter((d) => (sector === "all" || d.sector === sector) && matches(q, d.company, d.sector, d.what, d.amount, d.year));
+  const searched = PITCH_DECKS.filter((d) => (sector === "all" || d.sector === sector) && (!viewable || !!d.embed) && matches(q, d.company, d.sector, d.what, d.amount, d.year));
   const shown = searched
     .filter((d) => stage === "all" || d.stage === stage)
     .sort((a, b) => (sort === "amount" ? b.usd - a.usd : sort === "year" ? b.year - a.year : a.company.localeCompare(b.company)));
-  const clear = () => { setStage("all"); setSector("all"); setQ(""); };
+  const clear = () => { setStage("all"); setSector("all"); setQ(""); setViewable(false); };
 
   return (
     <>
@@ -97,7 +125,7 @@ export default function PitchDecksPage() {
           <option value="name">A to Z</option>
         </select>
       </div>
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
         <FilterPills<StageFilter>
           value={stage}
           onChange={setStage}
@@ -106,6 +134,10 @@ export default function PitchDecksPage() {
             ...DECK_STAGES.map((s) => ({ key: s.key, label: s.label, count: searched.filter((d) => d.stage === s.key).length })),
           ]}
         />
+        <label className="inline-flex items-center gap-2 text-[13px] font-medium text-ink cursor-pointer">
+          <input type="checkbox" className="accent-[var(--brand)] w-4 h-4" checked={viewable} onChange={(e) => setViewable(e.target.checked)} />
+          Only decks I can view here
+        </label>
       </div>
 
       {shown.length ? (
@@ -117,7 +149,7 @@ export default function PitchDecksPage() {
       )}
 
       <SourceNote>
-        Decks open where their founders or a publisher shared them (TechCrunch, SlideShare, Best Pitch Deck, Failory). Amounts and years are as
+        Decks with a View deck button play in the publisher's own SlideShare viewer. The others open where their founders or a publisher shared them (TechCrunch, SlideShare, Best Pitch Deck, Failory). Amounts and years are as
         those sources report them, and the median uses the decks listed here, not the whole market. Euro amounts are converted only for sorting.
       </SourceNote>
     </>
