@@ -26,14 +26,17 @@ router = APIRouter(prefix="/sequences", tags=["sequences"])
 
 
 def s_out(s: Sequence, inv: Investor | None = None, signature: str = "") -> dict:
+    def shown(e: Email) -> str:  # what will actually go: USD not $, no link lines in follow-ups
+        return e.body if e.status in ("sent", "sending") else outreach.for_send(e.body, e.step)
+
     return {"id": str(s.id), "investor_id": str(s.investor_id), "status": s.status, "persona": s.persona,
             "engine": s.engine, "drafting": s.engine == DRAFTING, "card_id": str(s.card_id) if s.card_id else None,
             "investor": {"name": inv.name, "firm": inv.current_firm or inv.company} if inv else None,
-            "emails": [{"id": str(e.id), "step": e.step, "hook": e.hook, "subject": e.subject, "body": e.body,
+            "emails": [{"id": str(e.id), "step": e.step, "hook": e.hook, "subject": e.subject, "body": shown(e),
                         "facts": e.facts, "status": e.status, "scheduled_for": e.scheduled_for,
                         "sent_at": e.sent_at, "opened": e.open_count, "reply": e.reply_kind, "error": e.error,
-                        "issues": outreach.lint(e.subject, e.body, e.step, signature),
-                        "spam": spam.score(e.subject, e.body, e.step, inv.name if inv else "")} for e in s.emails]}
+                        "issues": outreach.lint(e.subject, shown(e), e.step, signature),
+                        "spam": spam.score(e.subject, shown(e), e.step, inv.name if inv else "")} for e in s.emails]}
 
 
 class FirstEmail(BaseModel):
@@ -191,8 +194,8 @@ def scheduled(c: Ctx = Depends(ctx)):
         ok, after = ready(e, s)
         items.append({"email_id": str(e.id), "sequence_id": str(s.id), "kind": "sequence", "step": e.step,
                       "subject": outreach.fill_first_name(subject(e, s), inv.name),
-                      "body": outreach.fill_first_name(e.body, inv.name), "to": e.to_email,
-                      "spam": spam.score(e.subject, e.body, e.step, inv.name),
+                      "body": outreach.fill_first_name(outreach.for_send(e.body, e.step), inv.name), "to": e.to_email,
+                      "spam": spam.score(e.subject, outreach.for_send(e.body, e.step), e.step, inv.name),
                       "scheduled_for": e.scheduled_for, "investor": inv.name,
                       "firm": inv.current_firm or inv.company, "timezone": inv.timezone or "UTC", "can_send_now": ok,
                       "send_now_from": after, "sending": bool(e.scheduled_for and e.scheduled_for <= now)})

@@ -187,7 +187,7 @@ def ai_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | N
         "Hard limits: Email 1 <= 110 words, Email 2 <= 95, Email 3 <= 75 (body only, before the signature). "
         "Subject <= 6 words, specific to them, no ALL CAPS, no clickbait. Email 1 uses at least 2 investor facts. Use "
         "only the investor facts, company fields and plan given; cite fact ids you used. No links, no attachments, "
-        "greeting 'Hi <first name>,' only. Do not add a signature (it is appended later) or any opt-out line. Emails 2 and 3 are sent as replies in email 1's thread, so write them as natural follow-ups to it; their subject is replaced with 'Re: <email 1 subject>'.\n"
+        "greeting 'Hi <first name>,' only. Do not add a signature (it is appended later) or any opt-out line. Write money as 'USD 2M', never with a $ sign. No links in emails 2 and 3. Emails 2 and 3 are sent as replies in email 1's thread, so write them as natural follow-ups to it; their subject is replaced with 'Re: <email 1 subject>'.\n"
         f"Persona: {persona}. {PERSONA_GUIDE.get(persona, '')}"
     )
     user = json.dumps({"investor_first_name": outreach.first_name(inv.name), "investor_facts": facts,
@@ -250,6 +250,8 @@ def draft_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile 
     learn.prefer_subject(db, ws.id, emails, outreach.subject_options(1, inv, p))  # the subject style that gets replies
     outreach.vary_subjects(db, ws.id, emails, inv, p)
     outreach.thread_subjects(emails)
+    for e in emails:  # USD not $, and no website / LinkedIn lines in follow-ups
+        e["body"], e["subject"] = outreach.for_send(e["body"], e["step"]), outreach.usd(e["subject"])
     return emails, engine
 
 

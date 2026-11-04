@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Broadcast, Email, FunnelCard, Investor, Sequence, User, Workspace
 from . import ai
-from .outreach import first_name
+from .outreach import first_name, usd
 
 SEND_AT = time(8, 35)
 TEMPLATE = "progress"
@@ -51,7 +51,7 @@ def polish(db: Session, ws: Workspace, text: str) -> tuple[str, str]:
 
 
 def body_for(text: str, signature: str, name: str = "") -> str:
-    body = f"Hi {first_name(name) if name else '{first name}'},\n\nA quick update from our side.\n\n{tidy(text)}\n\nHappy to share more or find 15 minutes if useful."
+    body = f"Hi {first_name(name) if name else '{first name}'},\n\nA quick update from our side.\n\n{usd(tidy(text))}\n\nHappy to share more or find 15 minutes if useful."
     return f"{body}\n\n{signature.strip()}" if signature.strip() else body
 
 
