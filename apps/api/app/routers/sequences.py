@@ -48,6 +48,7 @@ class DraftIn(BaseModel):
     investor_id: str
     first_email: FirstEmail | None = None  # written on the investor profile; replaces email 1
     persona: str = Field("momentum", pattern="^(momentum|warm-intro|technical-founder|humble-expert)$")
+    hold: bool = False  # the quick preview: draft only, even with auto-send on; the founder decides in the sheet
 
 
 def with_opt_out(body: str, signature: str) -> str:
@@ -127,7 +128,7 @@ def draft(body: DraftIn, c: Ctx = Depends(ctx), background: BackgroundTasks = No
     if later:
         background.add_task(finish_ai_draft, seq.id, c.user.id,
                             {e.step: e.body for e in seq.emails if not (body.first_email and e.step == 1)})
-    sent = try_auto_send(c, seq) if auto else None
+    sent = try_auto_send(c, seq) if auto and not body.hold else None
     return {**s_out(seq, inv, c.user.signature), "auto": sent}
 
 
@@ -471,6 +472,7 @@ def regenerate(sid: str, body: RegenIn, c: Ctx = Depends(ctx)):
 
 class ApproveIn(BaseModel):
     confirm: bool = False  # the founder saw who, from which mailbox and when, and said yes
+    first_at: str = Field("window", pattern="^(window|now)$")  # email 1 in their morning send window, or straight away
 
 
 def _ready(c: Ctx, s: Sequence, reveal: bool = True) -> tuple[Investor, str, GmailAccount]:
@@ -559,7 +561,9 @@ def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
     c.require_editor()
     s = _get(c, sid)
     inv, to, acc = _ready(c, s, reveal=bool(body and body.confirm))
-    outreach.schedule(s.emails, datetime.now(UTC), inv.timezone)
+    now = datetime.now(UTC)
+    outreach.schedule(s.emails, now, inv.timezone,
+                      first_at=now + timedelta(seconds=30) if body and body.first_at == "now" else None)
     if not (body and body.confirm):
         preview = {"from": acc.email, "to": to, "investor": inv.name, "timezone": inv.timezone,
                    "emails": [{"step": e.step, "subject": e.subject, "scheduled_for": e.scheduled_for.isoformat()}

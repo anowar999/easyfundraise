@@ -263,3 +263,19 @@ def test_respace_counts_without_confirm(client):
     _ready_to_send(client)
     r = client.post("/sequences/scheduled/respace").json()
     assert r == {"count": 0}  # nothing on the old spacing, and nothing moves without confirm
+
+
+def test_quick_preview_holds_draft_and_send_now_option(client):
+    from datetime import UTC, datetime, timedelta
+
+    ada = _ready_to_send(client)
+    client.post(f"/investors/{ada['id']}/reveal")
+    client.patch("/workspace", json={"auto_send": True})
+    seq = client.post("/sequences", json={"investor_id": ada["id"], "hold": True}).json()
+    assert seq["auto"] is None and seq["status"] == "draft"  # the sheet decides, not auto-send
+    r = client.post(f"/sequences/{seq['id']}/approve", json={"first_at": "now"})
+    assert r.status_code == 409 and r.json()["needs_confirm"]
+    first = datetime.fromisoformat(r.json()["preview"]["emails"][0]["scheduled_for"])
+    assert first - datetime.now(UTC) < timedelta(minutes=2)
+    ok = client.post(f"/sequences/{seq['id']}/approve", json={"first_at": "now", "confirm": True}).json()
+    assert ok["status"] == "approved"
