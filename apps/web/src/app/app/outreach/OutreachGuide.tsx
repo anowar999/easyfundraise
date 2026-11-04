@@ -48,6 +48,7 @@ const SLIDES: { icon: LucideIcon; title: string; body: string[] }[] = [
     body: [
       "When an investor replies, even with a no, the rest of their sequence is cancelled.",
       "Bounces and opt-outs stop the sequence too.",
+      "A positive reply adds them to your Investor tracker. You can also add anyone yourself with the tracker icon on their row.",
     ],
   },
   {

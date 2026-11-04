@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import Email, Exclusion, FunnelCard, GmailAccount, Sequence
+from app.models import CardEvent, Email, Exclusion, FunnelCard, GmailAccount, Sequence
 from app.services import mailer
 from app.services.gmail import FakeGmail
 
@@ -75,6 +75,7 @@ def test_positive_reply_stops_sequence_and_moves_card(client):
         db.commit()
         mailer.send_due(db, first.scheduled_for + timedelta(seconds=1))
         db.refresh(first)
+        assert first.card_id is None and db.get(Sequence, first.sequence_id).card_id is None  # not in the tracker yet
         FakeGmail.inbound(first.gmail_thread_id, "Ada <ada@seedfund.vc>", "Interested, please send the deck over.")
         assert mailer.poll_replies(db) == 1
         assert mailer.poll_replies(db) == 0  # idempotent
@@ -82,7 +83,9 @@ def test_positive_reply_stops_sequence_and_moves_card(client):
         assert s.status == "replied"
         assert {e.status for e in s.emails if e.step > 1} == {"cancelled"}
         card = db.get(FunnelCard, s.card_id)
-        assert card.stage == 5  # deck requested → 05
+        assert card.stage == 5 and card.source == "Outreach"  # a positive reply adds them; deck requested → 05
+        kinds = [e.kind for e in db.scalars(select(CardEvent).where(CardEvent.card_id == card.id)).all()]
+        assert kinds.count("reply") == 1 and "email" in kinds and "created" in kinds  # history copied, reply once
     notes = client.get("/notifications").json()["items"]
     assert any("interested" in n["title"] for n in notes)
 
@@ -100,6 +103,7 @@ def test_opt_out_and_bounce_exclude(client):
         mailer.poll_replies(db)
         ex = db.scalars(select(Exclusion).where(Exclusion.workspace_id == first.workspace_id)).all()
         assert [(x.value, x.reason) for x in ex] == [("ada@seedfund.vc", "opt_out")]
+        assert db.scalar(select(FunnelCard).where(FunnelCard.workspace_id == first.workspace_id)) is None  # a "no" doesn't
 
 
 def test_classifier_rules():
@@ -153,7 +157,8 @@ def test_card_mail_reads_latest_thread_and_replies_in_it(client):
     FakeGmail.inbound(first.gmail_thread_id, "Ada <ada@seedfund.vc>", "Thanks Sam, what's your current MRR?\n\n"
                       "On Tue, Sam wrote:\n> earlier text", {"message-id": "<ada-1@seedfund.vc>", "subject": "Re: hi",
                                                             "to": me, "cc": "Bo <bo@seedfund.vc>"})
-    cid = seq["card_id"]
+    assert seq["card_id"] is None  # outreach alone doesn't put them in the tracker
+    cid = client.post("/funnel", json={"investor_id": seq["investor_id"]}).json()["id"]  # "Add to tracker"
     m = client.get(f"/funnel/{cid}/mail").json()
     assert m["connected"] and m["to"] == "ada@seedfund.vc"
     assert m["thread_id"] == first.gmail_thread_id and m["reply_to"] == "<ada-1@seedfund.vc>"
@@ -196,7 +201,7 @@ def test_send_safety_burst_pause_and_editor_check(client):
 
     FakeGmail.reset()
     seq = _approved(client)
-    cid = seq["card_id"]
+    cid = client.post("/funnel", json={"investor_id": seq["investor_id"]}).json()["id"]
     with SessionLocal() as db:
         row = db.get(ConfigKV, "sending")
         old = dict(row.value) if row else None

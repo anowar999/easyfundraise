@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertTriangle, CalendarClock, Check, CheckCircle2, Eye, MailPlus, RefreshCw, Search, Send, Trash2, Zap } from "lucide-react";
+import { AlertTriangle, CalendarClock, Check, KanbanSquare, CheckCircle2, Eye, MailPlus, RefreshCw, Search, Send, Trash2, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { from } from "@/components/Crumbs";
 import Link from "next/link";
@@ -41,6 +41,7 @@ type Item = {
   replied?: boolean;
   ready?: boolean;
   drafting?: boolean;
+  card_id?: string | null;
 };
 type List = { auto_send: boolean; auto_send_when?: "window" | "now"; items: Item[] };
 type Bulk = { needs_confirm: true; from: string; ready: { id: string; name: string; to: string }[]; skipped: { id: string; name: string; reason: string }[] };
@@ -148,18 +149,18 @@ function AutoSend({ on, when = "window" }: { on: boolean; when?: "window" | "now
           <li>Each sequence stops as soon as the investor replies. Drafts already on your list are not sent; use Send all for those.</li>
         </ul>
         <div className="grid gap-2 mt-4">
-          <button className="btn-primary justify-start text-left h-auto py-2.5" disabled={save.isPending} onClick={() => save.mutate("now")}>
-            <Zap size={16} className="shrink-0" />
+          <button className="btn-primary justify-start text-left h-auto py-2.5" disabled={save.isPending} onClick={() => save.mutate("window")}>
+            <CalendarClock size={16} className="shrink-0" />
             <span>
-              <span className="block">{on ? "Send immediately" : "Turn on auto-send: send immediately"}</span>
-              <span className="block text-xs font-normal opacity-80">Email 1 goes about 2 minutes after you add an investor, any day and time.</span>
+              <span className="block">{on ? "Their morning send window (default)" : "Turn on auto-send: their morning (default)"}</span>
+              <span className="block text-xs font-normal opacity-80">Email 1 goes Tuesday to Thursday morning in the investor&apos;s own time zone (recommended).</span>
             </span>
           </button>
-          <button className="btn-ghost border border-line justify-start text-left h-auto py-2.5" disabled={save.isPending} onClick={() => save.mutate("window")}>
-            <CalendarClock size={16} className="shrink-0 text-brand" />
+          <button className="btn-ghost border border-line justify-start text-left h-auto py-2.5" disabled={save.isPending} onClick={() => save.mutate("now")}>
+            <Zap size={16} className="shrink-0 text-brand" />
             <span>
-              <span className="block">{on ? "Their morning send window" : "Turn on auto-send: their morning"}</span>
-              <span className="block text-xs font-normal text-muted">Email 1 goes Tuesday to Thursday morning in the investor&apos;s own time zone (recommended).</span>
+              <span className="block">{on ? "Send immediately" : "Turn on auto-send: send immediately"}</span>
+              <span className="block text-xs font-normal text-muted">Email 1 goes about 2 minutes after you add an investor, any day and time.</span>
             </span>
           </button>
           <button className="btn-ghost" onClick={() => setAsking(false)}>
@@ -205,6 +206,14 @@ export function OutreachList() {
       setRemoving(null);
       for (const k of ["sequences", "upcoming", "outreach-stats", "investors", "investor"]) qc.invalidateQueries({ queryKey: [k] });
       toast(r.kept_history ? `${x.investor.name} removed. Sent emails stay in Activity.` : `${x.investor.name} removed from outreach.`);
+    },
+    onError: (e) => toast(errText(e), "err"),
+  });
+  const track = useMutation({
+    mutationFn: (x: Item) => api<{ id: string }>("/funnel", { method: "POST", json: { investor_id: x.investor.id } }),
+    onSuccess: (_, x) => {
+      for (const k of ["sequences", "funnel", "nav-counts"]) qc.invalidateQueries({ queryKey: [k] });
+      toast(`${x.investor.name} added to your Investor tracker, with their emails so far.`);
     },
     onError: (e) => toast(errText(e), "err"),
   });
@@ -423,6 +432,15 @@ export function OutreachList() {
                       <Eye size={14} />
                     </IconBtn>
                     {x.status === "draft" && !x.blocker && <SendOne x={x} />}
+                    {x.card_id ? (
+                      <IconBtn label="Open in Investor tracker" onClick={() => router.push(from(`/app/funnel/${x.card_id}`, "outreach"))}>
+                        <KanbanSquare size={14} className="text-brand" />
+                      </IconBtn>
+                    ) : (
+                      <IconBtn label="Add to Investor tracker (they're added automatically if they reply positively)" disabled={track.isPending} onClick={() => track.mutate(x)}>
+                        <KanbanSquare size={14} />
+                      </IconBtn>
+                    )}
                     <IconBtn label="Remove from outreach" tone="danger" onClick={() => setRemoving(x.id)}>
                       <Trash2 size={14} />
                     </IconBtn>
