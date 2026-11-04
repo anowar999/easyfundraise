@@ -39,7 +39,7 @@ export function useUpcoming() {
   return useQuery<{ items: Upcoming[] }>({
     queryKey: ["upcoming"],
     queryFn: () => api("/sequences/scheduled"),
-    refetchInterval: (q) => (q.state.data?.items.some((u) => u.sending) ? 5_000 : 60_000),
+    refetchInterval: (q) => (q.state.data?.items.some((u) => u.sending) ? 2_000 : 60_000),
   });
 }
 

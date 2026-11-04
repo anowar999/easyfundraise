@@ -162,9 +162,8 @@ def test_upcoming_scheduled_and_send_now(client):
     r = client.post(f"/sequences/{seq['id']}/emails/{mine[0]['email_id']}/send-now").json()
     assert r["ok"]
     again = client.post(f"/sequences/{seq['id']}/emails/{mine[0]['email_id']}/send-now")
-    assert again.status_code == 409  # no double send while it's on its way
-    first = next(x for x in client.get("/sequences/scheduled").json()["items"] if x["email_id"] == mine[0]["email_id"])
-    assert first["sending"] and not first["can_send_now"]
+    assert again.status_code == 409  # no double send
+    assert client.get(f"/sequences/{seq['id']}").json()["emails"][0]["status"] == "sent"  # sent at once, not next tick
     from datetime import UTC, datetime
 
     from app.db import SessionLocal

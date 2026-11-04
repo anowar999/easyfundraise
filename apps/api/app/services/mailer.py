@@ -178,6 +178,26 @@ def send_due(db: Session, now: datetime | None = None, limit_n: int = 50) -> int
     return sent
 
 
+def send_now_one(email_id) -> int:
+    """Send one email the founder pressed Send now on, straight away instead of at the next worker tick. The row
+    lock means the worker and this never both send it."""
+    from ..db import SessionLocal
+
+    with SessionLocal() as db:
+        now = datetime.now(UTC)
+        em = db.scalar(select(Email).where(Email.id == email_id, Email.status == "scheduled", Email.scheduled_for <= now)
+                       .with_for_update(skip_locked=True))
+        if em is None:
+            return 0
+        try:
+            n = _send_one(db, em, now)
+        except Exception as e:
+            log.exception("send now failed for %s", em.id)
+            em.status, em.error, n = "failed", str(e)[:500], 0
+        db.commit()
+        return n
+
+
 def _send_one(db: Session, em: Email, now: datetime) -> int:
     ws = db.get(Workspace, em.workspace_id)
     user = db.get(User, em.user_id) if em.user_id else None
