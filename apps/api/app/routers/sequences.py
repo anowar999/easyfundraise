@@ -14,7 +14,7 @@ from ..db import SessionLocal
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
 from ..models import CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence, User, Workspace
-from ..services import agent, ai, outreach, test_investors
+from ..services import agent, ai, mailer, outreach, test_investors
 from ..services.entitlements import can, consume, limit
 from .investors import _exclusions, auto_reveal, is_excluded
 
@@ -219,12 +219,12 @@ class SendNowIn(BaseModel):
 
 
 @router.post("/scheduled/{eid}/send-now")
-def scheduled_send_now(eid: str, body: SendNowIn | None = None, c: Ctx = Depends(ctx)):
+def scheduled_send_now(eid: str, background: BackgroundTasks, body: SendNowIn | None = None, c: Ctx = Depends(ctx)):
     """Send now from the Scheduled list: an outreach email (same rules as on its sequence) or a progress update."""
     c.require_editor()
     em = _scheduled_email(c, eid)
     if em.sequence_id:
-        return send_now(str(em.sequence_id), eid, body, c)
+        return send_now(str(em.sequence_id), eid, background, body, c)
     now = datetime.now(UTC)
     em.scheduled_for, em.error = now, ""
     acc = c.db.get(GmailAccount, c.user.id)
@@ -232,6 +232,7 @@ def scheduled_send_now(eid: str, body: SendNowIn | None = None, c: Ctx = Depends
         acc.next_send_at = now
     c.audit("email.send_now", str(em.id))
     c.db.commit()
+    background.add_task(mailer.send_now_one, em.id)  # goes in seconds, not at the next worker tick
     return {"ok": True, "scheduled_for": now}
 
 
@@ -437,7 +438,7 @@ def stop(sid: str, c: Ctx = Depends(ctx)):
 
 
 @router.post("/{sid}/emails/{eid}/send-now")
-def send_now(sid: str, eid: str, body: SendNowIn | None = None, c: Ctx = Depends(ctx)):
+def send_now(sid: str, eid: str, background: BackgroundTasks, body: SendNowIn | None = None, c: Ctx = Depends(ctx)):
     """Move one scheduled email to now; the sender picks it up within a minute (daily cap and safety checks still
     apply). A follow-up can only go once email 1 has been sent, so it stays in the same thread."""
     c.require_editor()
@@ -462,6 +463,7 @@ def send_now(sid: str, eid: str, body: SendNowIn | None = None, c: Ctx = Depends
         acc.next_send_at = now
     c.audit("sequence.send_now", str(em.id))
     c.db.commit()
+    background.add_task(mailer.send_now_one, em.id)  # goes in seconds, not at the next worker tick
     return {"ok": True, "scheduled_for": now}
 
 
