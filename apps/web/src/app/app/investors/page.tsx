@@ -8,6 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
 import { InvestorRow } from "@/components/InvestorRow";
+import { RecentInvestors } from "@/components/RecentInvestors";
 import { Empty, ErrorState, ListSkeleton, Sheet } from "@/components/ui";
 import { api, qs } from "@/lib/api";
 import { flag } from "@/lib/countries";
@@ -343,7 +344,8 @@ function SearchInner() {
           )}
         </div>
         <aside className="hidden lg:block">
-          <div className="card px-4 py-1 sticky top-6 max-h-[calc(100dvh-3rem)] overflow-y-auto">
+          <div className="sticky top-6 space-y-4">
+          <div className="card px-4 py-1 max-h-[calc(100dvh-16rem)] overflow-y-auto">
             <div className="flex items-center justify-between gap-2 pt-3 pb-2 border-b border-line">
               <h2 className="flex items-center gap-2 font-semibold">
                 <SlidersHorizontal size={17} className="text-brand" /> Filters
@@ -356,6 +358,8 @@ function SearchInner() {
               )}
             </div>
             {filterPanel}
+          </div>
+          <RecentInvestors />
           </div>
         </aside>
       </div>

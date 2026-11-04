@@ -167,3 +167,14 @@ def test_ticket_size_and_type_on_lists(client):
     client.patch(f"/funnel/{card['id']}", json={"ticket_size": "$100k"})
     card = client.get(f"/funnel/{card['id']}").json()
     assert (card["ticket_min"], card["ticket_max"], card["ticket_source"]) == (100_000, 100_000, "tracker")
+
+
+def test_recently_viewed_profiles(client):
+    assert client.get("/investors/recent").json() == {"items": []}
+    items = client.get("/investors").json()["items"]
+    a, b = items[0], items[1]
+    for x in (a, b, a):
+        client.get(f"/investors/{x['id']}")
+    got = client.get("/investors/recent").json()["items"]
+    assert [x["id"] for x in got] == [a["id"], b["id"]]  # newest first, one each
+    assert got[0]["name"] == a["name"] and "viewed_at" in got[0]
