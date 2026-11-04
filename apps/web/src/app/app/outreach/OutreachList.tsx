@@ -2,13 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertTriangle, CheckCircle2, MailPlus, Search, Send, Zap } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Eye, MailPlus, Search, Send, Trash2, Zap } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ListSearch, matches } from "@/components/ListSearch";
 import { ConfirmSend, type SendPreview } from "@/components/ConfirmSend";
-import { Empty, ListSkeleton, Sheet, errText, useToast } from "@/components/ui";
+import { Empty, IconBtn, ListSkeleton, Sheet, errText, useToast } from "@/components/ui";
 import { api, ApiError, fmtDate } from "@/lib/api";
 
 type Item = { id: string; status: string; blocker: string | null; sent: number; next_at: string | null; created_at: string; email?: string; investor: { id: string; name: string; firm: string } };
@@ -42,9 +43,9 @@ function SendOne({ x }: { x: Item }) {
   });
   return (
     <>
-      <button className="btn-primary btn-sm" disabled={m.isPending} onClick={() => m.mutate(false)}>
-        <Send size={14} /> Send
-      </button>
+      <IconBtn label="Send: check sender, recipient and times, then confirm" tone="brand" disabled={m.isPending} onClick={() => m.mutate(false)}>
+        <Send size={14} />
+      </IconBtn>
       <ConfirmSend preview={preview} busy={m.isPending} onCancel={() => setPreview(null)} onConfirm={() => m.mutate(true)} />
     </>
   );
@@ -103,6 +104,17 @@ export function OutreachList() {
   const toast = useToast();
   const q = useQuery<List>({ queryKey: ["sequences"], queryFn: () => api("/sequences") });
   const [find, setFind] = useState("");
+  const [removing, setRemoving] = useState<string | null>(null);
+  const router = useRouter();
+  const remove = useMutation({
+    mutationFn: (x: Item) => api<{ kept_history: boolean }>(`/sequences/${x.id}`, { method: "DELETE" }),
+    onSuccess: (r, x) => {
+      setRemoving(null);
+      for (const k of ["sequences", "upcoming", "outreach-stats", "investors", "investor"]) qc.invalidateQueries({ queryKey: [k] });
+      toast(r.kept_history ? `${x.investor.name} removed. Sent emails stay in Activity.` : `${x.investor.name} removed from outreach.`);
+    },
+    onError: (e) => toast(errText(e), "err"),
+  });
   const [bulk, setBulk] = useState<Bulk | null>(null);
   const preview = useMutation({
     mutationFn: () => api<Bulk>("/sequences/send-all", { method: "POST", json: { confirm: false } }),
@@ -178,10 +190,25 @@ export function OutreachList() {
                   )}
                 </Link>
                 <span className={clsx("chip text-xs hidden sm:inline-flex", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>
-                <Link href={from(`/app/sequences/${x.id}`, "outreach")} className="btn-ghost btn-sm">
-                  Review
-                </Link>
-                {x.status === "draft" && !x.blocker && <SendOne x={x} />}
+                {removing === x.id ? (
+                  <span className="inline-flex flex-wrap items-center gap-1.5 text-xs">
+                    <span>{x.sent ? `Remove ${x.investor.name}? Unsent emails are cancelled; sent ones stay in Activity.` : `Remove ${x.investor.name} from outreach?`}</span>
+                    <button className="btn-ghost btn-sm text-warn" disabled={remove.isPending} onClick={() => remove.mutate(x)}>
+                      {remove.isPending ? "Removing…" : "Yes, remove"}
+                    </button>
+                    <button className="btn-ghost btn-sm" onClick={() => setRemoving(null)}>No</button>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5">
+                    <IconBtn label="Review and edit the emails" onClick={() => router.push(from(`/app/sequences/${x.id}`, "outreach"))}>
+                      <Eye size={14} />
+                    </IconBtn>
+                    {x.status === "draft" && !x.blocker && <SendOne x={x} />}
+                    <IconBtn label="Remove from outreach" tone="danger" onClick={() => setRemoving(x.id)}>
+                      <Trash2 size={14} />
+                    </IconBtn>
+                  </span>
+                )}
               </div>
             ))}
           </div>

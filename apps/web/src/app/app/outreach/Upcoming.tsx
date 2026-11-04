@@ -6,7 +6,7 @@ import { useState } from "react";
 import { ListSearch, matches } from "@/components/ListSearch";
 import { from } from "@/components/Crumbs";
 import Link from "next/link";
-import { Empty, ErrorState, ListSkeleton, errText, useToast } from "@/components/ui";
+import { Empty, ErrorState, IconBtn, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 
 export type Upcoming = {
@@ -23,6 +23,7 @@ export type Upcoming = {
   firm: string;
   timezone: string;
   can_send_now: boolean;
+  spam?: { score: number; level: "good" | "warn" | "high"; reasons: string[] };
   send_now_from: string | null;
   sending: boolean;
 };
@@ -128,9 +129,14 @@ export function UpcomingList() {
               </div>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <button className="btn-ghost btn-sm" onClick={() => setOpen(open === u.email_id ? null : u.email_id)} aria-expanded={open === u.email_id}>
-                {open === u.email_id ? <EyeOff size={13} /> : <Eye size={13} />} {open === u.email_id ? "Hide" : "Preview"}
-              </button>
+              <IconBtn label={open === u.email_id ? "Hide the email" : "Preview the email"} active={open === u.email_id} onClick={() => setOpen(open === u.email_id ? null : u.email_id)}>
+                {open === u.email_id ? <EyeOff size={14} /> : <Eye size={14} />}
+              </IconBtn>
+              {u.spam && u.spam.level !== "good" && (
+                <span className={u.spam.level === "high" ? "chip text-red-600" : "chip text-warn"} title={u.spam.reasons.join("; ")}>
+                  Spam risk {u.spam.score}
+                </span>
+              )}
               {onWay ? (
                 <span className="chip inline-flex items-center gap-1 text-green-700">
                   <RefreshCw size={12} className="animate-spin" /> Sending
@@ -163,17 +169,17 @@ export function UpcomingList() {
                   return (
                     <>
                       {(u.can_send_now || u.send_now_from) && (
-                        <button
-                          className="btn-ghost btn-sm"
+                        <IconBtn
+                          label={u.can_send_now ? "Send now instead of at its scheduled time" : `Send now (it's less than a day since the last email; normally from ${u.send_now_from ? at(u.send_now_from) : "later"})`}
+                          tone="brand"
                           onClick={() => setAsking({ id: u.email_id, what: "send" })}
-                          title={u.can_send_now ? "Send this email now instead of at its scheduled time" : `Normally available from ${u.send_now_from ? at(u.send_now_from) : "later"}, a day after the last email`}
                         >
-                          <Send size={13} /> Send now
-                        </button>
+                          <Send size={14} />
+                        </IconBtn>
                       )}
-                      <button className="btn-ghost btn-sm" onClick={() => setAsking({ id: u.email_id, what: "cancel" })} title="Don't send this email">
-                        <X size={13} /> Cancel send
-                      </button>
+                      <IconBtn label="Cancel send" tone="danger" onClick={() => setAsking({ id: u.email_id, what: "cancel" })}>
+                        <X size={14} />
+                      </IconBtn>
                     </>
                   );
                 })()

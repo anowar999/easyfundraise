@@ -7,6 +7,7 @@ import { PageHeader, useMe } from "@/components/AppShell";
 import { Field, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { SettingsNav } from "./SettingsNav";
+import { Deliverability } from "./Deliverability";
 import { PlaybookEditor } from "@/components/EmailPlaybook";
 import { ProgressUpdateCard } from "@/components/ProgressUpdate";
 import { AgentMemoryList, BillingPlans, Devices, GmailSection, NewWorkspace, NotificationPrefs, OutreachSettings, Positioning, SignInMethods, Team } from "./extras";
@@ -328,6 +329,7 @@ export default function Settings() {
         </Section>
         <Section id="gmail" title="Gmail" sub="Outreach sends from your own mailbox.">
           <GmailSection />
+          <Deliverability />
         </Section>
         <Section id="outreach" title="Sending & automations">
           <OutreachSettings />

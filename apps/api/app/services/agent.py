@@ -193,6 +193,7 @@ def ai_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | N
     user = json.dumps({"investor_first_name": outreach.first_name(inv.name), "investor_facts": facts,
                        "company": company, "what_were_looking_for": plan["ask"], "email_plan": playbook_brief(plan),
                        "founder_instructions": instructions(db, ws.id)[:2000],
+                       "what_has_worked_in_their_outreach": _learned(db, ws.id),
                        "what_worked_before": memory_text(db, ws.id, 10)}, default=str)
     out, engine = None, ""
     for _ in range(2):  # one retry if the model talks about the investor's money anyway
@@ -222,6 +223,16 @@ def ai_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | N
     return emails, engine
 
 
+def _learned(db: Session, ws_id) -> str:
+    """What gets replies in this founder's own outreach (lean towards it, keep facts true)."""
+    from . import learn
+
+    try:
+        return learn.prompt_note(db, ws_id)
+    except Exception:
+        return ""
+
+
 def draft_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile | None, persona: str,
                    signature: str, pb: dict | None = None, use_ai: bool = True) -> tuple[list[dict], str]:
     """Three emails built the founder's way (playbook), with any round/progress update as the first follow-up.
@@ -234,6 +245,9 @@ def draft_sequence(db: Session, ws: Workspace, inv: Investor, p: CompanyProfile 
     emails, engine = got or (outreach.draft_sequence(inv, p, persona, instructions(db, ws.id), signature, plan),
                              "template")
     playbook.apply_to(emails, pb, signature)
+    from . import learn
+
+    learn.prefer_subject(db, ws.id, emails, outreach.subject_options(1, inv, p))  # the subject style that gets replies
     outreach.vary_subjects(db, ws.id, emails, inv, p)
     outreach.thread_subjects(emails)
     return emails, engine
