@@ -15,15 +15,14 @@ from sqlalchemy import func, or_, select
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
 from ..models import CARD_TYPES, STAGES, STATUSES, CardEvent, FunnelCard, Investor, Notification, Reminder
-from ..services import test_investors, ticket
+from ..services import test_investors, ticket, tracker_link
 from ..services import tracker_import as ti
 from ..services.dataset_import import norm_linkedin, norm_name
 from ..services.notes import parse_note
 
 router = APIRouter(prefix="/funnel", tags=["funnel"])
 
-TYPE_FROM_INVESTOR = {"angel": "Angel", "vc": "VC Partner", "pe": "PE/Growth", "growth": "PE/Growth",
-                      "cvc": "Corporate VC", "family_office": "Family Office", "syndicate": "Angel"}
+TYPE_FROM_INVESTOR = tracker_link.TYPE_FROM_INVESTOR
 
 
 def heat(card: FunnelCard, last_event: datetime | None) -> str:
@@ -223,6 +222,8 @@ def create_card(body: CardIn, c: Ctx = Depends(ctx)):
     c.db.flush()
     apply(c, card, body)
     _event(c, card, "created", "Added to investor tracker", source=card.source)
+    if inv:
+        tracker_link.attach(c.db, card, c.user.id)  # their outreach emails and replies so far, onto the card
     c.db.commit()
     return out(card)
 

@@ -15,7 +15,7 @@ from ..db import SessionLocal
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
 from ..models import CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence, User, Workspace
-from ..services import agent, ai, mailer, outreach, spam, test_investors
+from ..services import agent, ai, mailer, outreach, spam, test_investors, tracker_link
 from ..services.entitlements import can, consume, limit
 from .investors import _exclusions, auto_reveal, is_excluded
 
@@ -142,6 +142,8 @@ def _get(c: Ctx, sid: str) -> Sequence:
 def list_sequences(c: Ctx = Depends(ctx)):
     rows = c.db.execute(select(Sequence, Investor).join(Investor).where(Sequence.workspace_id == c.ws_id)
                         .order_by(Sequence.created_at.desc()).limit(500)).all()
+    cards = dict(c.db.execute(select(FunnelCard.investor_id, FunnelCard.id).where(  # who's in the tracker
+        FunnelCard.workspace_id == c.ws_id, FunnelCard.investor_id.is_not(None), FunnelCard.deleted_at.is_(None))).all())
     items = []
     for s, i in rows:
         why = blocker(c, s) if s.status == "draft" else None
@@ -151,6 +153,7 @@ def list_sequences(c: Ctx = Depends(ctx)):
                       "email": next((e.to_email for e in s.emails if e.to_email), ""),
                       "blocker": why, "ready": s.status == "draft" and why is None and s.engine != DRAFTING,
                       "drafting": s.engine == DRAFTING,
+                      "card_id": str(cards[i.id]) if i.id in cards else None,
                       "seen": any(e.status == "sent" and (e.open_count or 0) > 0 for e in s.emails),
                       "replied": any(e.replied_at is not None and e.reply_kind not in ("bounce", "auto")
                                      for e in s.emails),
@@ -514,12 +517,9 @@ def blocker(c: Ctx, s: Sequence) -> str | None:
 
 def _schedule(c: Ctx, s: Sequence, inv: Investor, to: str) -> None:
     s.status, s.user_id = "approved", c.user.id
-    if s.card_id is None:
-        card = FunnelCard(workspace_id=c.ws_id, investor_id=inv.id, name=inv.name, firm=inv.current_firm or inv.company,
-                          source="Database", stage=1, tags=[], investor_timezone=inv.timezone)
-        c.db.add(card)
-        c.db.flush()
-        s.card_id = card.id
+    if s.card_id is None:  # already in the tracker: log there. Otherwise they join it on "Add to tracker" or a positive reply
+        card = tracker_link.card_of(c.db, c.ws_id, inv.id)
+        s.card_id = card.id if card else None
     for em in s.emails:
         em.to_email, em.card_id, em.user_id = to, s.card_id, c.user.id
     c.audit("sequence.approve", str(s.id))

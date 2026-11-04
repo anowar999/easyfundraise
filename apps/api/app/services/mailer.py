@@ -35,7 +35,7 @@ from ..models import (
     Workspace,
     WorkspaceMember,
 )
-from . import ai, follow_up
+from . import ai, follow_up, tracker_link
 from .entitlements import consume, limit, usage
 from .gmail import GmailRevoked, build_mime, client_for, strip_quoted
 from .outreach import fill_first_name, follow_up_slot, for_send, next_send_slot, usd
@@ -403,6 +403,10 @@ def handle_reply(db: Session, em: Email, msg, now: datetime) -> None:
         return  # out-of-office: keep the sequence going
     em.replied_at, em.reply_kind = now, kind
     _stop(db, em, "replied")
+    if kind == "positive" and card is None:  # an interested reply puts them in the tracker
+        card = tracker_link.for_positive_reply(db, em)
+        if card is not None:
+            name, link = card.name, f"/app/funnel/{card.id}"
     if card:
         card.last_contacted_at = now
         text = strip_quoted(msg.snippet)

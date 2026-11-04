@@ -26,7 +26,7 @@ def test_list_has_country_seen_replied_ready(client):
     it = _item(client, a["id"])
     assert {"country", "seen", "replied", "ready", "blocker"} <= it.keys()
     assert isinstance(it["country"], str)
-    assert it["ready"] is True and it["blocker"] is None and it["drafting"] is False
+    assert it["ready"] is True and it["blocker"] is None and it["drafting"] is False and it["card_id"] is None
     assert it["seen"] is False and it["replied"] is False
     with SessionLocal() as db:
         e1, e2 = sorted(db.scalars(select(Email).where(Email.sequence_id == uuid.UUID(a["id"]))), key=lambda e: e.step)[:2]
