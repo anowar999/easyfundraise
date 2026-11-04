@@ -156,7 +156,7 @@ def list_sequences(c: Ctx = Depends(ctx)):
                                      for e in s.emails),
                       "sent": sum(e.status == "sent" for e in s.emails),
                       "next_at": min((e.scheduled_for for e in s.emails if e.status == "scheduled"), default=None)})
-    return {"auto_send": auto_send_on(c.workspace), "items": items}
+    return {"auto_send": auto_send_on(c.workspace), "auto_send_when": auto_send_when(c.workspace), "items": items}
 
 
 @router.get("/scheduled")
@@ -525,6 +525,11 @@ def _schedule(c: Ctx, s: Sequence, inv: Investor, to: str) -> None:
     c.audit("sequence.approve", str(s.id))
 
 
+def auto_send_when(ws) -> str:
+    """'window' (default): email 1 in the investor's next local morning send window. 'now': as soon as added."""
+    return "now" if (ws.automations or {}).get("auto_send_when") == "now" else "window"
+
+
 def auto_send_on(ws) -> bool:
     """Auto-send is opt-in: a missing key means off (unlike the §10.4 automations)."""
     return (ws.automations or {}).get("auto_send") is True
@@ -536,10 +541,14 @@ def try_auto_send(c: Ctx, s: Sequence) -> dict:
         inv, to, _ = _ready(c, s)
     except ApiError as e:
         return {"scheduled": False, "reason": e.title}
-    outreach.schedule(s.emails, datetime.now(UTC), inv.timezone)
+    now = datetime.now(UTC)
+    # "As soon as added": a couple of minutes' grace so the AI version (written in the background) goes, not the
+    # template; the mailer still spaces sends out and keeps the daily limit. Otherwise their morning send window.
+    first_at = now + timedelta(minutes=2) if auto_send_when(c.workspace) == "now" else None
+    outreach.schedule(s.emails, now, inv.timezone, first_at=first_at)
     _schedule(c, s, inv, to)
     c.db.commit()
-    return {"scheduled": True, "reason": ""}
+    return {"scheduled": True, "reason": "", "when": "now" if first_at else "window"}
 
 
 @router.post("/{sid}/approve")

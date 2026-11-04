@@ -42,7 +42,7 @@ type Item = {
   ready?: boolean;
   drafting?: boolean;
 };
-type List = { auto_send: boolean; items: Item[] };
+type List = { auto_send: boolean; auto_send_when?: "window" | "now"; items: Item[] };
 type Bulk = { needs_confirm: true; from: string; ready: { id: string; name: string; to: string }[]; skipped: { id: string; name: string; reason: string }[] };
 
 function statusText(x: Item) {
@@ -80,7 +80,7 @@ function SendOne({ x }: { x: Item }) {
   );
 }
 
-function AutoSend({ on }: { on: boolean }) {
+function AutoSend({ on, when = "window" }: { on: boolean; when?: "window" | "now" }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [asking, setAsking] = useState(false);
@@ -90,6 +90,14 @@ function AutoSend({ on }: { on: boolean }) {
       setAsking(false);
       qc.invalidateQueries({ queryKey: ["sequences"] });
       toast(v ? "Auto-send is on" : "Back to sending one by one");
+    },
+    onError: (e) => toast(errText(e), "err"),
+  });
+  const timing = useMutation({
+    mutationFn: (v: "window" | "now") => api("/workspace", { method: "PATCH", json: { auto_send_when: v } }),
+    onSuccess: (_, v) => {
+      qc.invalidateQueries({ queryKey: ["sequences"] });
+      toast(v === "now" ? "Auto-send now emails new investors as soon as they're added" : "Auto-send now uses each investor's morning send window");
     },
     onError: (e) => toast(errText(e), "err"),
   });
@@ -107,12 +115,35 @@ function AutoSend({ on }: { on: boolean }) {
       <div className="font-semibold mb-2">How should emails go out?</div>
       <div className="flex flex-col sm:flex-row gap-2">
         {opt(!on, "One by one", "You review each investor's emails and press Send, or send all ready ones at once.", () => on && save.mutate(false), <Send size={15} />)}
-        {opt(on, "Auto-send", "Every investor you add to outreach is emailed automatically from your Gmail, in their send window.", () => !on && setAsking(true), <Zap size={15} />)}
+        {opt(on, "Auto-send", when === "now" ? "Every investor you add to outreach is emailed automatically from your Gmail, a couple of minutes after you add them." : "Every investor you add to outreach is emailed automatically from your Gmail, in their send window.", () => !on && setAsking(true), <Zap size={15} />)}
       </div>
+      {on && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm" role="radiogroup" aria-label="When auto-send sends email 1">
+          <span className="text-xs text-muted">Email 1 goes</span>
+          {([
+            ["window", "In their morning send window", "Tue–Thu morning, investor's local time (recommended)"],
+            ["now", "As soon as added", "About 2 minutes after you add them, any day and time"],
+          ] as const).map(([k, t, sub]) => (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={when === k}
+              title={sub}
+              disabled={timing.isPending}
+              onClick={() => when !== k && timing.mutate(k)}
+              className={clsx("rounded-full border px-3 py-1 text-xs", when === k ? "border-brand bg-brand/10 text-brand font-medium" : "border-line text-muted hover:border-brand/50")}
+            >
+              {t}
+            </button>
+          ))}
+          <span className="text-[11px] text-muted basis-full">Follow-ups go 2 working days apart either way, and every sequence stops on a reply.</span>
+        </div>
+      )}
       <Sheet open={asking} onClose={() => setAsking(false)} title="Turn on auto-send?">
         <ul className="text-sm space-y-2 list-disc pl-5">
           <li>From now on, when you add an investor to outreach, their 3 emails are drafted and scheduled straight away. You won&apos;t review them first.</li>
-          <li>Emails go from your connected Gmail, in the investor&apos;s local send window, within your daily limit.</li>
+          <li>Emails go from your connected Gmail, within your daily limit. Email 1 goes in the investor&apos;s local morning send window by default; you can switch to &ldquo;As soon as added&rdquo; after turning it on.</li>
           <li>Each sequence stops as soon as the investor replies. Drafts already on your list are not sent; use Send all for those.</li>
         </ul>
         <div className="flex gap-2 mt-4">
@@ -233,7 +264,7 @@ export function OutreachList() {
   const ready = drafts.filter((x) => !x.blocker).length;
   return (
     <>
-      <AutoSend on={Boolean(q.data?.auto_send)} />
+      <AutoSend on={Boolean(q.data?.auto_send)} when={q.data?.auto_send_when} />
       {items.length === 0 ? (
         <Empty
           icon={<MailPlus size={28} />}
