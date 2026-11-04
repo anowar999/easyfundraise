@@ -49,6 +49,7 @@ def get_workspace(c: Ctx = Depends(ctx)):
         "tracking_enabled": c.workspace.tracking_enabled, "consent_level": c.workspace.consent_level,
         "automations": {k: (c.workspace.automations or {}).get(k, True) for k in AUTOMATIONS},
         "auto_send": (c.workspace.automations or {}).get("auto_send") is True,
+        "auto_send_when": "now" if (c.workspace.automations or {}).get("auto_send_when") == "now" else "window",
         "ai": ai.model_for(c.db, c.workspace, "draft") is not None,
         "ai_tokens_month": usage(c.db, c.workspace, "ai_tokens", "month"),
         "usage": {
@@ -70,6 +71,7 @@ class WorkspacePatch(BaseModel):
     consent_level: str | None = Field(None, pattern="^(approved_sequences|ask_every_send)$")
     automations: dict[str, bool] | None = None
     auto_send: bool | None = None  # outreach list: schedule new drafts automatically (opt-in)
+    auto_send_when: str | None = Field(None, pattern="^(window|now)$")  # morning send window, or as soon as added
 
 
 @router.patch("")
@@ -78,8 +80,8 @@ def patch_workspace(body: WorkspacePatch, c: Ctx = Depends(ctx)):
     for k, v in body.model_dump(exclude_none=True).items():
         if k == "automations":
             v = {**(c.workspace.automations or {}), **{a: bool(x) for a, x in v.items() if a in AUTOMATIONS}}
-        if k == "auto_send":
-            k, v = "automations", {**(c.workspace.automations or {}), "auto_send": v}
+        if k in ("auto_send", "auto_send_when"):
+            k, v = "automations", {**(c.workspace.automations or {}), k: v}
         setattr(c.workspace, k, v.strip() if isinstance(v, str) else v)
     c.audit("workspace.update", str(c.ws_id), after=body.model_dump(exclude_none=True))
     c.db.commit()

@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertTriangle, CheckCircle2, Eye, MailPlus, Search, Send, Trash2, Zap } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, Eye, MailPlus, RefreshCw, Search, Send, Trash2, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { from } from "@/components/Crumbs";
 import Link from "next/link";
@@ -40,8 +40,9 @@ type Item = {
   seen?: boolean;
   replied?: boolean;
   ready?: boolean;
+  drafting?: boolean;
 };
-type List = { auto_send: boolean; items: Item[] };
+type List = { auto_send: boolean; auto_send_when?: "window" | "now"; items: Item[] };
 type Bulk = { needs_confirm: true; from: string; ready: { id: string; name: string; to: string }[]; skipped: { id: string; name: string; reason: string }[] };
 
 function statusText(x: Item) {
@@ -79,7 +80,7 @@ function SendOne({ x }: { x: Item }) {
   );
 }
 
-function AutoSend({ on }: { on: boolean }) {
+function AutoSend({ on, when = "window" }: { on: boolean; when?: "window" | "now" }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [asking, setAsking] = useState(false);
@@ -89,6 +90,14 @@ function AutoSend({ on }: { on: boolean }) {
       setAsking(false);
       qc.invalidateQueries({ queryKey: ["sequences"] });
       toast(v ? "Auto-send is on" : "Back to sending one by one");
+    },
+    onError: (e) => toast(errText(e), "err"),
+  });
+  const timing = useMutation({
+    mutationFn: (v: "window" | "now") => api("/workspace", { method: "PATCH", json: { auto_send_when: v } }),
+    onSuccess: (_, v) => {
+      qc.invalidateQueries({ queryKey: ["sequences"] });
+      toast(v === "now" ? "Auto-send now emails new investors as soon as they're added" : "Auto-send now uses each investor's morning send window");
     },
     onError: (e) => toast(errText(e), "err"),
   });
@@ -106,12 +115,35 @@ function AutoSend({ on }: { on: boolean }) {
       <div className="font-semibold mb-2">How should emails go out?</div>
       <div className="flex flex-col sm:flex-row gap-2">
         {opt(!on, "One by one", "You review each investor's emails and press Send, or send all ready ones at once.", () => on && save.mutate(false), <Send size={15} />)}
-        {opt(on, "Auto-send", "Every investor you add to outreach is emailed automatically from your Gmail, in their send window.", () => !on && setAsking(true), <Zap size={15} />)}
+        {opt(on, "Auto-send", when === "now" ? "Every investor you add to outreach is emailed automatically from your Gmail, a couple of minutes after you add them." : "Every investor you add to outreach is emailed automatically from your Gmail, in their send window.", () => !on && setAsking(true), <Zap size={15} />)}
       </div>
+      {on && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm" role="radiogroup" aria-label="When auto-send sends email 1">
+          <span className="text-xs text-muted">Email 1 goes</span>
+          {([
+            ["window", "In their morning send window", "Tue–Thu morning, investor's local time (recommended)"],
+            ["now", "As soon as added", "About 2 minutes after you add them, any day and time"],
+          ] as const).map(([k, t, sub]) => (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={when === k}
+              title={sub}
+              disabled={timing.isPending}
+              onClick={() => when !== k && timing.mutate(k)}
+              className={clsx("rounded-full border px-3 py-1 text-xs", when === k ? "border-brand bg-brand/10 text-brand font-medium" : "border-line text-muted hover:border-brand/50")}
+            >
+              {t}
+            </button>
+          ))}
+          <span className="text-[11px] text-muted basis-full">Follow-ups go 2 working days apart either way, and every sequence stops on a reply.</span>
+        </div>
+      )}
       <Sheet open={asking} onClose={() => setAsking(false)} title="Turn on auto-send?">
         <ul className="text-sm space-y-2 list-disc pl-5">
           <li>From now on, when you add an investor to outreach, their 3 emails are drafted and scheduled straight away. You won&apos;t review them first.</li>
-          <li>Emails go from your connected Gmail, in the investor&apos;s local send window, within your daily limit.</li>
+          <li>Emails go from your connected Gmail, within your daily limit. Email 1 goes in the investor&apos;s local morning send window by default; you can switch to &ldquo;As soon as added&rdquo; after turning it on.</li>
           <li>Each sequence stops as soon as the investor replies. Drafts already on your list are not sent; use Send all for those.</li>
         </ul>
         <div className="flex gap-2 mt-4">
@@ -132,7 +164,22 @@ export function OutreachList() {
   const toast = useToast();
   // After a bulk regenerate, poll for ~60s so the rewritten drafts show up without a reload.
   const pollUntil = useRef(0);
-  const q = useQuery<List>({ queryKey: ["sequences"], queryFn: () => api("/sequences"), refetchInterval: () => (Date.now() < pollUntil.current ? 5000 : false) });
+  const q = useQuery<List>({
+    queryKey: ["sequences"],
+    queryFn: () => api("/sequences"),
+    // While drafts are being rewritten, refresh every few seconds so each row comes back as soon as it's done.
+    refetchInterval: (query) => (query.state.data?.items.some((x) => x.drafting) || Date.now() < pollUntil.current ? 2500 : false),
+  });
+  // Bulk regenerate progress: the rows queued in this batch, and the ones that have finished since.
+  const [regen, setRegen] = useState<string[]>([]);
+  const drafting = (q.data?.items ?? []).filter((x) => x.drafting);
+  const regenDone = regen.filter((id) => !drafting.some((x) => x.id === id));
+  useEffect(() => {
+    if (regen.length && regenDone.length === regen.length) {
+      toast(`All ${regen.length} draft${regen.length === 1 ? "" : "s"} rewritten. Preview and Send are ready.`);
+      setRegen([]);
+    }
+  }, [regen, regenDone.length, toast]);
   const [find, setFind] = useState("");
   const [status, setStatus] = useState<StatusKey>("all");
   const [country, setCountry] = useState("all");
@@ -217,7 +264,7 @@ export function OutreachList() {
   const ready = drafts.filter((x) => !x.blocker).length;
   return (
     <>
-      <AutoSend on={Boolean(q.data?.auto_send)} />
+      <AutoSend on={Boolean(q.data?.auto_send)} when={q.data?.auto_send_when} />
       {items.length === 0 ? (
         <Empty
           icon={<MailPlus size={28} />}
@@ -279,11 +326,31 @@ export function OutreachList() {
                 remove: selected.map((x) => x.id),
               }}
               onClear={() => setPicked(new Set())}
-              onRegenerated={() => {
-                pollUntil.current = Date.now() + 60_000;
+              busy={drafting.length > 0}
+              onRegenerated={(ids) => {
+                pollUntil.current = Date.now() + 10_000;
+                setRegen(ids);
                 q.refetch();
               }}
             />
+          )}
+          {drafting.length > 0 && (
+            <div className="px-4 py-2.5 border-b border-line bg-brand/5 text-sm" role="status" aria-live="polite">
+              <div className="flex items-center gap-2">
+                <RefreshCw size={14} className="animate-spin text-brand" />
+                <span className="flex-1">
+                  {regen.length
+                    ? `Rewriting drafts: ${regenDone.length} of ${regen.length} done`
+                    : `Rewriting ${drafting.length} draft${drafting.length === 1 ? "" : "s"}…`}
+                </span>
+                <span className="text-xs text-muted hidden sm:inline">Each row unlocks when its new emails are ready</span>
+              </div>
+              {regen.length > 0 && (
+                <div className="mt-2 h-1.5 rounded-full bg-line overflow-hidden">
+                  <div className="h-full bg-brand transition-all duration-500" style={{ width: `${Math.round((regenDone.length / regen.length) * 100)}%` }} />
+                </div>
+              )}
+            </div>
           )}
           <div className="divide-y divide-line">
             {filtered && shown.length === 0 && (
@@ -297,6 +364,7 @@ export function OutreachList() {
                   type="checkbox"
                   className="h-4 w-4 accent-[var(--brand)] shrink-0"
                   checked={picked.has(x.id)}
+                  disabled={x.drafting}
                   onChange={() => toggle(x.id)}
                   aria-label={`Select ${x.investor.name}`}
                 />
@@ -309,8 +377,27 @@ export function OutreachList() {
                     </div>
                   )}
                 </Link>
-                <span className={clsx("chip text-xs hidden sm:inline-flex", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>
-                {removing === x.id ? (
+                {x.drafting ? (
+                  <span className="chip text-xs text-brand border-brand/40 inline-flex items-center gap-1">
+                    <RefreshCw size={12} className="animate-spin" /> Rewriting…
+                  </span>
+                ) : regen.includes(x.id) ? (
+                  <span className="chip text-xs text-emerald-700 border-emerald-600/30 inline-flex items-center gap-1">
+                    <Check size={12} /> New draft ready
+                  </span>
+                ) : (
+                  <span className={clsx("chip text-xs hidden sm:inline-flex", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>
+                )}
+                {x.drafting ? (
+                  <span className="inline-flex items-center gap-1.5 opacity-50" aria-hidden>
+                    <IconBtn label="Being rewritten" disabled onClick={() => {}}>
+                      <Eye size={14} />
+                    </IconBtn>
+                    <IconBtn label="Being rewritten" disabled onClick={() => {}}>
+                      <Trash2 size={14} />
+                    </IconBtn>
+                  </span>
+                ) : removing === x.id ? (
                   <span className="inline-flex flex-wrap items-center gap-1.5 text-xs">
                     <span>{x.sent ? `Remove ${x.investor.name}? Unsent emails are cancelled; sent ones stay in Activity.` : `Remove ${x.investor.name} from outreach?`}</span>
                     <button className="btn-ghost btn-sm text-warn" disabled={remove.isPending} onClick={() => remove.mutate(x)}>

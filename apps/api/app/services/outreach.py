@@ -270,14 +270,16 @@ def follow_up_slot(prev: datetime, tz_name: str) -> datetime:
     return next_send_slot(add_workdays(prev, FOLLOW_UP_WORKDAYS, tz_name), tz_name, WEEKDAYS)
 
 
-def schedule(emails: list, start: datetime, tz_name: str) -> None:
-    """Email 1 in the next Tue-Thu send window; each follow-up 2 working days after the one before."""
+def schedule(emails: list, start: datetime, tz_name: str, first_at: datetime | None = None) -> None:
+    """Email 1 in the next Tue-Thu send window (or at first_at: auto-send "as soon as added"); each follow-up
+    2 working days after the one before."""
     prev = None
     for em in sorted(emails, key=lambda e: e.step):
         if em.status == "sent":
             prev = em.sent_at
             continue
-        em.scheduled_for = next_send_slot(start, tz_name) if prev is None else follow_up_slot(prev, tz_name)
+        em.scheduled_for = ((first_at or next_send_slot(start, tz_name)) if prev is None
+                            else follow_up_slot(prev, tz_name))
         em.status = "scheduled"
         prev = em.scheduled_for
 

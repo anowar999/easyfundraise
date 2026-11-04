@@ -117,8 +117,26 @@ def test_auto_send_schedules_new_outreach(client):
     client.patch("/workspace", json={"auto_send": True})
     assert client.get("/workspace").json()["auto_send"] is True
     seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
-    assert seq["auto"] == {"scheduled": True, "reason": ""}
+    assert seq["auto"] == {"scheduled": True, "reason": "", "when": "window"}
     assert client.get(f"/sequences/{seq['id']}").json()["status"] == "approved"
+    assert client.get("/workspace").json()["auto_send_when"] == "window"
+
+
+def test_auto_send_as_soon_as_added(client):
+    from datetime import UTC, datetime, timedelta
+
+    ada = _ready_to_send(client)
+    client.post(f"/investors/{ada['id']}/reveal")
+    client.patch("/workspace", json={"auto_send": True, "auto_send_when": "now"})
+    assert client.get("/workspace").json()["auto_send_when"] == "now"
+    assert client.get("/sequences").json()["auto_send_when"] == "now"
+    assert client.patch("/workspace", json={"auto_send_when": "later"}).status_code == 422
+    seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
+    assert seq["auto"]["when"] == "now"
+    e = sorted(client.get(f"/sequences/{seq['id']}").json()["emails"], key=lambda x: x["step"])
+    first = datetime.fromisoformat(e[0]["scheduled_for"])
+    assert first - datetime.now(UTC) < timedelta(minutes=3)  # within minutes, not the next morning window
+    assert datetime.fromisoformat(e[1]["scheduled_for"]).date() - first.date() >= timedelta(days=2)  # 2 working days on
 
 
 def test_write_email_then_send_it_through_outreach(client):
