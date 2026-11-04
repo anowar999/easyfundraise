@@ -39,6 +39,7 @@ export const PROGRAMS: Program[] = [
   { name: "gener8tor", kind: "accelerator", model: "Accelerator", invest: "$100K", equity: "7.5%", where: "US Midwest and more", note: "Programs run with cities and corporate partners.", url: "https://www.gener8tor.com" },
   { name: "LAUNCH", kind: "accelerator", model: "Accelerator", invest: "$125K", equity: "7%", where: "San Francisco", note: "14 weeks, run by Jason Calacanis.", url: "https://www.launchaccelerator.co" },
   { name: "43North", kind: "accelerator", model: "Competition", invest: "$1M to each of 5 winners a year", equity: "5%", where: "Buffalo, NY (relocation required)", note: "Startup competition with a year in Buffalo.", url: "https://www.43north.org" },
+  { name: "EWOR", kind: "accelerator", model: "Talent investor", invest: "€500K for Traction Fellows, paid right after acceptance", where: "Virtual-first, Europe", note: "Fellowship backing founders from idea stage to €500K ARR, with weekly mentoring from unicorn founders. No fixed batches.", url: "https://www.ewor.com/apply" },
   { name: "Startupbootcamp", kind: "accelerator", model: "Accelerator", invest: "€25K in expenses covered", equity: "About 8%", where: "Europe and beyond", note: "Industry-focused programs with corporate partners.", url: "https://www.startupbootcamp.org" },
 
   // Incubators, studios and zero-equity programs

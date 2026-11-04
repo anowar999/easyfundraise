@@ -17,7 +17,22 @@ export const YC_GUIDES: { title: string; url: string; note: string }[] = [
   { title: "How to Apply to Y Combinator, by Paul Graham", url: "https://www.paulgraham.com/howtoapply.html", note: "The classic essay on writing answers partners can read fast." },
 ];
 
+/** Newest first: by year, then by season within the year (Winter, Spring, Summer, Fall) */
+export function batchOrder(batch: string, year: number) {
+  return year * 10 + ({ W: 0, X: 1, S: 2, F: 3 } as Record<string, number>)[batch[0]];
+}
+
 export const YC_APPS: YcApp[] = [
+  { company: "MagicBell", batch: "W21", year: 2021, sector: "Developer tools", what: "Notification inbox and delivery infrastructure for apps.", url: "https://shizune.co/yc-application-examples/magicbell", source: "Shizune" },
+  { company: "Dendron", batch: "W21", year: 2021, sector: "Developer tools", what: "Open-source note-taking and knowledge base for developers.", url: "https://shizune.co/yc-application-examples/dendron", source: "Shizune" },
+  { company: "Metlo", batch: "S21", year: 2021, sector: "Security", what: "API security: finds and protects a company's API endpoints.", url: "https://shizune.co/yc-application-examples/metlo", source: "Shizune" },
+  { company: "Virtually", batch: "S20", year: 2020, sector: "Edtech", what: "Software for running online classes and cohort programs.", url: "https://shizune.co/yc-application-examples/virtually", source: "Shizune" },
+  { company: "Prolific", batch: "S19", year: 2019, sector: "Research", what: "Recruits vetted participants for online research and AI data.", url: "https://shizune.co/yc-application-examples/prolific", source: "Shizune" },
+  { company: "InEvent", batch: "S19", year: 2019, sector: "SaaS", what: "Platform for running in-person, virtual and hybrid events.", url: "https://shizune.co/yc-application-examples/inevent", source: "Shizune" },
+  { company: "OpenPhone", batch: "S18", year: 2018, sector: "SaaS", what: "Business phone numbers and calling in an app.", url: "https://shizune.co/yc-application-examples/openphone", source: "Shizune" },
+  { company: "Slite", batch: "W18", year: 2018, sector: "SaaS", what: "Shared docs and knowledge base for remote teams.", url: "https://shizune.co/yc-application-examples/slite", source: "Shizune" },
+  { company: "Relationship Hero", batch: "S17", year: 2017, sector: "Consumer", what: "On-demand relationship coaching.", url: "https://shizune.co/yc-application-examples/relationship-hero", source: "Shizune" },
+  { company: "Simple Habit", batch: "W17", year: 2017, sector: "Consumer health", what: "Short guided meditations for busy people.", url: "https://shizune.co/yc-application-examples/simple-habit", source: "Shizune" },
   { company: "Dropbox", batch: "S07", year: 2007, sector: "SaaS", what: "File sync and backup across computers.", outcome: "IPO in 2018", url: "https://www.ycombinator.com/apply/dropbox", source: "Y Combinator" },
   { company: "Reddit", batch: "S05", year: 2005, sector: "Consumer", what: "The front page of the internet, from YC's first batch.", outcome: "IPO in 2024", url: "https://getintoyc.com/company/reddit/", source: "GetIntoYC" },
   { company: "Mixpanel", batch: "S09", year: 2009, sector: "Analytics", what: "Event-based product analytics.", url: "https://suhaild.medium.com/mixpanels-y-combinator-application-in-2009-34b5d30dbc12", source: "Founder on Medium" },
