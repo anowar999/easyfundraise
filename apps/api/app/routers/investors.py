@@ -25,7 +25,7 @@ from ..models import (
     Sequence,
     ShortlistItem,
 )
-from ..services import ai, search_parse, test_investors
+from ..services import ai, search_parse, test_investors, ticket
 from ..services.entitlements import can, consume, limit, rate_limit, trial_expired, usage
 from ..services.fit import SIMILAR_SQL, fit
 
@@ -57,6 +57,7 @@ def card(inv: Investor, f: dict | None = None, in_funnel: bool = False, in_short
         "verified_recent_deal": inv.active_last_12mo == "yes",
         "thesis_summary": (inv.investment_thesis or "")[:240],
         "check_size": inv.typical_check_size if inv.enriched else "",
+        **ticket.for_investor(inv.enriched, inv.typical_check_size, inv.check_size_src),
         "has_email": bool(inv.email), "in_funnel": in_funnel, "in_shortlist": in_shortlist,
         "in_outreach": in_outreach, **({"is_test": True} if inv.is_test else {}), **({"fit": f} if f else {}),
     }

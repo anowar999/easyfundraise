@@ -15,7 +15,7 @@ from sqlalchemy import func, or_, select
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
 from ..models import CARD_TYPES, STAGES, STATUSES, CardEvent, FunnelCard, Investor, Notification, Reminder
-from ..services import test_investors
+from ..services import test_investors, ticket
 from ..services import tracker_import as ti
 from ..services.dataset_import import norm_linkedin, norm_name
 from ..services.notes import parse_note
@@ -35,13 +35,16 @@ def heat(card: FunnelCard, last_event: datetime | None) -> str:
     return "warm" if age <= timedelta(days=14) else "cold"
 
 
-def out(card: FunnelCard, last_event: datetime | None = None, today: date | None = None) -> dict:
+def out(card: FunnelCard, last_event: datetime | None = None, today: date | None = None,
+        inv: tuple | None = None) -> dict:
+    """`inv` is the linked investor's (enriched, typical_check_size, check_size_src), for the ticket fallback."""
     today = today or date.today()
     return {
         "id": str(card.id), "number": card.number, "investor_id": str(card.investor_id) if card.investor_id else None,
         "name": card.name, "firm": card.firm, "investor_type": card.investor_type, "priority": card.priority,
         "status": card.status, "stage": card.stage, "stage_label": STAGES[card.stage - 1], "position": card.position,
         "can_lead": card.can_lead, "ticket_size": card.ticket_size, "agreed_size": card.agreed_size,
+        **ticket.for_investor(*(inv or (False, "", "")), tracker=card.ticket_size),
         "instrument": card.instrument, "contact_method": card.contact_method, "email": card.email,
         "referrer": card.referrer, "last_contacted_at": card.last_contacted_at,
         "next_contact_date": card.next_contact_date, "call_at": card.call_at,
@@ -97,9 +100,12 @@ def list_cards(q: str = "", status: str = "", stage: int | None = None, priority
         conds.append(FunnelCard.next_contact_date <= date.today())
     last = (select(CardEvent.card_id, func.max(CardEvent.created_at).label("last"))
             .where(CardEvent.workspace_id == c.ws_id).group_by(CardEvent.card_id).subquery())
-    rows = c.db.execute(select(FunnelCard, last.c.last).outerjoin(last, last.c.card_id == FunnelCard.id)
+    rows = c.db.execute(select(FunnelCard, last.c.last, Investor.enriched, Investor.typical_check_size,
+                               Investor.check_size_src)
+                        .outerjoin(last, last.c.card_id == FunnelCard.id)
+                        .outerjoin(Investor, Investor.id == FunnelCard.investor_id)
                         .where(*conds).order_by(FunnelCard.stage, FunnelCard.position, FunnelCard.created_at)).all()
-    return {"items": [out(r[0], r[1]) for r in rows]}
+    return {"items": [out(r[0], r[1], inv=tuple(r[2:])) for r in rows]}
 
 
 class CardIn(BaseModel):
@@ -228,7 +234,9 @@ def get_card(cid: str, c: Ctx = Depends(ctx)):
                           .limit(200)).all()
     reminders = c.db.scalars(select(Reminder).where(Reminder.card_id == card.id, Reminder.done_at.is_(None))
                              .order_by(Reminder.due_at)).all()
-    return {**out(card, events[0].created_at if events else None),
+    inv = c.db.get(Investor, card.investor_id) if card.investor_id else None
+    return {**out(card, events[0].created_at if events else None,
+                  inv=(inv.enriched, inv.typical_check_size, inv.check_size_src) if inv else None),
             "events": [{"id": str(e.id), "kind": e.kind, "body": e.body, "meta": e.meta, "created_at": e.created_at}
                        for e in events],
             "reminders": [{"id": str(r.id), "title": r.title, "due_at": r.due_at} for r in reminders]}

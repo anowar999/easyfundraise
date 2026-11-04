@@ -92,7 +92,7 @@ function useUnread() {
 
 /** Per-section counts for the sidebar. Failures are silent: the numbers just don't show. */
 function useNavCounts() {
-  return useQuery<Partial<Record<CountKey, number>>>({
+  return useQuery<Partial<Record<CountKey, number>> & { company?: string }>({
     queryKey: ["nav-counts"],
     queryFn: () => api("/nav/counts").catch(() => ({})),
     refetchInterval: 60_000,
@@ -141,8 +141,15 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
         <Link href="/app" className="flex items-center gap-2.5 px-2.5 mb-7">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icon.svg" alt="" className="w-9 h-9 rounded-[10px] shadow-[0_0_24px_rgba(76,141,255,0.45)]" />
-          <span className="text-[17px] font-bold tracking-tight">
-            Easy<span className="logo-accent">Fundraise</span>
+          <span className="min-w-0">
+            <span className="block text-[17px] font-bold tracking-tight leading-tight">
+              Easy<span className="logo-accent">Fundraise</span>
+            </span>
+            {navCounts.data?.company && (
+              <span className="block truncate text-xs font-medium text-white/60 leading-tight mt-0.5" title={navCounts.data.company}>
+                {navCounts.data.company}
+              </span>
+            )}
           </span>
         </Link>
         <nav className="flex flex-col gap-1" aria-label="Main">

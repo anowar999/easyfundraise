@@ -5,6 +5,7 @@ import { ArrowRight, Heart, MailPlus, Search, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { PageHeader } from "@/components/AppShell";
+import { TicketChip, TypeChip } from "@/components/InvestorChips";
 import { CountryTag, OutreachButton } from "@/components/InvestorRow";
 import { Avatar, Empty, ErrorState, FitScore, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -117,7 +118,9 @@ export default function ShortlistPage() {
                   <div className="text-sm text-muted truncate">
                     {[inv.title, inv.firm].filter(Boolean).join(" · ")}
                   </div>
-                  <div className="mt-1">
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    <TypeChip type={inv.investor_type_label || inv.investor_type} />
+                    <TicketChip t={inv} />
                     <CountryTag country={inv.country} location={inv.location} />
                   </div>
                 </div>
