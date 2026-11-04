@@ -132,10 +132,27 @@ def test_write_email_then_send_it_through_outreach(client):
     assert first["body"].endswith("Sam\nDocAI") and "reply 'no'" not in first["body"].lower()
 
 
+def _later(seq_id: str) -> None:
+    """Move a just-approved sequence's send times a day on: inside a send window email 1 is due at once."""
+    import uuid
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.models import Email
+    with SessionLocal() as db:
+        for e in db.scalars(select(Email).where(Email.sequence_id == uuid.UUID(seq_id))):
+            if e.scheduled_for:
+                e.scheduled_for += timedelta(days=1)
+        db.commit()
+
+
 def test_upcoming_scheduled_and_send_now(client):
     ada = _ready_to_send(client)
     seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
     assert client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True}).status_code == 200
+    _later(seq["id"])
     up = client.get("/sequences/scheduled").json()["items"]
     mine = [x for x in up if x["sequence_id"] == seq["id"]]
     assert [x["step"] for x in mine] == [1, 2, 3] and mine[0]["can_send_now"] and not mine[1]["can_send_now"]
@@ -189,12 +206,15 @@ def test_upcoming_scheduled_and_send_now(client):
         db.refresh(upd)
         sent1 = db.scalar(select(Email).where(Email.sequence_id == uuid.UUID(seq["id"]), Email.step == 1))
         assert upd.status == "sent" and upd.gmail_thread_id == sent1.gmail_thread_id  # same Gmail thread
+    r = client.post(f"/sequences/scheduled/{mine[1]['email_id']}/send-now", json={"anyway": True})
+    assert r.status_code == 200  # the founder confirmed "Send anyway" within the day
 
 
 def test_scheduled_preview_send_now_and_cancel(client):
     ada = _ready_to_send(client)
     seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
     client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True})
+    _later(seq["id"])
     mine = [x for x in client.get("/sequences/scheduled").json()["items"] if x["sequence_id"] == seq["id"]]
     assert mine[0]["body"].startswith("Hi Ada") and "{first name}" not in mine[0]["body"]  # preview, name filled
     r = client.post(f"/sequences/scheduled/{mine[2]['email_id']}/cancel").json()  # one follow-up
@@ -206,6 +226,7 @@ def test_scheduled_preview_send_now_and_cancel(client):
     assert s["status"] == "draft" and s["emails"][0]["status"] == "draft" and s["emails"][1]["status"] == "draft"
     assert not [x for x in client.get("/sequences/scheduled").json()["items"] if x["sequence_id"] == seq["id"]]
     client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True})  # approve again to reschedule
+    _later(seq["id"])
     first = next(x for x in client.get("/sequences/scheduled").json()["items"] if x["sequence_id"] == seq["id"])
     assert client.post(f"/sequences/scheduled/{first['email_id']}/send-now").json()["ok"]
     assert client.post(f"/sequences/scheduled/{first['email_id']}/cancel").status_code == 409  # on its way

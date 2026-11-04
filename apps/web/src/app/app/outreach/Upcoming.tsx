@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, CheckCircle2, Eye, EyeOff, Megaphone, RefreshCw, Send, X } from "lucide-react";
 import { useState } from "react";
+import { ListSearch, matches } from "@/components/ListSearch";
 import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { Empty, ErrorState, ListSkeleton, errText, useToast } from "@/components/ui";
@@ -47,10 +48,14 @@ export function UpcomingList() {
   const q = useUpcoming();
   const qc = useQueryClient();
   const toast = useToast();
+  const [asking, setAsking] = useState<{ id: string; what: "send" | "cancel" } | null>(null);  // waiting for "Yes"
   const [going, setGoing] = useState<Record<string, string>>({});  // email id -> investor, sent with Send now
   const now = useMutation({
-    mutationFn: (u: Upcoming) => api(`/sequences/scheduled/${u.email_id}/send-now`, { method: "POST" }),
-    onMutate: (u) => setGoing((g) => ({ ...g, [u.email_id]: u.investor })),  // the button goes at once: no second tap
+    mutationFn: (u: Upcoming) => api(`/sequences/scheduled/${u.email_id}/send-now`, { method: "POST", json: { anyway: !u.can_send_now } }),
+    onMutate: (u) => {
+      setAsking(null);
+      setGoing((g) => ({ ...g, [u.email_id]: u.investor }));
+    },  // the button goes at once: no second tap
     onSuccess: (_, u) => {
       for (const k of ["upcoming", "outreach-stats", "sequences", "sequence"]) qc.invalidateQueries({ queryKey: [k] });
       toast(`${u.kind === "update" ? "The update" : `Email ${u.step}`} to ${u.investor} is on its way. It'll show in your Gmail Sent within a minute.`);
@@ -63,8 +68,9 @@ export function UpcomingList() {
       toast(errText(e), "err");
     },
   });
+  const [find, setFind] = useState("");
   const [open, setOpen] = useState<string | null>(null);  // previewed email
-  const [asking, setAsking] = useState<string | null>(null);  // cancel waiting for "Yes"
+
   const cancel = useMutation({
     mutationFn: (u: Upcoming) => api<{ back_to_draft: boolean }>(`/sequences/scheduled/${u.email_id}/cancel`, { method: "POST" }),
     onSuccess: (r, u) => {
@@ -76,10 +82,11 @@ export function UpcomingList() {
   });
   if (q.isLoading) return <ListSkeleton rows={3} />;
   if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
-  const items = q.data!.items;
-  const listed = new Set(items.map((u) => u.email_id));
+  const all = q.data!.items;
+  const items = all.filter((u) => matches(find, u.investor, u.firm, u.to));
+  const listed = new Set(all.map((u) => u.email_id));
   const done = Object.entries(going).filter(([id]) => !listed.has(id));  // sent since: gone from the list
-  if (!items.length && !done.length)
+  if (!all.length && !done.length)
     return <Empty icon={<CalendarClock />} title="Nothing scheduled" body="Approved emails wait here until their send time, in each investor's local morning window." />;
   const mine = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
@@ -87,6 +94,10 @@ export function UpcomingList() {
       <p className="px-4 py-2.5 text-xs text-muted">
         Scheduled emails go out from your Gmail at these times and only appear in Gmail Sent once they&apos;re sent. Follow-ups and updates reply in email 1&apos;s thread.
       </p>
+      <div className="px-4 py-2">
+        <ListSearch value={find} onChange={setFind} className="max-w-xs" />
+      </div>
+      {find && items.length === 0 && <p className="px-4 py-6 text-sm text-muted text-center">No scheduled email matches &ldquo;{find}&rdquo;.</p>}
       {done.map(([id, who]) => (
         <div key={id} role="status" className="flex items-center gap-2 px-4 py-2.5 text-sm text-green-700 bg-green-600/5">
           <CheckCircle2 size={15} /> Sent to {who}. It&apos;s in your Gmail Sent.
@@ -125,30 +136,47 @@ export function UpcomingList() {
                   <RefreshCw size={12} className="animate-spin" /> Sending
                 </span>
               ) : (
-                <>
-                  {u.can_send_now ? (
-                    <button className="btn-ghost btn-sm" disabled={now.isPending} onClick={() => now.mutate(u)} title="Send this email now instead of at its scheduled time">
-                      <Send size={13} /> Send now
-                    </button>
-                  ) : u.send_now_from ? (
-                    <span className="text-[11px] text-muted px-1" title="Follow-ups wait at least a day after the email before them">
-                      Send now from {at(u.send_now_from)}
-                    </span>
-                  ) : null}
-                  {asking === u.email_id ? (
-                    <span className="inline-flex flex-wrap items-center gap-1.5 text-xs">
-                      <span>{u.kind === "sequence" && u.step === 1 ? "Cancel email 1? Its follow-ups go back to drafts too." : `Cancel ${what}?`}</span>
-                      <button className="btn-ghost btn-sm text-warn" disabled={cancel.isPending} onClick={() => cancel.mutate(u)}>
-                        {cancel.isPending ? "Cancelling…" : "Yes, cancel"}
+                (() => {
+                  const ask = asking?.id === u.email_id ? asking.what : null;
+                  if (ask === "send")
+                    return (
+                      <span className="inline-flex flex-wrap items-center gap-1.5 text-xs">
+                        <span>
+                          {u.can_send_now ? `Send ${what} to ${u.investor} now?` : `It's less than a day since the last email to ${u.investor}. Send ${what} anyway?`}
+                        </span>
+                        <button className="btn-primary btn-sm" disabled={now.isPending} onClick={() => now.mutate(u)}>
+                          <Send size={13} /> Yes, send
+                        </button>
+                        <button className="btn-ghost btn-sm" onClick={() => setAsking(null)}>No</button>
+                      </span>
+                    );
+                  if (ask === "cancel")
+                    return (
+                      <span className="inline-flex flex-wrap items-center gap-1.5 text-xs">
+                        <span>{u.kind === "sequence" && u.step === 1 ? "Cancel email 1? Its follow-ups go back to drafts too." : `Cancel ${what}?`}</span>
+                        <button className="btn-ghost btn-sm text-warn" disabled={cancel.isPending} onClick={() => cancel.mutate(u)}>
+                          {cancel.isPending ? "Cancelling…" : "Yes, cancel"}
+                        </button>
+                        <button className="btn-ghost btn-sm" onClick={() => setAsking(null)}>No</button>
+                      </span>
+                    );
+                  return (
+                    <>
+                      {(u.can_send_now || u.send_now_from) && (
+                        <button
+                          className="btn-ghost btn-sm"
+                          onClick={() => setAsking({ id: u.email_id, what: "send" })}
+                          title={u.can_send_now ? "Send this email now instead of at its scheduled time" : `Normally available from ${u.send_now_from ? at(u.send_now_from) : "later"}, a day after the last email`}
+                        >
+                          <Send size={13} /> Send now
+                        </button>
+                      )}
+                      <button className="btn-ghost btn-sm" onClick={() => setAsking({ id: u.email_id, what: "cancel" })} title="Don't send this email">
+                        <X size={13} /> Cancel send
                       </button>
-                      <button className="btn-ghost btn-sm" onClick={() => setAsking(null)}>Keep it</button>
-                    </span>
-                  ) : (
-                    <button className="btn-ghost btn-sm" onClick={() => setAsking(u.email_id)} title="Don't send this email">
-                      <X size={13} /> Cancel send
-                    </button>
-                  )}
-                </>
+                    </>
+                  );
+                })()
               )}
             </div>
             {open === u.email_id && (
