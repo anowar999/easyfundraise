@@ -191,9 +191,20 @@ export function CountryTag({
   );
 }
 
-export function InvestorRow({ inv }: { inv: InvestorCard }) {
+export function InvestorRow({ inv, picked, onPick }: { inv: InvestorCard; picked?: boolean; onPick?: () => void }) {
   return (
-    <div className="card p-4 flex gap-3 hover:border-brand/60 transition-colors">
+    <div className={clsx("card p-4 flex gap-3 hover:border-brand/60 transition-colors", picked && "border-brand/60 bg-brand/5")}>
+      {onPick && (
+        <input
+          type="checkbox"
+          className="mt-3.5 h-4 w-4 shrink-0 accent-[var(--brand)] disabled:opacity-40"
+          checked={Boolean(picked)}
+          disabled={inv.in_outreach}
+          title={inv.in_outreach ? "Already in your outreach list" : `Select ${inv.name}`}
+          aria-label={`Select ${inv.name}`}
+          onChange={onPick}
+        />
+      )}
       <Link
         href={`/app/investors/${inv.id}`}
         className="flex gap-3 flex-1 min-w-0"

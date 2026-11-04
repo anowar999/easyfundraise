@@ -63,6 +63,7 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
         sess.last_seen_at = now()
         db.commit()
     request.state.user_email = sess.user.email
+    request.state.user_id = sess.user.id
     request.state.session = sess
     return sess.user
 
@@ -120,4 +121,5 @@ def ctx(request: Request, user: User = Depends(current_user), db: Session = Depe
     row = db.execute(q.order_by(Workspace.created_at)).first()
     if row is None:
         raise ApiError(403, "EF-WS-001", "No access to this workspace")
+    request.state.ws_id = row[0].id
     return Ctx(db=db, user=user, workspace=row[0], role=row[1], ip=client_ip(request))

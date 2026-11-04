@@ -208,6 +208,9 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     if seq is not None and seq.status != "approved":
         em.status = "cancelled"
         return 0
+    if seq is not None and seq.engine == "drafting" and seq.created_at and seq.created_at > now - timedelta(minutes=10):
+        em.scheduled_for = now + timedelta(seconds=30)  # the AI-personalised version is still being written: wait for it
+        return 0
     if em.broadcast_id and db.get(Broadcast, em.broadcast_id).status == "cancelled":
         em.status = "cancelled"
         return 0

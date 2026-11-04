@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { PageHeader } from "@/components/AppShell";
 import { TicketChip, TypeChip } from "@/components/InvestorChips";
+import { BulkOutreachBar } from "@/components/BulkOutreach";
 import { CountryTag, OutreachButton } from "@/components/InvestorRow";
 import { Avatar, Empty, ErrorState, FitScore, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -81,9 +82,11 @@ export default function ShortlistPage() {
         actions={
           items.length > 0 && (
             <div className="flex flex-wrap gap-2">
-              <button className="btn-primary" disabled={Boolean(adding)} onClick={() => toOutreach(chosen)}>
-                <MailPlus size={16} /> {adding ? `Adding ${adding.done + 1} of ${adding.total}…` : picked.size ? `Add ${picked.size} to outreach` : "Add all to outreach"}
-              </button>
+              {!picked.size && (
+                <button className="btn-primary" disabled={Boolean(adding)} onClick={() => toOutreach(chosen)}>
+                  <MailPlus size={16} /> {adding ? `Adding ${adding.done + 1} of ${adding.total}…` : "Add all to outreach"}
+                </button>
+              )}
               <button className="btn-ghost" disabled={move.isPending} onClick={() => move.mutate(chosen)}>
                 {picked.size ? `Move ${picked.size} to tracker` : "Move all to tracker"} <ArrowRight size={16} />
               </button>
@@ -103,7 +106,9 @@ export default function ShortlistPage() {
           }
         />
       ) : (
-        <div className="card divide-y divide-line overflow-hidden">
+        <>
+        <BulkOutreachBar ids={[...picked].filter((id) => !items.find((i) => i.id === id)?.in_outreach)} onClear={() => setPicked(new Set())} />
+        <div className="card divide-y divide-line overflow-hidden mt-2">
           <label className="flex items-center gap-3 px-4 py-2.5 text-sm text-muted bg-surface/60">
             <input type="checkbox" className="h-4 w-4 accent-[var(--brand)]" checked={all} onChange={() => setPicked(all ? new Set() : new Set(items.map((i) => i.id)))} />
             {picked.size ? `${picked.size} selected` : "Select all"}
@@ -140,6 +145,7 @@ export default function ShortlistPage() {
             </div>
           ))}
         </div>
+        </>
       )}
     </>
   );
