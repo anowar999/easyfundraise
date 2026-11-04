@@ -287,7 +287,7 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     start = now - timedelta(hours=24)
     dom = domain(em.to_email)
     # The per-firm cap is about one firm's inbox: gmail.com, outlook.com etc. are different people, never one firm
-    if not direct and em.step == 1 and dom and dom not in FREE_MAIL and db.scalar(
+    if get_settings().per_firm_limit_on and not direct and em.step == 1 and dom and dom not in FREE_MAIL and db.scalar(
             select(func.count()).select_from(Email).where(
                 Email.workspace_id == ws.id, Email.sent_at > start, func.lower(Email.to_email).like(f"%@{dom}"))) >= per_domain:
         _reschedule(em, now, tz, f"Moved to the next send day: already {per_domain} emails to {dom} today (per-firm limit)")

@@ -334,8 +334,12 @@ def test_first_name_field_is_filled_at_send(client):
     assert sent.startswith("Hi Ada,") and "{first" not in sent
 
 
-def test_per_firm_limit_ignores_personal_mail_domains(client):
-    """Three emails already went to seedfund.vc today: a fourth waits. Gmail addresses are never one 'firm'."""
+def test_per_firm_limit_ignores_personal_mail_domains(client, monkeypatch):
+    """Three emails already went to seedfund.vc today: a fourth waits. Gmail addresses are never one 'firm'.
+    (The limit is off in dev/UAT by default; this turns it on as in prod.)"""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "per_firm_limit", True)
     FakeGmail.reset()
     seq = _approved(client)
     with SessionLocal() as db:
@@ -358,3 +362,10 @@ def test_per_firm_limit_ignores_personal_mail_domains(client):
         mailer.send_due(db, when)
         db.refresh(first)
         assert first.status == "sent"
+
+
+def test_per_firm_limit_off_in_dev_and_uat():
+    from app.config import Settings
+
+    assert Settings(env="dev").per_firm_limit_on is False and Settings(env="uat").per_firm_limit_on is False
+    assert Settings(env="prod").per_firm_limit_on is True and Settings(env="uat", per_firm_limit=True).per_firm_limit_on

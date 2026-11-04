@@ -47,10 +47,17 @@ class Settings(BaseSettings):
     # only these accounts see them. Comma-separated.
     test_investor_users: str = "anowar.hossain@doctra.ai"
     live_rules: bool = False
+    # The 3-a-day-per-firm send limit. Off in dev/UAT (testing sends many emails to a few domains), on in prod.
+    # EF_PER_FIRM_LIMIT=true/false overrides it either way.
+    per_firm_limit: bool | None = None
 
     @property
     def is_prod(self) -> bool:
         return self.env == "prod"
+
+    @property
+    def per_firm_limit_on(self) -> bool:
+        return self.is_prod if self.per_firm_limit is None else self.per_firm_limit
 
     @field_validator("password_otp", mode="before")
     @classmethod
