@@ -70,5 +70,8 @@ def test_usd_and_no_link_lines_in_follow_ups(client):
     assert "USD 40k" in two and "https://dr.example.com/x" in two  # links in a sentence stay
     assert "docai.example.com" not in two and "linkedin" not in two and two.endswith("CEO, DocAI")
     assert "linkedin.com/in/sam" in for_send(body, 1)  # email 1 keeps the signature links
+    sig = for_send("Hi Ada,\n\nOpen to a call?\n\nSam\nsam@docai.ai | +44 7700 900000\n"
+                   "Web: docai.ai | LinkedIn: linkedin.com/in/sam\nDeck: https://docsend.com/x", 3)
+    assert sig.endswith("Sam\nsam@docai.ai | +44 7700 900000") and "Deck" not in sig
     seq = client.post("/sequences", json={"investor_id": _ready_to_send(client)["id"]}).json()
     assert all("$" not in e["body"] for e in seq["emails"])

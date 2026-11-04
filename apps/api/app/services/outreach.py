@@ -178,9 +178,10 @@ def trim_to(body: str, max_words: int, keep: tuple[str, ...] = ()) -> str:
 
 
 MONEY = re.compile(r"(?<![A-Za-z])(?:US)?\$\s?(\d[\d,.]*\s?(?:[kKmMbB](?:n|illion)?\b)?)")
-LINK_LINE = re.compile(r"^\s*(?:[\w .]{0,20}:\s*)?(?:https?://|www\.)\S+\s*$|^\s*[\w-]+(?:\.[\w-]+)*\.(?:com|ai|io|co|uk|org|net|app|dev)(?:/\S*)?\s*$"
-                       r"|linkedin\.com/", re.I)
-URL = re.compile(r"(?:https?://|www\.)\S+", re.I)
+LINK = re.compile(r"(?:https?://|www\.)\S+|(?<![@\w.-])[\w-]+(?:\.[\w-]+)*\.(?:com|ai|io|co|uk|org|net|app|dev|health|"
+                  r"tech|vc|xyz|me)(?:/\S*)?(?![\w@])", re.I)
+LABEL = re.compile(r"\b(?:web|website|site|url|linkedin|twitter|x|blog|calendar|calendly|book a call)\s*:\s*", re.I)
+SEP = re.compile(r"^[\s|·•,/-]+|[\s|·•,/-]+$")
 
 
 def usd(text: str) -> str:
@@ -188,13 +189,22 @@ def usd(text: str) -> str:
     return MONEY.sub(lambda m: f"USD {m.group(1).strip()}", text or "")
 
 
+def _unlink(line: str) -> str | None:
+    """A short line (signature, 'Deck: ...') loses its links and their labels; None when nothing is left."""
+    if not LINK.search(line) or words(LINK.sub("", line)) > 8:
+        return line  # a real sentence: keep it as written
+    out = SEP.sub("", re.sub(r"\s*[|·•]\s*(?=[|·•]|$)", "", LABEL.sub("", LINK.sub("", line))).strip())
+    out = re.sub(r"\s*[|·•]\s*[|·•]\s*", " | ", out)
+    return out if re.search(r"\w", out) and not re.fullmatch(r"[\w &.'-]{0,25}:", out) else None
+
+
 def for_send(body: str, step: int) -> str:
     """What an outreach email says when it goes: USD instead of $, and no website / LinkedIn links in follow-ups
-    (email 1 already carried them; extra links in a thread raise the spam score). Links inside a sentence the
-    founder wrote, like a data room link, are kept; lines that are only a link are dropped."""
+    (email 1 already carried them; extra links in a thread raise the spam score). A link inside a real sentence
+    the founder wrote is kept; links in short lines like the signature are dropped."""
     out = usd(body)
     if step > 1:
-        lines = [ln for ln in out.split("\n") if not (LINK_LINE.search(ln) and len(URL.sub("", ln).split()) <= 2)]
+        lines = [x for x in (_unlink(ln) for ln in out.split("\n")) if x is not None]
         out = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).rstrip()
     return out
 
