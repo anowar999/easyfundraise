@@ -563,7 +563,9 @@ def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
     inv, to, acc = _ready(c, s, reveal=bool(body and body.confirm))
     now = datetime.now(UTC)
     outreach.schedule(s.emails, now, inv.timezone,
-                      first_at=now + timedelta(seconds=30) if body and body.first_at == "now" else None)
+                      # "now": a short grace, longer while the AI version is still being written so that one goes
+                      first_at=now + timedelta(seconds=90 if s.engine == DRAFTING else 30)
+                      if body and body.first_at == "now" else None)
     if not (body and body.confirm):
         preview = {"from": acc.email, "to": to, "investor": inv.name, "timezone": inv.timezone,
                    "emails": [{"step": e.step, "subject": e.subject, "scheduled_for": e.scheduled_for.isoformat()}
