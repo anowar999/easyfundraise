@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import Text, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -345,8 +345,14 @@ def admin_investors(q: str = "", page: int = Query(1, ge=1), db: Session = Depen
 
 
 @router.get("/audit")
-def audit_log(db: Session = Depends(get_db)):
-    rows = db.execute(select(AuditLog, User.email).outerjoin(User, User.id == AuditLog.actor_id)
-                      .order_by(AuditLog.created_at.desc()).limit(200)).all()
+def audit_log(q: str = "", db: Session = Depends(get_db)):
+    """Every change users made, newest first. q filters by user email, action or target (e.g. an investor name is
+    in the details of sequence.approve; search 'approve' or 'bulk_add' for send consent)."""
+    stmt = select(AuditLog, User.email).outerjoin(User, User.id == AuditLog.actor_id)
+    if q.strip():
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(User.email.ilike(like) | AuditLog.action.ilike(like) | AuditLog.target.ilike(like)
+                          | cast(AuditLog.after, Text).ilike(like))
+    rows = db.execute(stmt.order_by(AuditLog.created_at.desc()).limit(500)).all()
     return {"items": [{"id": str(a.id), "actor": email, "action": a.action, "target": a.target, "before": a.before,
                        "after": a.after, "ip": a.ip, "created_at": a.created_at} for a, email in rows]}

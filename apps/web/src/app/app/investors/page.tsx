@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
+import { BulkOutreachBar } from "@/components/BulkOutreach";
 import { InvestorRow } from "@/components/InvestorRow";
 import { RecentInvestors } from "@/components/RecentInvestors";
 import { Empty, ErrorState, ListSkeleton, Sheet } from "@/components/ui";
@@ -85,6 +86,14 @@ function SearchInner() {
 
   const facets = useQuery<Facets>({ queryKey: ["facets"], queryFn: () => api("/investors/facets"), staleTime: 600_000 });
   const [page, setPage] = useState(1);
+  const [picked, setPicked] = useState<Set<string>>(new Set());  // ticked rows for Add to outreach in bulk
+  const togglePick = (id: string) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
   useEffect(() => setPage(1), [f, tab]);
   const res = useQuery<Result>({
     queryKey: ["investors", f, page],
@@ -121,6 +130,7 @@ function SearchInner() {
   const first = res.data;
   const recAll = rec.data?.items ?? [];
   const items = tab === "search" ? first?.items ?? [] : recAll.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+  const pickable = items.filter((i) => !i.in_outreach);
   const pageCount = tab === "search" ? (first ? Math.ceil(first.total / first.page_size) : 0) : Math.ceil(recAll.length / PER_PAGE);
   const go = (n: number) => {
     setPage(n);
@@ -330,8 +340,21 @@ function SearchInner() {
           {!loading && !error && items.length === 0 && !(tab === "recommended" && rec.data?.needs_profile) && (
             <Empty title="No investors match" body="Try fewer filters or describe what you need in the box above." action={<button className="btn-ghost" onClick={reset}>Clear filters</button>} />
           )}
+          {items.length > 0 && (
+            <label className="flex items-center gap-2.5 px-4 py-1 text-sm text-muted cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-[var(--brand)]"
+                checked={pickable.length > 0 && pickable.every((i) => picked.has(i.id))}
+                disabled={!pickable.length}
+                onChange={() => setPicked(pickable.every((i) => picked.has(i.id)) ? new Set() : new Set(pickable.map((i) => i.id)))}
+              />
+              {picked.size ? `${picked.size} selected` : `Select all on this page (${pickable.length})`}
+            </label>
+          )}
+          <BulkOutreachBar ids={[...picked]} onClear={() => setPicked(new Set())} />
           {items.map((inv) => (
-            <InvestorRow key={inv.id} inv={inv} />
+            <InvestorRow key={inv.id} inv={inv} picked={picked.has(inv.id)} onPick={() => togglePick(inv.id)} />
           ))}
           {pageCount > 1 && <Pager page={page} count={pageCount} onGo={go} />}
           {tab === "search" && first && first.all_total !== undefined && first.all_total > first.total && page === pageCount && (
