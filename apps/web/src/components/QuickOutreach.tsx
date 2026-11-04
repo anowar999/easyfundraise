@@ -82,7 +82,7 @@ export function QuickOutreach({ seqId, name, onClose, onDropped }: { seqId: stri
           ))}
           {writing && (
             <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted">
-              <Loader2 size={13} className="animate-spin" /> Writing personalised emails…
+              <Loader2 size={13} className="animate-spin" /> Personalising with AI…
             </span>
           )}
         </div>
@@ -93,7 +93,12 @@ export function QuickOutreach({ seqId, name, onClose, onDropped }: { seqId: stri
                 <div className="text-sm font-medium flex-1 min-w-0">{step > 1 ? `Re: ${fill(s!.emails.find((e) => e.step === 1)?.subject ?? "", name)}` : fill(em.subject, name)}</div>
                 {em.spam && <SpamChip spam={em.spam} compact />}
               </div>
-              <div className={clsx("text-sm whitespace-pre-wrap mt-2 leading-relaxed", writing && "opacity-60")}>{fill(em.body, name)}</div>
+              <div className="text-sm whitespace-pre-wrap mt-2 leading-relaxed">{fill(em.body, name)}</div>
+              {writing && (
+                <p className="mt-3 text-xs text-muted">
+                  This is your template version. The AI-personalised one replaces it here in a few seconds, and it&apos;s the one that gets sent, so you can choose now.
+                </p>
+              )}
               {step > 1 && <p className="mt-3 text-xs text-muted">Sent as a reply in the same thread, 2 working days after the email before, only if they haven&apos;t replied.</p>}
             </>
           ) : (
@@ -103,10 +108,10 @@ export function QuickOutreach({ seqId, name, onClose, onDropped }: { seqId: stri
           )}
         </div>
         <div className="mt-4 grid sm:grid-cols-3 gap-2">
-          <button className="btn-primary" disabled={writing || approve.isPending} onClick={() => ask("window")}>
+          <button className="btn-primary" disabled={!s || approve.isPending} onClick={() => ask("window")}>
             <CalendarClock size={15} /> Schedule for their morning
           </button>
-          <button className="btn-ghost border border-line" disabled={writing || approve.isPending} onClick={() => ask("now")}>
+          <button className="btn-ghost border border-line" disabled={!s || approve.isPending} onClick={() => ask("now")}>
             <Send size={15} /> Send now
           </button>
           <button
