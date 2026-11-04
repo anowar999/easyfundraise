@@ -9,6 +9,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
 import { PlaybookSheet, usePlaybook } from "@/components/EmailPlaybook";
 import { ProgressUpdateCard } from "@/components/ProgressUpdate";
+import { ListSearch, matches } from "@/components/ListSearch";
 import { Empty, ErrorState, ListSkeleton } from "@/components/ui";
 import { OutreachAgent } from "./OutreachAgent";
 import { OutreachList } from "./OutreachList";
@@ -16,7 +17,7 @@ import { UpcomingList, useUpcoming } from "./Upcoming";
 import { api, fmtDate } from "@/lib/api";
 
 type Row = { key: string; sent: number; opened: number; replied: number; positive: number; bounced: number; open_rate: number; reply_rate: number };
-type Recent = { id: string; to: string; card_id: string | null; subject: string; step: number; status: string; sent_at: string | null; scheduled_for: string | null; opened: number; reply: string; error: string };
+type Recent = { id: string; to: string; email?: string; firm?: string; card_id: string | null; subject: string; step: number; status: string; sent_at: string | null; scheduled_for: string | null; opened: number; reply: string; error: string };
 type Stats = { total: Row; queued: number; tracking?: { enabled: boolean; public: boolean }; by_step: Row[]; by_hook: Row[]; by_persona: Row[]; by_hour: Row[]; recent: Recent[] };
 type Gmail = { connected: boolean; email?: string; sent_today?: number; daily_cap?: number };
 
@@ -114,6 +115,7 @@ const TAB_NAME: Record<Tab, string> = { list: "Outreach list", scheduled: "Sched
 
 export default function Outreach() {
   const [tab, setTab] = useState<Tab>("list");
+  const [find, setFind] = useState("");
   const up = useUpcoming();
   useEffect(() => {  // ?tab=scheduled / ?tab=activity (breadcrumbs lead back to a tab)
     const t = new URLSearchParams(window.location.search).get("tab");
@@ -172,8 +174,16 @@ export default function Outreach() {
           ) : (
             <div className="space-y-4">
               <div className="card divide-y divide-line">
+                {d.recent.length > 0 && (
+                  <div className="px-4 py-2">
+                    <ListSearch value={find} onChange={setFind} className="max-w-xs" />
+                  </div>
+                )}
+                {find && !d.recent.some((e) => matches(find, e.to, e.email, e.firm)) && (
+                  <p className="px-4 py-6 text-sm text-muted text-center">No activity matches &ldquo;{find}&rdquo;.</p>
+                )}
                 {d.recent.length === 0 && <Empty icon={<Send />} title="No emails yet" body="Add investors to outreach and approve their emails. Sent and scheduled emails show up here." />}
-                {d.recent.map((e) => {
+                {d.recent.filter((e) => matches(find, e.to, e.email, e.firm)).map((e) => {
                   const inner = (
                     <div className="p-3 flex gap-3">
                       <div className="flex-1 min-w-0">
