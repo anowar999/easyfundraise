@@ -189,3 +189,23 @@ def test_upcoming_scheduled_and_send_now(client):
         db.refresh(upd)
         sent1 = db.scalar(select(Email).where(Email.sequence_id == uuid.UUID(seq["id"]), Email.step == 1))
         assert upd.status == "sent" and upd.gmail_thread_id == sent1.gmail_thread_id  # same Gmail thread
+
+
+def test_scheduled_preview_send_now_and_cancel(client):
+    ada = _ready_to_send(client)
+    seq = client.post("/sequences", json={"investor_id": ada["id"]}).json()
+    client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True})
+    mine = [x for x in client.get("/sequences/scheduled").json()["items"] if x["sequence_id"] == seq["id"]]
+    assert mine[0]["body"].startswith("Hi Ada") and "{first name}" not in mine[0]["body"]  # preview, name filled
+    r = client.post(f"/sequences/scheduled/{mine[2]['email_id']}/cancel").json()  # one follow-up
+    assert r == {"ok": True, "back_to_draft": False, "cancelled": [3]}
+    assert client.post(f"/sequences/scheduled/{mine[2]['email_id']}/cancel").status_code == 409
+    r = client.post(f"/sequences/scheduled/{mine[0]['email_id']}/cancel").json()  # email 1: back to drafts
+    assert r["back_to_draft"]
+    s = client.get(f"/sequences/{seq['id']}").json()
+    assert s["status"] == "draft" and s["emails"][0]["status"] == "draft" and s["emails"][1]["status"] == "draft"
+    assert not [x for x in client.get("/sequences/scheduled").json()["items"] if x["sequence_id"] == seq["id"]]
+    client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True})  # approve again to reschedule
+    first = next(x for x in client.get("/sequences/scheduled").json()["items"] if x["sequence_id"] == seq["id"])
+    assert client.post(f"/sequences/scheduled/{first['email_id']}/send-now").json()["ok"]
+    assert client.post(f"/sequences/scheduled/{first['email_id']}/cancel").status_code == 409  # on its way

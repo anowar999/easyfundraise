@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, CheckCircle2, Megaphone, RefreshCw, Send } from "lucide-react";
+import { CalendarClock, CheckCircle2, Eye, EyeOff, Megaphone, RefreshCw, Send, X } from "lucide-react";
 import { useState } from "react";
 import { from } from "@/components/Crumbs";
 import Link from "next/link";
@@ -15,6 +15,7 @@ export type Upcoming = {
   kind: "sequence" | "update";
   step: number;
   subject: string;
+  body: string;
   to: string;
   scheduled_for: string;
   investor: string;
@@ -48,11 +49,11 @@ export function UpcomingList() {
   const toast = useToast();
   const [going, setGoing] = useState<Record<string, string>>({});  // email id -> investor, sent with Send now
   const now = useMutation({
-    mutationFn: (u: Upcoming) => api(`/sequences/${u.sequence_id}/emails/${u.email_id}/send-now`, { method: "POST" }),
+    mutationFn: (u: Upcoming) => api(`/sequences/scheduled/${u.email_id}/send-now`, { method: "POST" }),
     onMutate: (u) => setGoing((g) => ({ ...g, [u.email_id]: u.investor })),  // the button goes at once: no second tap
     onSuccess: (_, u) => {
       for (const k of ["upcoming", "outreach-stats", "sequences", "sequence"]) qc.invalidateQueries({ queryKey: [k] });
-      toast(`Email ${u.step} to ${u.investor} is on its way. It'll show in your Gmail Sent within a minute.`);
+      toast(`${u.kind === "update" ? "The update" : `Email ${u.step}`} to ${u.investor} is on its way. It'll show in your Gmail Sent within a minute.`);
     },
     onError: (e, u) => {
       setGoing((g) => {
@@ -61,6 +62,17 @@ export function UpcomingList() {
       });
       toast(errText(e), "err");
     },
+  });
+  const [open, setOpen] = useState<string | null>(null);  // previewed email
+  const [asking, setAsking] = useState<string | null>(null);  // cancel waiting for "Yes"
+  const cancel = useMutation({
+    mutationFn: (u: Upcoming) => api<{ back_to_draft: boolean }>(`/sequences/scheduled/${u.email_id}/cancel`, { method: "POST" }),
+    onSuccess: (r, u) => {
+      setAsking(null);
+      for (const k of ["upcoming", "outreach-stats", "sequences", "sequence"]) qc.invalidateQueries({ queryKey: [k] });
+      toast(r.back_to_draft ? `Cancelled. ${u.investor}'s emails are back in drafts; approve them again to reschedule.` : `Cancelled. ${u.kind === "update" ? "The update" : `Email ${u.step}`} to ${u.investor} won't be sent.`);
+    },
+    onError: (e) => toast(errText(e), "err"),
   });
   if (q.isLoading) return <ListSkeleton rows={3} />;
   if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
@@ -93,27 +105,59 @@ export function UpcomingList() {
             <div className="text-xs text-muted truncate">{u.subject}</div>
           </>
         );
+        const what = u.kind === "update" ? "this update" : `email ${u.step}`;
         return (
-          <div key={u.email_id} className="flex items-center gap-3 px-4 py-3">
-            {u.kind === "update" && <Megaphone size={15} className="text-brand shrink-0" />}
-            {href ? <Link href={href} className="flex-1 min-w-0">{label}</Link> : <div className="flex-1 min-w-0">{label}</div>}
-            <div className="text-right text-xs shrink-0">
-              <div className="font-medium">{at(u.scheduled_for, u.timezone)} their time</div>
-              {u.timezone !== mine && <div className="text-muted">{at(u.scheduled_for)} yours</div>}
+          <div key={u.email_id} className="px-4 py-3">
+            <div className="flex items-center gap-3">
+              {u.kind === "update" && <Megaphone size={15} className="text-brand shrink-0" />}
+              {href ? <Link href={href} className="flex-1 min-w-0">{label}</Link> : <div className="flex-1 min-w-0">{label}</div>}
+              <div className="text-right text-xs shrink-0">
+                <div className="font-medium">{at(u.scheduled_for, u.timezone)} their time</div>
+                {u.timezone !== mine && <div className="text-muted">{at(u.scheduled_for)} yours</div>}
+              </div>
             </div>
-            {onWay ? (
-              <span className="chip shrink-0 inline-flex items-center gap-1 text-green-700">
-                <RefreshCw size={12} className="animate-spin" /> Sending
-              </span>
-            ) : u.can_send_now ? (
-              <button className="btn-ghost btn-sm shrink-0" disabled={now.isPending} onClick={() => now.mutate(u)} title="Send this email now instead of at its scheduled time">
-                <Send size={13} /> Send now
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <button className="btn-ghost btn-sm" onClick={() => setOpen(open === u.email_id ? null : u.email_id)} aria-expanded={open === u.email_id}>
+                {open === u.email_id ? <EyeOff size={13} /> : <Eye size={13} />} {open === u.email_id ? "Hide" : "Preview"}
               </button>
-            ) : u.send_now_from ? (
-              <span className="text-[11px] text-muted shrink-0 w-24 text-right" title="Follow-ups wait at least a day after the email before them">
-                Send now from {at(u.send_now_from)}
-              </span>
-            ) : null}
+              {onWay ? (
+                <span className="chip inline-flex items-center gap-1 text-green-700">
+                  <RefreshCw size={12} className="animate-spin" /> Sending
+                </span>
+              ) : (
+                <>
+                  {u.can_send_now ? (
+                    <button className="btn-ghost btn-sm" disabled={now.isPending} onClick={() => now.mutate(u)} title="Send this email now instead of at its scheduled time">
+                      <Send size={13} /> Send now
+                    </button>
+                  ) : u.send_now_from ? (
+                    <span className="text-[11px] text-muted px-1" title="Follow-ups wait at least a day after the email before them">
+                      Send now from {at(u.send_now_from)}
+                    </span>
+                  ) : null}
+                  {asking === u.email_id ? (
+                    <span className="inline-flex flex-wrap items-center gap-1.5 text-xs">
+                      <span>{u.kind === "sequence" && u.step === 1 ? "Cancel email 1? Its follow-ups go back to drafts too." : `Cancel ${what}?`}</span>
+                      <button className="btn-ghost btn-sm text-warn" disabled={cancel.isPending} onClick={() => cancel.mutate(u)}>
+                        {cancel.isPending ? "Cancelling…" : "Yes, cancel"}
+                      </button>
+                      <button className="btn-ghost btn-sm" onClick={() => setAsking(null)}>Keep it</button>
+                    </span>
+                  ) : (
+                    <button className="btn-ghost btn-sm" onClick={() => setAsking(u.email_id)} title="Don't send this email">
+                      <X size={13} /> Cancel send
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+            {open === u.email_id && (
+              <div className="mt-2 rounded-xl border border-line bg-surface/50 p-3">
+                <div className="text-xs text-muted">To {u.to}</div>
+                <div className="text-sm font-medium mt-1">{u.subject}</div>
+                <div className="text-sm whitespace-pre-wrap mt-2 leading-relaxed">{u.body}</div>
+              </div>
+            )}
           </div>
         );
       })}

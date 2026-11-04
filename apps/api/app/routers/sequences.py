@@ -180,7 +180,9 @@ def scheduled(c: Ctx = Depends(ctx)):
     for e, s, inv in rows:
         ok, after = ready(e, s)
         items.append({"email_id": str(e.id), "sequence_id": str(s.id), "kind": "sequence", "step": e.step,
-                      "subject": subject(e, s), "to": e.to_email, "scheduled_for": e.scheduled_for, "investor": inv.name,
+                      "subject": outreach.fill_first_name(subject(e, s), inv.name),
+                      "body": outreach.fill_first_name(e.body, inv.name), "to": e.to_email,
+                      "scheduled_for": e.scheduled_for, "investor": inv.name,
                       "firm": inv.current_firm or inv.company, "timezone": inv.timezone or "UTC", "can_send_now": ok,
                       "send_now_from": after, "sending": bool(e.scheduled_for and e.scheduled_for <= now)})
     # Round & progress updates waiting to go out (sent as a reply in each investor's thread).
@@ -188,13 +190,65 @@ def scheduled(c: Ctx = Depends(ctx)):
             Email.workspace_id == c.ws_id, Email.status == "scheduled", Email.broadcast_id.is_not(None),
             Email.hook == "update").limit(300)).all():
         items.append({"email_id": str(e.id), "sequence_id": None, "card_id": str(card.id) if card else None,
-                      "kind": "update", "step": 0, "subject": e.subject, "to": e.to_email,
+                      "kind": "update", "step": 0, "subject": e.subject, "body": e.body, "to": e.to_email,
                       "scheduled_for": e.scheduled_for, "investor": card.name if card else e.to_email,
                       "firm": card.firm if card else "", "timezone": (card.investor_timezone if card else "") or "UTC",
-                      "can_send_now": False, "send_now_from": None,
+                      "can_send_now": not (e.scheduled_for and e.scheduled_for <= now), "send_now_from": None,
                       "sending": bool(e.scheduled_for and e.scheduled_for <= now)})
     items.sort(key=lambda x: x["scheduled_for"] or now)
     return {"items": items}
+
+
+def _scheduled_email(c: Ctx, eid: str) -> Email:
+    try:
+        em = c.db.get(Email, uuid.UUID(eid))
+    except ValueError:
+        em = None
+    if em is None or em.workspace_id != c.ws_id:
+        raise not_found("Email")
+    if em.status != "scheduled":
+        raise ApiError(409, "EF-SEQ-011", "This email isn't scheduled", "It may have been sent or cancelled already.")
+    if em.scheduled_for and em.scheduled_for <= datetime.now(UTC):
+        raise ApiError(409, "EF-SEQ-013", "This email is already on its way", "It goes out within a minute.")
+    return em
+
+
+@router.post("/scheduled/{eid}/send-now")
+def scheduled_send_now(eid: str, c: Ctx = Depends(ctx)):
+    """Send now from the Scheduled list: an outreach email (same rules as on its sequence) or a progress update."""
+    c.require_editor()
+    em = _scheduled_email(c, eid)
+    if em.sequence_id:
+        return send_now(str(em.sequence_id), eid, c)
+    now = datetime.now(UTC)
+    em.scheduled_for, em.error = now, ""
+    acc = c.db.get(GmailAccount, c.user.id)
+    if acc is not None and acc.next_send_at and acc.next_send_at > now:
+        acc.next_send_at = now
+    c.audit("email.send_now", str(em.id))
+    c.db.commit()
+    return {"ok": True, "scheduled_for": now}
+
+
+@router.post("/scheduled/{eid}/cancel")
+def scheduled_cancel(eid: str, c: Ctx = Depends(ctx)):
+    """Cancel send. Email 1 takes its sequence back to drafts (follow-ups can't go without it; approve again to
+    reschedule); a follow-up or a progress update is cancelled on its own."""
+    c.require_editor()
+    em = _scheduled_email(c, eid)
+    s = c.db.get(Sequence, em.sequence_id) if em.sequence_id else None
+    if s is not None and em.step == 1:
+        for e in s.emails:
+            if e.status in ("scheduled", "draft"):
+                e.status, e.scheduled_for, e.error = "draft", None, ""
+        s.status = "draft"
+        result = {"ok": True, "back_to_draft": True, "cancelled": [e.step for e in s.emails if e.status == "draft"]}
+    else:
+        em.status, em.error = "cancelled", "Cancelled by you"
+        result = {"ok": True, "back_to_draft": False, "cancelled": [em.step]}
+    c.audit("email.cancel", str(em.id), after=result)
+    c.db.commit()
+    return result
 
 
 @router.get("/{sid}")
