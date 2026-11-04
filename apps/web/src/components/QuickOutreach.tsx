@@ -9,6 +9,7 @@ import { SpamChip } from "@/app/app/outreach/SpamChip";
 import type { SendPreview } from "./ConfirmSend";
 import { Sheet, errText, useToast } from "./ui";
 import { api, ApiError } from "@/lib/api";
+import { allowanceNote } from "@/lib/allowance";
 
 type Mail = { id: string; step: number; subject: string; body: string; spam?: { score: number; level: "good" | "warn" | "high"; reasons: string[] } };
 type Seq = { id: string; status: string; drafting?: boolean; investor: { name: string; firm: string } | null; emails: Mail[] };
@@ -52,7 +53,13 @@ export function QuickOutreach({ seqId, name, onClose, onDropped }: { seqId: stri
       api(`/sequences/${seqId}/approve`, { method: "POST", json: { confirm: true, first_at: at } }),
     onSuccess: (_, v) => {
       refresh();
-      toast(v.at === "now" ? `Sending email 1 to ${name} now. Follow-ups go 2 working days apart and stop on any reply.` : `Scheduled for ${name}: email 1 goes in their morning send window.`);
+      toast(
+        plan.data?.allowance?.moved
+          ? `Added ${name}. ${allowanceNote(plan.data.allowance)}`
+          : v.at === "now"
+            ? `Sending email 1 to ${name} now. Follow-ups go 2 working days apart and stop on any reply.`
+            : `Scheduled for ${name}: email 1 goes in their morning send window.`,
+      );
       onClose();
     },
     onError: (e) => toast(errText(e), "err"),
@@ -133,6 +140,9 @@ export function QuickOutreach({ seqId, name, onClose, onDropped }: { seqId: stri
           </ol>
         )}
         {p?.emails && <p className="mt-1.5 text-xs text-muted">Times are {first(name)}&apos;s local time{tz ? ` (${tz})` : ""}. With Send now, email 1 goes in about a minute and the follow-ups keep their 2 working day gaps. Follow-ups stop on any reply.</p>}
+        {p?.allowance && allowanceNote(p.allowance) && (
+          <p className={clsx("mt-2 rounded-lg px-3 py-2 text-xs", p.allowance.moved ? "border border-amber-500/40 bg-amber-500/5 text-ink" : "text-muted px-0 py-0")}>{allowanceNote(p.allowance)}</p>
+        )}
         {plan.isError && <p className="mt-3 rounded-lg border border-warn/40 bg-warn/5 px-3 py-2 text-sm text-warn">{errText(plan.error)}</p>}
         <label className={clsx("mt-3 flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-sm cursor-pointer", ok ? "border-brand/50 bg-brand/5" : "border-line")}>
           <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[var(--brand,#4f46e5)]" checked={ok} disabled={!p} onChange={(e) => setOk(e.target.checked)} />

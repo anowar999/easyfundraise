@@ -15,7 +15,7 @@ from ..db import SessionLocal
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
 from ..models import CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence, User, Workspace
-from ..services import agent, ai, mailer, outreach, spam, test_investors, tracker_link
+from ..services import agent, ai, mailer, outreach, send_plan, spam, test_investors, tracker_link
 from ..services.entitlements import can, consume, limit
 from .investors import _exclusions, auto_reveal, is_excluded
 
@@ -373,12 +373,13 @@ def bulk(body: BulkIn, background: BackgroundTasks, c: Ctx = Depends(ctx)):
     ids = [str(s.id) for s, _, _ in eligible]
     if body.action == "send":
         now = datetime.now(UTC)
+        plan = _planner(c, now)
         for s, inv, to in eligible:
-            outreach.schedule(s.emails, now, inv.timezone)
+            outreach.schedule(s.emails, now, inv.timezone, first_at=plan.place(inv.timezone))
             _schedule(c, s, inv, to, {"via": "outreach_bulk_send", "when": "window", "confirmed": True})
         c.audit("sequence.bulk_send", str(c.ws_id), after={"ids": ids})
         c.db.commit()
-        return {"done": len(eligible), "skipped": skipped}
+        return {"done": len(eligible), "skipped": skipped, "allowance": plan.summary()}
     if body.action == "regenerate":
         for s, _, _ in eligible:
             s.engine = DRAFTING  # the list shows them as being redrafted until the background task finishes
@@ -519,6 +520,10 @@ def _ready(c: Ctx, s: Sequence, reveal: bool = True) -> tuple[Investor, str, Gma
     return inv, to, acc
 
 
+def _planner(c: Ctx, now: datetime) -> send_plan.DayPlanner:
+    return send_plan.DayPlanner(c.db, c.workspace, c.user, c.db.get(GmailAccount, c.user.id), now)
+
+
 def blocker(c: Ctx, s: Sequence) -> str | None:
     """Why this draft can't be scheduled yet, in plain words (None when it's ready)."""
     try:
@@ -562,7 +567,7 @@ def try_auto_send(c: Ctx, s: Sequence) -> dict:
     # "As soon as added": a couple of minutes' grace so the AI version (written in the background) goes, not the
     # template; the mailer still spaces sends out and keeps the daily limit. Otherwise their morning send window.
     first_at = now + timedelta(minutes=2) if auto_send_when(c.workspace) == "now" else None
-    outreach.schedule(s.emails, now, inv.timezone, first_at=first_at)
+    outreach.schedule(s.emails, now, inv.timezone, first_at=_planner(c, now).place(inv.timezone, first_at))
     _schedule(c, s, inv, to, {"via": "auto_send_setting", "when": "now" if first_at else "window"})
     c.db.commit()
     return {"scheduled": True, "reason": "", "when": "now" if first_at else "window"}
@@ -577,12 +582,14 @@ def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
     s = _get(c, sid)
     inv, to, acc = _ready(c, s, reveal=bool(body and body.confirm))
     now = datetime.now(UTC)
-    outreach.schedule(s.emails, now, inv.timezone,
-                      # "now": a short grace, longer while the AI version is still being written so that one goes
-                      first_at=now + timedelta(seconds=90 if s.engine == DRAFTING else 30)
-                      if body and body.first_at == "now" else None)
+    plan = _planner(c, now)
+    outreach.schedule(s.emails, now, inv.timezone, first_at=plan.place(
+        inv.timezone,
+        # "now": a short grace, longer while the AI version is still being written so that one goes
+        now + timedelta(seconds=90 if s.engine == DRAFTING else 30) if body and body.first_at == "now" else None))
     if not (body and body.confirm):
         preview = {"from": acc.email, "to": to, "investor": inv.name, "timezone": inv.timezone,
+                   "allowance": plan.summary(),
                    "emails": [{"step": e.step, "subject": e.subject, "scheduled_for": e.scheduled_for.isoformat()}
                               for e in sorted(s.emails, key=lambda e: e.step)]}
         c.db.rollback()
@@ -612,11 +619,12 @@ def send_all(body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
         return {"needs_confirm": True, "from": sender, "skipped": skipped,
                 "ready": [{"id": str(s.id), "name": inv.name, "to": to} for s, inv, to in ready]}
     now = datetime.now(UTC)
+    plan = _planner(c, now)
     for s, inv, to in ready:
-        outreach.schedule(s.emails, now, inv.timezone)
+        outreach.schedule(s.emails, now, inv.timezone, first_at=plan.place(inv.timezone))
         _schedule(c, s, inv, to, {"via": "send_all", "when": "window", "confirmed": True})
     c.db.commit()
-    return {"scheduled": len(ready), "skipped": skipped}
+    return {"scheduled": len(ready), "skipped": skipped, "allowance": plan.summary()}
 
 
 class BulkAddIn(BaseModel):
@@ -680,10 +688,14 @@ def bulk_add(body: BulkAddIn, request: Request, c: Ctx = Depends(ctx), backgroun
     plan = {"action": body.action, "from": acc.email if acc else "", "count": len(ok),
             "investors": [{"id": str(i.id), "name": i.name, "firm": i.current_firm or i.company} for i in ok],
             "skipped": skipped, "terms": BULK_TERMS.get(body.action, "")}
-    if sending and not body.confirm:
-        return {"needs_confirm": True, **plan}
-    later = background is not None and ai.available()
     now = datetime.now(UTC)
+    planner = _planner(c, now)
+    if sending and not body.confirm:
+        sim = _planner(c, now)  # where each first email would land, within the daily allowance
+        for inv in ok:
+            sim.place(inv.timezone, now + timedelta(seconds=90) if body.action == "now" else None)
+        return {"needs_confirm": True, **plan, "allowance": sim.summary()}
+    later = background is not None and ai.available()
     done, drafts, failed, jobs = [], [], [], []
     for inv in ok:
         try:
@@ -703,8 +715,8 @@ def bulk_add(body: BulkAddIn, request: Request, c: Ctx = Depends(ctx), backgroun
             drafts.append({"id": str(seq.id), "name": inv.name, "reason": e.title})
             continue
         # "now": 90s grace so the AI-personalised version goes; the mailer spaces sends and keeps the daily limit
-        outreach.schedule(seq.emails, now, inv.timezone,
-                          first_at=now + timedelta(seconds=90) if body.action == "now" else None)
+        outreach.schedule(seq.emails, now, inv.timezone, first_at=planner.place(
+            inv.timezone, now + timedelta(seconds=90) if body.action == "now" else None))
         _schedule(c, seq, inv, to, {"via": "investor_list_bulk", "when": body.action, "confirmed": True,
                                     "from": acc.email})
         c.db.commit()
@@ -716,7 +728,8 @@ def bulk_add(body: BulkAddIn, request: Request, c: Ctx = Depends(ctx), backgroun
     c.db.commit()
     if jobs:
         background.add_task(finish_ai_drafts, jobs)
-    return {"scheduled": len(done), "drafts": drafts, "skipped": skipped + failed, "action": body.action}
+    return {"scheduled": len(done), "drafts": drafts, "skipped": skipped + failed, "action": body.action,
+            "allowance": planner.summary()}
 
 
 BULK_TERMS = {  # what the confirm screen says; stored with the acceptance in the audit log

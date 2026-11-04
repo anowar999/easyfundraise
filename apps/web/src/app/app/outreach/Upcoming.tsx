@@ -8,6 +8,7 @@ import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { Empty, ErrorState, IconBtn, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
+import { useNow } from "@/lib/useNow";
 import { SpamChip } from "./SpamChip";
 
 export type Upcoming = {
@@ -41,13 +42,16 @@ export function useUpcoming() {
   return useQuery<{ items: Upcoming[] }>({
     queryKey: ["upcoming"],
     queryFn: () => api("/sequences/scheduled"),
-    refetchInterval: (q) => (q.state.data?.items.some((u) => u.sending) ? 2_000 : 60_000),
+    // Every few seconds while something is going out or its time has come, so rows move to Sent by themselves.
+    refetchInterval: (q) =>
+      q.state.data?.items.some((u) => u.sending || new Date(u.scheduled_for).getTime() <= Date.now() + 5000) ? 3_000 : 60_000,
   });
 }
 
 /** Every email waiting to go out, soonest first: the investor's local time (when it lands) and yours. */
 export function UpcomingList() {
   const q = useUpcoming();
+  const clock = useNow(5000);
   const qc = useQueryClient();
   const toast = useToast();
   const [asking, setAsking] = useState<{ id: string; what: "send" | "cancel" } | null>(null);  // waiting for "Yes"
@@ -133,7 +137,7 @@ export function UpcomingList() {
         </div>
       ))}
       {items.map((u) => {
-        const onWay = u.sending || !!going[u.email_id];
+        const onWay = u.sending || !!going[u.email_id] || new Date(u.scheduled_for).getTime() <= clock;
         const href = u.sequence_id ? from(`/app/sequences/${u.sequence_id}`, "outreach-scheduled") : u.card_id ? from(`/app/funnel/${u.card_id}`, "outreach-scheduled") : null;
         const label = (
           <>
@@ -162,8 +166,8 @@ export function UpcomingList() {
               </IconBtn>
               {u.spam && <SpamChip spam={u.spam} compact />}
               {onWay ? (
-                <span className="chip inline-flex items-center gap-1 text-green-700">
-                  <RefreshCw size={12} className="animate-spin" /> Sending
+                <span className="chip inline-flex items-center gap-1 text-emerald-700 border-emerald-600/40 bg-emerald-500/10 font-medium">
+                  <RefreshCw size={12} className="animate-spin" /> Sending…
                 </span>
               ) : (
                 (() => {

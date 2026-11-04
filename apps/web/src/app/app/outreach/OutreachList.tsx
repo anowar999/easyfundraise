@@ -12,6 +12,7 @@ import { ConfirmSend, type SendPreview } from "@/components/ConfirmSend";
 import { Empty, IconBtn, ListSkeleton, Sheet, errText, useToast } from "@/components/ui";
 import { api, ApiError, fmtDate } from "@/lib/api";
 import { BulkBar } from "./BulkBar";
+import { useNow } from "@/lib/useNow";
 
 /** A draft with nothing blocking it. Falls back to "draft without a blocker" if the API hasn't sent `ready`. */
 const isReady = (x: Item) => x.ready ?? (x.status === "draft" && !x.blocker);
@@ -45,6 +46,9 @@ type Item = {
 };
 type List = { auto_send: boolean; auto_send_when?: "window" | "now"; items: Item[] };
 type Bulk = { needs_confirm: true; from: string; ready: { id: string; name: string; to: string }[]; skipped: { id: string; name: string; reason: string }[] };
+
+/** Its next email's time has come: the worker is sending it now (it may wait a minute or two for pacing). */
+const isDue = (x: Item, now: number) => x.status === "approved" && !!x.next_at && new Date(x.next_at).getTime() <= now;
 
 function statusText(x: Item) {
   if (x.status === "draft") return x.blocker ? "Needs attention" : "Ready to send";
@@ -189,8 +193,15 @@ export function OutreachList() {
     queryKey: ["sequences"],
     queryFn: () => api("/sequences"),
     // While drafts are being rewritten, refresh every few seconds so each row comes back as soon as it's done.
-    refetchInterval: (query) => (query.state.data?.items.some((x) => x.drafting) || Date.now() < pollUntil.current ? 2500 : false),
+    // and while an email's time has come, so "Sending…" turns into "Sent" as soon as it goes; otherwise every minute.
+    refetchInterval: (query) =>
+      query.state.data?.items.some((x) => x.drafting) || Date.now() < pollUntil.current
+        ? 2500
+        : query.state.data?.items.some((x) => isDue(x, Date.now() + 5000))
+          ? 4000
+          : 60_000,
   });
+  const now = useNow(5000);
   // Bulk regenerate progress: the rows queued in this batch, and the ones that have finished since.
   const [regen, setRegen] = useState<string[]>([]);
   const drafting = (q.data?.items ?? []).filter((x) => x.drafting);
@@ -413,6 +424,10 @@ export function OutreachList() {
                 ) : regen.includes(x.id) ? (
                   <span className="chip text-xs text-emerald-700 border-emerald-600/30 inline-flex items-center gap-1">
                     <Check size={12} /> New draft ready
+                  </span>
+                ) : isDue(x, now) ? (
+                  <span className="chip text-xs text-emerald-700 border-emerald-600/40 bg-emerald-500/10 font-medium inline-flex items-center gap-1">
+                    <Send size={12} className="animate-pulse" /> Sending email {x.sent + 1}…
                   </span>
                 ) : (
                   <span className={clsx("chip text-xs hidden sm:inline-flex", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>
