@@ -7,10 +7,20 @@ import { useSuggest } from "@/components/EmailPlaybook";
 import { Sheet, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 
-type Recipient = { name: string; firm: string; to: string; timezone: string; scheduled_for: string; moved: boolean };
-type Preview = { count: number; moved: number; recipients: Recipient[]; sample: { to: string; subject: string; body: string } };
+type Recipient = { name: string; firm: string; to: string; timezone: string; scheduled_for: string; moved: boolean; clash?: boolean };
+type Preview = { count: number; moved: number; clash?: number; recipients: Recipient[]; sample: { to: string; subject: string; body: string } };
 
 const DRAFT_KEY = "ef-progress-update-draft";
+
+const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const todayStr = () => iso(new Date());
+/** Tomorrow, or Monday when tomorrow is a weekend day. */
+function tomorrow() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+  return iso(d);
+}
 
 function at(iso: string, tz?: string) {
   try {
@@ -36,6 +46,8 @@ function Composer({ onDone }: { onDone: () => void }) {
   const [pv, setPv] = useState<Preview | null>(null);
   const [when, setWhen] = useState<"morning" | "now">("morning");
   const [confirm, setConfirm] = useState(false);
+  const [day, setDay] = useState(tomorrow());  // in each investor's own time zone
+  const [time, setTime] = useState("08:35");
   const keep = (t: string) => {
     setText(t);
     setPv(null);
@@ -52,12 +64,12 @@ function Composer({ onDone }: { onDone: () => void }) {
     onError: (e) => toast(errText(e), "err"),
   });
   const preview = useMutation({
-    mutationFn: () => api<Preview>("/outreach/progress-update/preview", { method: "POST", json: { text } }),
+    mutationFn: () => api<Preview>("/outreach/progress-update/preview", { method: "POST", json: { text, day: day || null, at: time } }),
     onSuccess: setPv,
     onError: (e) => toast(errText(e), "err"),
   });
   const schedule = useMutation({
-    mutationFn: () => api<{ scheduled: number }>("/outreach/progress-update/schedule", { method: "POST", json: { text, when } }),
+    mutationFn: () => api<{ scheduled: number }>("/outreach/progress-update/schedule", { method: "POST", json: { text, when, day: day || null, at: time } }),
     onSuccess: (r) => {
       setConfirm(false);
       for (const k of ["upcoming", "outreach-stats"]) qc.invalidateQueries({ queryKey: [k] });
@@ -104,7 +116,7 @@ function Composer({ onDone }: { onDone: () => void }) {
             <div>
               <div className="text-xs text-muted mb-1">
                 {pv.count} investor{pv.count === 1 ? "" : "s"}
-                {pv.moved ? `, ${pv.moved} moved 3 days later because another email reaches them within a day` : ""}
+                {pv.clash ? `, ${pv.clash} also get another email from you that day` : ""}
               </div>
               <ul className="max-h-48 overflow-auto divide-y divide-line text-xs">
                 {pv.recipients.map((r) => (
@@ -113,7 +125,9 @@ function Composer({ onDone }: { onDone: () => void }) {
                       {r.name}
                       {r.firm ? <span className="text-muted">, {r.firm}</span> : null}
                     </span>
-                    <span className={r.moved ? "text-warn" : "text-muted"}>{at(r.scheduled_for, r.timezone)} their time</span>
+                    <span className={r.clash ? "text-warn" : "text-muted"} title={r.clash ? "Another email reaches them that day" : undefined}>
+                      {at(r.scheduled_for, r.timezone)} their time
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -125,7 +139,7 @@ function Composer({ onDone }: { onDone: () => void }) {
       <div className="rounded-xl border border-line p-3 space-y-2">
         <div className="grid sm:grid-cols-2 gap-2" role="radiogroup" aria-label="When to send">
           {([
-            ["morning", "Their morning", "8:35am in each investor's time zone, next weekday"],
+            ["morning", "Schedule", "A day and time in each investor's own time zone"],
             ["now", "Send now", "Starts straight away, spaced out within your daily limit"],
           ] as const).map(([k, t, sub]) => (
             <button
@@ -146,15 +160,22 @@ function Composer({ onDone }: { onDone: () => void }) {
             </button>
           ))}
         </div>
+        {when === "morning" && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <input type="date" className="input h-9 w-auto" value={day} min={todayStr()} onChange={(e) => { setDay(e.target.value); setPv(null); setConfirm(false); }} aria-label="Day" />
+            <input type="time" className="input h-9 w-auto" value={time} onChange={(e) => { setTime(e.target.value || "08:35"); setPv(null); setConfirm(false); }} aria-label="Time" />
+            <span className="text-xs text-muted">their time{day === tomorrow() && time === "08:35" ? " (suggested: tomorrow morning)" : ""}</span>
+          </div>
+        )}
         <p className="text-xs text-muted">
           {when === "morning"
-            ? "If another email to them is scheduled the same day or the day either side, theirs moves 3 days later, so nobody gets two emails back to back."
+            ? "Each investor gets it at this time where they are, as a reply in your thread with them. Preview shows anyone who also gets another email from you that day."
             : "It replies in your thread with each investor. Anyone who just got an email from you will get this one too, so use it for news that can't wait."}
         </p>
         {confirm ? (
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="flex-1">
-              {when === "now" ? "Send this update now" : "Schedule this update for their morning"} to {pv ? `all ${pv.count}` : "all"} previously emailed investors?
+              {when === "now" ? "Send this update now" : `Schedule this update for ${day} at ${time} their time`} to {pv ? `all ${pv.count}` : "all"} previously emailed investors?
             </span>
             <button className="btn-primary btn-sm" disabled={schedule.isPending} onClick={() => schedule.mutate()}>
               {schedule.isPending ? "Working…" : "Yes"}

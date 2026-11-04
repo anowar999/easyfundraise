@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.services import outreach
@@ -42,8 +42,11 @@ def test_sequence_draft_limits_and_lint(client):
     r = client.post(f"/sequences/{seq['id']}/approve", json={"confirm": True}).json()
     assert r["status"] == "approved"
     london = [datetime.fromisoformat(e["scheduled_for"]).astimezone(ZoneInfo("Europe/London")) for e in r["emails"]]
-    assert all(d.weekday() in (1, 2, 3) for d in london)
+    assert london[0].weekday() in (1, 2, 3) and all(d.weekday() < 5 for d in london)  # email 1 Tue-Thu, follow-ups weekdays
     assert london[0] < london[1] < london[2]
+    gap = sum(1 for i in range(1, (london[1].date() - london[0].date()).days + 1)
+              if (london[0].date() + timedelta(days=i)).weekday() < 5)
+    assert gap == 3  # follow-up 3 working days after email 1
 
 
 def test_trial_can_draft_three_samples(client):
@@ -179,13 +182,16 @@ def test_upcoming_scheduled_and_send_now(client):
     # Round & progress update to everyone already emailed: a reply in their thread, kept clear of other emails.
     text = "we closed our first 500k and signed two hospitals"
     pv = client.post("/outreach/progress-update/preview", json={"text": text}).json()
-    assert pv["count"] == 1 and pv["recipients"][0]["moved"]  # email 1 went today, so not tomorrow
+    assert pv["count"] == 1 and not pv["recipients"][0]["moved"]  # tomorrow morning, never pushed behind follow-ups
     assert pv["sample"]["subject"] == f"Re: {e1['subject']}" and "We closed our first 500k" in pv["sample"]["body"]
     assert pv["sample"]["body"].startswith("Hi Ada,")
     when = datetime.fromisoformat(pv["recipients"][0]["scheduled_for"].replace("Z", "+00:00"))
     local = when.astimezone(ZoneInfo(pv["recipients"][0]["timezone"]))
     assert (local.hour, local.minute) == (8, 35) and local.weekday() < 5
-    assert (local.date() - datetime.now(UTC).astimezone(local.tzinfo).date()).days >= 2
+    assert 1 <= (local.date() - datetime.now(UTC).astimezone(local.tzinfo).date()).days <= 3  # next weekday
+    picked = client.post("/outreach/progress-update/preview", json={"text": text, "day": "2030-01-08", "at": "10:15"}).json()
+    p_local = datetime.fromisoformat(picked["recipients"][0]["scheduled_for"].replace("Z", "+00:00")).astimezone(local.tzinfo)
+    assert (p_local.date().isoformat(), p_local.hour, p_local.minute) == ("2030-01-08", 10, 15)  # their time zone
     pol = client.post("/outreach/progress-update/polish", json={"text": text}).json()
     assert pol["text"].startswith("We closed")  # no AI in tests: tidied, facts kept
     assert client.post("/outreach/progress-update/schedule", json={"text": text}).json()["scheduled"] == 1
@@ -233,3 +239,9 @@ def test_scheduled_preview_send_now_and_cancel(client):
     first = next(x for x in client.get("/sequences/scheduled").json()["items"] if x["sequence_id"] == seq["id"])
     assert client.post(f"/sequences/scheduled/{first['email_id']}/send-now").json()["ok"]
     assert client.post(f"/sequences/scheduled/{first['email_id']}/cancel").status_code == 409  # on its way
+
+
+def test_respace_counts_without_confirm(client):
+    _ready_to_send(client)
+    r = client.post("/sequences/scheduled/respace").json()
+    assert r == {"count": 0}  # nothing on the old spacing, and nothing moves without confirm

@@ -15,7 +15,9 @@ from .fit import sector_overlap
 
 LIMITS = {1: 140, 2: 120, 3: 100}  # word limits including the opt-out line (a "Quick update:" line is extra)
 SUBJECT_MAX_WORDS = 7
-DEFAULT_DAYS = {1: 0, 2: 4, 3: 10}
+DEFAULT_DAYS = {1: 0, 2: 4, 3: 10}  # legacy calendar-day spacing (kept for reference)
+FOLLOW_UP_WORKDAYS = 3  # a follow-up goes 3 working days after the email before it, if no reply
+WEEKDAYS = (0, 1, 2, 3, 4)
 OPT_OUT = ""  # founders asked for no "reply 'no'" line; replies like "no" / "unsubscribe" still stop a sequence
 SPAM_PHRASES = ("guaranteed", "act now", "100% free", "risk-free", "click here", "limited time", "urgent",
                 "once in a lifetime", "no obligation", "!!!", "$$$")
@@ -197,8 +199,9 @@ def lint(subject: str, body: str, step: int, signature: str = "") -> list[str]:
     return issues
 
 
-def next_send_slot(after: datetime, tz_name: str) -> datetime:
-    """Next Tue-Thu 08:30-11:30 / 13:30-16:30 slot in the investor's local time (TZ-02)."""
+def next_send_slot(after: datetime, tz_name: str, weekdays: tuple[int, ...] = (1, 2, 3)) -> datetime:
+    """Next 08:30-11:30 / 13:30-16:30 slot in the investor's local time on one of these weekdays (TZ-02).
+    First emails go Tue-Thu; follow-ups any weekday."""
     try:
         tz = ZoneInfo(tz_name or "UTC")
     except Exception:
@@ -207,7 +210,7 @@ def next_send_slot(after: datetime, tz_name: str) -> datetime:
     windows = [(time(8, 30), time(11, 30)), (time(13, 30), time(16, 30))]
     for day in range(0, 14):
         d = (local + timedelta(days=day)).date()
-        if d.weekday() not in (1, 2, 3):  # Tue-Thu only; Mon/Fri/weekends need a user override
+        if d.weekday() not in weekdays:
             continue
         for start, end in windows:
             s = datetime.combine(d, start, tz)
@@ -217,10 +220,34 @@ def next_send_slot(after: datetime, tz_name: str) -> datetime:
     return after
 
 
-def schedule(emails: list, start: datetime, tz_name: str, days: dict[int, int] = DEFAULT_DAYS) -> None:
-    for em in emails:
-        em.scheduled_for = next_send_slot(start + timedelta(days=days[em.step]), tz_name)
+def add_workdays(after: datetime, n: int, tz_name: str) -> datetime:
+    """The morning (08:30 their time) n working days after this moment, skipping Saturday and Sunday."""
+    try:
+        tz = ZoneInfo(tz_name or "UTC")
+    except Exception:
+        tz = ZoneInfo("UTC")
+    d = after.astimezone(tz).date()
+    while n > 0:
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            n -= 1
+    return datetime.combine(d, time(8, 30), tz).astimezone(UTC)
+
+
+def follow_up_slot(prev: datetime, tz_name: str) -> datetime:
+    return next_send_slot(add_workdays(prev, FOLLOW_UP_WORKDAYS, tz_name), tz_name, WEEKDAYS)
+
+
+def schedule(emails: list, start: datetime, tz_name: str) -> None:
+    """Email 1 in the next Tue-Thu send window; each follow-up 3 working days after the one before."""
+    prev = None
+    for em in sorted(emails, key=lambda e: e.step):
+        if em.status == "sent":
+            prev = em.sent_at
+            continue
+        em.scheduled_for = next_send_slot(start, tz_name) if prev is None else follow_up_slot(prev, tz_name)
         em.status = "scheduled"
+        prev = em.scheduled_for
 
 
 def subject_options(step: int, inv: Investor, p: CompanyProfile | None, current: str = "") -> list[str]:
