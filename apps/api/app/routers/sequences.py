@@ -14,7 +14,7 @@ from ..db import SessionLocal
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
 from ..models import CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence, User, Workspace
-from ..services import agent, ai, mailer, outreach, test_investors
+from ..services import agent, ai, mailer, outreach, spam, test_investors
 from ..services.entitlements import can, consume, limit
 from .investors import _exclusions, auto_reveal, is_excluded
 
@@ -30,7 +30,8 @@ def s_out(s: Sequence, inv: Investor | None = None, signature: str = "") -> dict
             "emails": [{"id": str(e.id), "step": e.step, "hook": e.hook, "subject": e.subject, "body": e.body,
                         "facts": e.facts, "status": e.status, "scheduled_for": e.scheduled_for,
                         "sent_at": e.sent_at, "opened": e.open_count, "reply": e.reply_kind, "error": e.error,
-                        "issues": outreach.lint(e.subject, e.body, e.step, signature)} for e in s.emails]}
+                        "issues": outreach.lint(e.subject, e.body, e.step, signature),
+                        "spam": spam.score(e.subject, e.body, e.step, inv.name if inv else "")} for e in s.emails]}
 
 
 class FirstEmail(BaseModel):
@@ -183,6 +184,7 @@ def scheduled(c: Ctx = Depends(ctx)):
         items.append({"email_id": str(e.id), "sequence_id": str(s.id), "kind": "sequence", "step": e.step,
                       "subject": outreach.fill_first_name(subject(e, s), inv.name),
                       "body": outreach.fill_first_name(e.body, inv.name), "to": e.to_email,
+                      "spam": spam.score(e.subject, e.body, e.step, inv.name),
                       "scheduled_for": e.scheduled_for, "investor": inv.name,
                       "firm": inv.current_firm or inv.company, "timezone": inv.timezone or "UTC", "can_send_now": ok,
                       "send_now_from": after, "sending": bool(e.scheduled_for and e.scheduled_for <= now)})
@@ -281,7 +283,9 @@ def edit_email(sid: str, eid: str, body: EmailPatch, c: Ctx = Depends(ctx)):
     if em.step == 1:
         outreach.thread_subjects([e for e in s.emails if e.status != "sent"])
     c.db.commit()
-    return {"issues": outreach.lint(em.subject, em.body, em.step, c.user.signature)}
+    inv = c.db.get(Investor, s.investor_id)
+    return {"issues": outreach.lint(em.subject, em.body, em.step, c.user.signature),
+            "spam": spam.score(em.subject, em.body, em.step, inv.name if inv else "")}
 
 
 class RegenIn(BaseModel):
@@ -324,6 +328,12 @@ def _ready(c: Ctx, s: Sequence, reveal: bool = True) -> tuple[Investor, str, Gma
         raise ApiError(422, "EF-SEQ-004", "Fix the highlighted issues before scheduling", "",
                        {"issues": {str(k): v for k, v in problems.items() if v}})
     inv = c.db.get(Investor, s.investor_id)
+    risky = {e.step: r for e in s.emails if e.status in ("draft", "scheduled")
+             for r in [spam.score(e.subject, e.body, e.step, inv.name if inv else "")] if r["level"] == "high"}
+    if risky:
+        step, r = next(iter(risky.items()))
+        raise ApiError(422, "EF-SEQ-020", f"Email {step} looks like spam (score {r['score']}/100)",
+                       "Fix: " + "; ".join(r["reasons"][:3]), {"spam": {str(k): v for k, v in risky.items()}})
     card = c.db.get(FunnelCard, s.card_id) if s.card_id else None
     to = (card.email if card and card.email else "") or (inv.email if c.db.get(Reveal, (c.ws_id, inv.id)) else "")
     if not to and auto_reveal(c, inv, dry=not reveal):  # uses one contact credit by itself when there are some
@@ -423,6 +433,26 @@ def send_all(body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
         _schedule(c, s, inv, to)
     c.db.commit()
     return {"scheduled": len(ready), "skipped": skipped}
+
+
+@router.delete("/{sid}")
+def remove(sid: str, c: Ctx = Depends(ctx)):
+    """Remove an investor from outreach. Nothing sent yet: the sequence is deleted. Something sent: it stops, unsent
+    emails are cancelled and the sent ones stay in Activity."""
+    c.require_editor()
+    s = _get(c, sid)
+    if any(e.status in ("sent", "sending") for e in s.emails):
+        s.status = "stopped"
+        for e in s.emails:
+            if e.status in ("scheduled", "draft"):
+                e.status, e.error = "cancelled", "Removed from outreach"
+        kept = True
+    else:
+        c.db.delete(s)
+        kept = False
+    c.audit("sequence.remove", sid, after={"kept_history": kept})
+    c.db.commit()
+    return {"ok": True, "kept_history": kept}
 
 
 @router.post("/{sid}/stop")

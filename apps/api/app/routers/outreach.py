@@ -74,6 +74,17 @@ def gmail_status(c: Ctx = Depends(ctx)):
     return gmail_out(c.db.get(GmailAccount, c.user.id), c.db, c)
 
 
+@router.get("/gmail/deliverability")
+def deliverability(c: Ctx = Depends(ctx)):
+    """SPF / DKIM / DMARC for the connected mailbox's domain, so cold emails aren't filtered as spam."""
+    from ..services import spam
+
+    acc = c.db.get(GmailAccount, c.user.id)
+    if acc is None or not acc.email:
+        return {"connected": False}
+    return {"connected": True, "email": acc.email, **spam.domain_auth(acc.email)}
+
+
 @router.get("/gmail/connect")
 def gmail_connect(request: Request, next: str = "/app/settings?gmail=connected", calendar: bool = False,
                   c: Ctx = Depends(ctx)):
@@ -440,6 +451,7 @@ def redraft(body: RedraftIn | None = None, c: Ctx = Depends(ctx)):
 
 class ProgressIn(BaseModel):
     text: str = Field(min_length=3, max_length=1500)
+    when: str = Field("morning", pattern="^(morning|now)$")  # 08:35 their time, or straight away
 
 
 def _progress_plan(c: Ctx) -> list[dict]:
@@ -463,12 +475,14 @@ def polish_progress(body: ProgressIn, c: Ctx = Depends(ctx)):
 def preview_progress(body: ProgressIn, c: Ctx = Depends(ctx)):
     """Who it goes to, when it lands in their time zone, and the email one of them will get."""
     from ..services import progress_update as pu
+    from ..services import spam
 
     rows = _progress_plan(c)
     sample = rows[0] if rows else None
     return {"count": len(rows), "moved": sum(1 for r in rows if r["moved"]),
             "recipients": [{"name": r["name"], "firm": r["firm"], "to": r["to"], "timezone": r["timezone"],
                             "scheduled_for": r["scheduled_for"], "moved": r["moved"]} for r in rows[:100]],
+            "spam": spam.score("Re: update", pu.body_for(body.text, c.user.signature or ""), 2, "first name"),
             "sample": {"to": sample["name"], "subject": f"Re: {sample['subject']}",
                        "body": pu.body_for(body.text, c.user.signature or "", sample["name"])} if sample else
             {"to": "", "subject": "Re: <your first email's subject>", "body": pu.body_for(body.text, c.user.signature or "")}}
@@ -484,10 +498,30 @@ def schedule_progress(body: ProgressIn, c: Ctx = Depends(ctx)):
     c.require_editor()
     if not can(c.db, c.workspace, "send"):
         raise ApiError(402, "EF-TIER-030", "Upgrade to send emails", "", {"upgrade": True})
-    b, n = pu.schedule(c.db, c.workspace, c.user, body.text, datetime.now(UTC))
+    from ..services import spam
+
+    r = spam.score("Re: update", pu.body_for(body.text, c.user.signature or ""), 2, "first name")
+    if r["level"] == "high":
+        raise ApiError(422, "EF-UPD-002", f"This update looks like spam (score {r['score']}/100)",
+                       "Fix: " + "; ".join(r["reasons"][:3]))
+    b, n = pu.schedule(c.db, c.workspace, c.user, body.text, datetime.now(UTC), send_now=body.when == "now")
     if n == 0:
         c.db.rollback()
         raise ApiError(422, "EF-UPD-001", "Nobody to update yet", "Updates go to investors you've already emailed.")
-    c.audit("progress_update.schedule", str(b.id), after={"emails": n})
+    c.audit("progress_update.schedule", str(b.id), after={"emails": n, "when": body.when})
+    if body.when == "now":
+        acc = c.db.get(GmailAccount, c.user.id)
+        if acc is not None and acc.next_send_at and acc.next_send_at > datetime.now(UTC):
+            acc.next_send_at = datetime.now(UTC)
     c.db.commit()
-    return {"ok": True, "scheduled": n, "broadcast_id": str(b.id)}
+    return {"ok": True, "scheduled": n, "broadcast_id": str(b.id), "when": body.when}
+
+
+@router.get("/outreach/insights")
+def outreach_insights(c: Ctx = Depends(ctx)):
+    """What's working in this founder's outreach (subject style, angle per email), and how many emails not sent yet
+    could be rewritten to use it. New drafts already lean towards it; rewriting pending ones is the founder's tap."""
+    from ..services import learn
+
+    i = learn.insights(c.db, c.ws_id)
+    return {**i, "opens_counted": learn.opens_count(), "pending": len(pending_sequences(c)) if i["findings"] else 0}

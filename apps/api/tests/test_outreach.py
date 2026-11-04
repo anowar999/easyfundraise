@@ -207,6 +207,10 @@ def test_upcoming_scheduled_and_send_now(client):
         assert upd.status == "sent" and upd.gmail_thread_id == sent1.gmail_thread_id  # same Gmail thread
     r = client.post(f"/sequences/scheduled/{mine[1]['email_id']}/send-now", json={"anyway": True})
     assert r.status_code == 200  # the founder confirmed "Send anyway" within the day
+    now = client.post("/outreach/progress-update/schedule", json={"text": text, "when": "now"}).json()
+    assert now["scheduled"] == 1 and now["when"] == "now"  # "Send now" instead of 08:35 their time
+    soon = [x for x in client.get("/sequences/scheduled").json()["items"] if x["kind"] == "update"]
+    assert len(soon) == 1 and soon[0]["sending"]
 
 
 def test_scheduled_preview_send_now_and_cancel(client):

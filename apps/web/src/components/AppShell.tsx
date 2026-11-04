@@ -103,7 +103,15 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
     if (admin && me.data && !me.data.is_admin) router.replace("/app");
   }, [admin, me.data, router]);
 
-  const active = (href: string, exact?: boolean) => (exact ? path === href : path.startsWith(href));
+  // A detail page opened from another section (?from=outreach, ?from=tracker, ...) keeps that section highlighted.
+  const [origin, setOrigin] = useState<string | null>(null);
+  useEffect(() => {
+    const key = new URLSearchParams(window.location.search).get("from") ?? "";
+    const map: Record<string, string> = { outreach: "/app/outreach", tracker: "/app/funnel", shortlist: "/app/shortlist", investors: "/app/investors", alerts: "/app/notifications", "data-room": "/app/data-room", home: "/app" };
+    setOrigin(map[key] ?? (key.startsWith("outreach") ? "/app/outreach" : null));
+  }, [path]);
+  const navPath = origin ?? path;
+  const active = (href: string, exact?: boolean) => (exact ? navPath === href : navPath.startsWith(href));
   const logout = async () => {
     await api("/auth/logout", { method: "POST" });
     location.href = "/login";
@@ -214,7 +222,7 @@ export function AppShell({ children, admin = false }: { children: ReactNode; adm
           ))}
           <button
             onClick={() => setMore(true)}
-            className={clsx("flex flex-col items-center gap-0.5 py-2 text-[11px]", NAV.some((n) => !TABS.includes(n.href) && path.startsWith(n.href)) ? "text-brand" : "text-muted")}
+            className={clsx("flex flex-col items-center gap-0.5 py-2 text-[11px]", NAV.some((n) => !TABS.includes(n.href) && navPath.startsWith(n.href)) ? "text-brand" : "text-muted")}
           >
             <Menu size={22} />
             More

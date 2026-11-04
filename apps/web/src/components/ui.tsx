@@ -228,3 +228,26 @@ export function Field({ label, children }: { label: string; children: ReactNode 
     </label>
   );
 }
+
+/** A small round icon button with a tooltip (and the same text for screen readers). */
+export function IconBtn({ label, onClick, children, tone = "default", disabled, active }: { label: string; onClick?: () => void; children: ReactNode; tone?: "default" | "brand" | "danger"; disabled?: boolean; active?: boolean }) {
+  return (
+    <Tip text={label}>
+      <button
+        type="button"
+        aria-label={label}
+        disabled={disabled}
+        onClick={onClick}
+        className={clsx(
+          "inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors disabled:opacity-40",
+          tone === "brand" && "border-brand/40 text-brand hover:bg-brand hover:text-white",
+          tone === "danger" && "border-line text-muted hover:border-red-500/50 hover:text-red-600 hover:bg-red-500/5",
+          tone === "default" && "border-line text-muted hover:border-brand/50 hover:text-brand",
+          active && "bg-surface text-brand border-brand/50",
+        )}
+      >
+        {children}
+      </button>
+    </Tip>
+  );
+}

@@ -11,6 +11,7 @@ import { PlaybookSheet, usePlaybook } from "@/components/EmailPlaybook";
 import { ProgressUpdateCard } from "@/components/ProgressUpdate";
 import { ListSearch, matches } from "@/components/ListSearch";
 import { Empty, ErrorState, ListSkeleton } from "@/components/ui";
+import { InsightsBox } from "./Insights";
 import { OutreachAgent } from "./OutreachAgent";
 import { OutreachList } from "./OutreachList";
 import { UpcomingList, useUpcoming } from "./Upcoming";
@@ -239,14 +240,15 @@ export default function Outreach() {
               <Stat label="Reply rate" value={pct(d.total.reply_rate)} sub={`${d.total.replied} replies`} />
               <Stat label="Interested" value={d.total.positive} sub={d.total.bounced ? `${d.total.bounced} bounced` : "positive replies"} />
             </div>
+            <InsightsBox />
             {d.tracking && !d.tracking.public && (
               <p className="mt-2 text-[11px] text-muted leading-snug">
                 Opens can&apos;t be counted while the app runs only on your computer: Gmail loads the tracking image from Google&apos;s servers, which can&apos;t reach it. They work on the live site. Replies are tracked either way.
               </p>
             )}
           </div>
-          <ProgressUpdateCard />
           <PlaybookCard />
+          <ProgressUpdateCard />
         </aside>
       </div>
     </>

@@ -34,6 +34,8 @@ function Composer({ onDone }: { onDone: () => void }) {
     }
   });
   const [pv, setPv] = useState<Preview | null>(null);
+  const [when, setWhen] = useState<"morning" | "now">("morning");
+  const [confirm, setConfirm] = useState(false);
   const keep = (t: string) => {
     setText(t);
     setPv(null);
@@ -55,13 +57,15 @@ function Composer({ onDone }: { onDone: () => void }) {
     onError: (e) => toast(errText(e), "err"),
   });
   const schedule = useMutation({
-    mutationFn: () => api<{ scheduled: number }>("/outreach/progress-update/schedule", { method: "POST", json: { text } }),
+    mutationFn: () => api<{ scheduled: number }>("/outreach/progress-update/schedule", { method: "POST", json: { text, when } }),
     onSuccess: (r) => {
+      setConfirm(false);
       for (const k of ["upcoming", "outreach-stats"]) qc.invalidateQueries({ queryKey: [k] });
       try {
         localStorage.removeItem(DRAFT_KEY);
       } catch {}
-      toast(`Update scheduled for ${r.scheduled} investor${r.scheduled === 1 ? "" : "s"}. See them under Scheduled emails.`);
+      const who = `${r.scheduled} investor${r.scheduled === 1 ? "" : "s"}`;
+      toast(when === "now" ? `Sending to ${who} now, spaced a minute or two apart. See them under Scheduled emails.` : `Update scheduled for ${who}. See them under Scheduled emails.`);
       onDone();
     },
     onError: (e) => toast(errText(e), "err"),
@@ -118,16 +122,50 @@ function Composer({ onDone }: { onDone: () => void }) {
         </div>
       )}
 
-      <div className="rounded-xl border border-line p-3">
-        <div className="flex items-start gap-2 text-xs text-muted">
-          <CalendarClock size={14} className="shrink-0 mt-0.5 text-brand" />
-          <span>
-            Goes at 8:35am in each investor&apos;s time zone on the next weekday morning. If another email to them is scheduled the same day or the day either side, theirs moves 3 days later, so nobody gets two emails back to back.
-          </span>
+      <div className="rounded-xl border border-line p-3 space-y-2">
+        <div className="grid sm:grid-cols-2 gap-2" role="radiogroup" aria-label="When to send">
+          {([
+            ["morning", "Their morning", "8:35am in each investor's time zone, next weekday"],
+            ["now", "Send now", "Starts straight away, spaced out within your daily limit"],
+          ] as const).map(([k, t, sub]) => (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={when === k}
+              onClick={() => {
+                setWhen(k);
+                setConfirm(false);
+              }}
+              className={`text-left rounded-lg border p-2.5 ${when === k ? "border-brand bg-brand/5" : "border-line hover:border-brand/50"}`}
+            >
+              <div className="text-sm font-medium flex items-center gap-1.5">
+                {k === "morning" ? <CalendarClock size={14} className="text-brand" /> : <Send size={14} className="text-brand" />} {t}
+              </div>
+              <div className="text-[11px] text-muted mt-0.5">{sub}</div>
+            </button>
+          ))}
         </div>
-        <button className="btn-primary w-full mt-3" disabled={!ok || schedule.isPending} onClick={() => schedule.mutate()}>
-          <Send size={15} /> {schedule.isPending ? "Scheduling…" : pv ? `Schedule to all ${pv.count} previously emailed investors` : "Schedule to all previously emailed investors"}
-        </button>
+        <p className="text-xs text-muted">
+          {when === "morning"
+            ? "If another email to them is scheduled the same day or the day either side, theirs moves 3 days later, so nobody gets two emails back to back."
+            : "It replies in your thread with each investor. Anyone who just got an email from you will get this one too, so use it for news that can't wait."}
+        </p>
+        {confirm ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="flex-1">
+              {when === "now" ? "Send this update now" : "Schedule this update for their morning"} to {pv ? `all ${pv.count}` : "all"} previously emailed investors?
+            </span>
+            <button className="btn-primary btn-sm" disabled={schedule.isPending} onClick={() => schedule.mutate()}>
+              {schedule.isPending ? "Working…" : "Yes"}
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => setConfirm(false)}>No</button>
+          </div>
+        ) : (
+          <button className="btn-primary w-full" disabled={!ok} onClick={() => setConfirm(true)}>
+            <Send size={15} /> {when === "now" ? "Send now to all previously emailed investors" : "Schedule to all previously emailed investors"}
+          </button>
+        )}
       </div>
     </div>
   );

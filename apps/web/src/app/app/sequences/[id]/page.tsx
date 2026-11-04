@@ -1,5 +1,6 @@
 "use client";
 
+import clsx from "clsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, CalendarCheck, CheckCircle2, Eye, Info, Mail, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Crumbs } from "@/components/Crumbs";
@@ -10,7 +11,8 @@ import { ConfirmSend, type SendPreview } from "@/components/ConfirmSend";
 import { ErrorState, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api, ApiError, fmtDate } from "@/lib/api";
 
-type Email = { id: string; step: number; hook: string; subject: string; body: string; facts: { text: string; source: string }[]; status: string; scheduled_for: string | null; sent_at: string | null; opened: number; reply: string; error: string; issues: string[] };
+type Email = { id: string; step: number; hook: string; subject: string; body: string; facts: { text: string; source: string }[]; status: string; scheduled_for: string | null; sent_at: string | null; opened: number; reply: string; error: string; issues: string[]; spam?: Spam };
+type Spam = { score: number; level: "good" | "warn" | "high"; reasons: string[] };
 type Seq = { id: string; investor_id: string; card_id: string | null; status: string; persona: string; engine: string; drafting?: boolean; investor: { name: string; firm: string }; emails: Email[] };
 const PERSONAS = [
   ["momentum", "Momentum"],
@@ -28,15 +30,18 @@ function EmailEditor({ seqId, e, disabled }: { seqId: string; e: Email; disabled
   const [subject, setSubject] = useState(e.subject);
   const [body, setBody] = useState(e.body);
   const [issues, setIssues] = useState(e.issues);
+  const [spam, setSpam] = useState(e.spam);
   useEffect(() => {
     setSubject(e.subject);
     setBody(e.body);
     setIssues(e.issues);
+    setSpam(e.spam);
   }, [e]);
   const save = useMutation({
-    mutationFn: () => api<{ issues: string[] }>(`/sequences/${seqId}/emails/${e.id}`, { method: "PATCH", json: { subject, body } }),
+    mutationFn: () => api<{ issues: string[]; spam?: Spam }>(`/sequences/${seqId}/emails/${e.id}`, { method: "PATCH", json: { subject, body } }),
     onSuccess: (r) => {
       setIssues(r.issues);
+      setSpam(r.spam);
       qc.invalidateQueries({ queryKey: ["sequence", seqId] });
       toast("Saved");
     },
@@ -76,6 +81,22 @@ function EmailEditor({ seqId, e, disabled }: { seqId: string; e: Email; disabled
       )}
       <input className="input mb-2 font-medium" value={subject} onChange={(x) => setSubject(x.target.value)} disabled={disabled} aria-label="Subject" />
       <textarea className="textarea min-h-56 font-[inherit] leading-relaxed" value={body} onChange={(x) => setBody(x.target.value)} disabled={disabled} aria-label="Body" />
+      {spam && e.status !== "sent" && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <span
+            className={clsx(
+              "chip",
+              spam.level === "good" && "text-emerald-700 border-emerald-600/30",
+              spam.level === "warn" && "text-warn border-amber-500/40",
+              spam.level === "high" && "text-red-600 border-red-500/40",
+            )}
+            title="0 is clean. 30 or more is a warning; 60 or more can't be scheduled until it's fixed."
+          >
+            Spam score {spam.score}/100 · {spam.level === "good" ? "looks clean" : spam.level === "warn" ? "some risk" : "too risky to send"}
+          </span>
+          {spam.level !== "good" && <span className="text-muted">{spam.reasons.slice(0, 3).join(" · ")}</span>}
+        </div>
+      )}
       {issues.length > 0 && (
         <ul className="mt-2 space-y-1">
           {issues.map((i) => (
