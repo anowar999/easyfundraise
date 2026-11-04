@@ -479,6 +479,8 @@ def handle_reply(db: Session, em: Email, msg, now: datetime) -> None:
             db.add(CardEvent(workspace_id=ws.id, card_id=card.id, kind="stage", body=f"Moved to stage {target} after a positive reply",
                              meta={"from": card.stage, "to": target, "auto": True}))
             card.stage = target
+        if tracker_link.AUTO_TAG not in (card.tags or []):  # flagged until the founder acts on it
+            card.tags = [*(card.tags or []), tracker_link.AUTO_TAG]
     title = {"positive": f"{name} replied: interested", "negative": f"{name} replied: passing",
              "neutral": f"{name} replied: needs your review"}[kind]
     body = msg.snippet[:200] + "\n\nFollow-ups are paused. Resume, send or cancel them in Outreach (filter: Paused)."
@@ -529,17 +531,19 @@ def poll_replies(db: Session, now: datetime | None = None) -> int:
                     continue
                 ours = {e.gmail_message_id for e in ems}
                 latest = max(ems, key=lambda e: e.step)
-                for m in gm.thread(tid):
-                    if m.id in ours or acc.email.lower() in m.sender.lower():
-                        continue
-                    if db.scalar(select(func.count()).select_from(EmailEvent).where(
-                            EmailEvent.email_id == latest.id, EmailEvent.meta["message_id"].astext == m.id)):
-                        continue
-                    handle_reply(db, latest, m, now)
-                    db.add(EmailEvent(workspace_id=latest.workspace_id, email_id=latest.id, kind="seen",
-                                      meta={"message_id": m.id}))
+                msgs = gm.thread(tid)  # oldest first
+                # Only what came after our first email in this thread: Gmail can put a new sequence into an
+                # older thread (same subject), and an earlier reply there (e.g. last week's "no") isn't an answer
+                start = next((i for i, m in enumerate(msgs) if m.id in ours), 0)
+                fresh = [m for m in msgs[start:] if m.id not in ours and acc.email.lower() not in m.sender.lower()
+                         and not db.scalar(select(func.count()).select_from(EmailEvent).where(
+                             EmailEvent.email_id == latest.id, EmailEvent.meta["message_id"].astext == m.id))]
+                if fresh:
+                    handle_reply(db, latest, fresh[-1], now)  # the newest reply is their answer
+                    for m in fresh:
+                        db.add(EmailEvent(workspace_id=latest.workspace_id, email_id=latest.id, kind="seen",
+                                          meta={"message_id": m.id}))
                     found += 1
-                    break
         except GmailRevoked:
             acc.status = "revoked"
             notify(db, tracked[0].workspace_id, acc.user_id, "gmail_disconnected", "Gmail disconnected",

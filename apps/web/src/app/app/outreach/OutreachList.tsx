@@ -65,7 +65,7 @@ const REPLY: Record<string, { text: string; cls: string }> = {
 function statusText(x: Item) {
   if (x.status === "draft") return x.blocker ? "Needs attention" : "Ready to send";
   if (x.status === "stopped") return "Stopped";
-  if (x.status === "replied") return `${x.sent} of 3 sent${x.paused ? " · follow-ups paused" : ""}`;
+  if (x.status === "replied") return `${x.sent} of 3 sent`;
   if (x.next_at) return `${x.sent} of 3 sent · next ${fmtDate(x.next_at, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`;
   return x.sent ? `${x.sent} of 3 sent` : "Scheduled";
 }
@@ -450,10 +450,10 @@ export function OutreachList() {
                   <div className="text-xs text-muted truncate">{x.investor.firm}</div>
                   {x.note && <div className="text-xs text-amber-700 mt-0.5">{x.note}</div>}
                   {(x.reply || x.bounced) && (
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {x.bounced && <span className="chip text-[11px] text-danger border-danger/40 bg-danger/5">Invalid email · bounced</span>}
+                    <div className="mt-1 flex flex-wrap gap-1 [&>span]:whitespace-nowrap">
+                      {x.bounced && <span className="chip text-[11px] text-danger border-danger/40 bg-danger/5">Invalid email</span>}
                       {x.reply && REPLY[x.reply] && <span className={clsx("chip text-[11px]", REPLY[x.reply].cls)}>{REPLY[x.reply].text}</span>}
-                      {!!x.paused && <span className="chip text-[11px] text-amber-700 border-amber-500/50">{x.paused} follow-up{x.paused > 1 ? "s" : ""} paused</span>}
+                      {!!x.paused && <span className="chip text-[11px] text-amber-700 border-amber-500/50" title={`${x.paused} follow-up${x.paused > 1 ? "s" : ""} paused because they replied`}>{x.paused} paused</span>}
                     </div>
                   )}
                   {x.blocker && (
@@ -480,7 +480,7 @@ export function OutreachList() {
                     {x.next_at && new Date(x.next_at).getTime() > now ? ` · ≈ ${fmtDate(x.next_at, { hour: "2-digit", minute: "2-digit" })}` : ""}
                   </span>
                 ) : (
-                  <span className={clsx("chip text-xs hidden sm:inline-flex", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>
+                  <span className={clsx("chip text-xs hidden sm:inline-flex whitespace-nowrap", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>
                 )}
                 {x.drafting ? (
                   <span className="inline-flex items-center gap-1.5 opacity-50" aria-hidden>

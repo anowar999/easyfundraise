@@ -369,3 +369,21 @@ def test_per_firm_limit_off_in_dev_and_uat():
 
     assert Settings(env="dev").per_firm_limit_on is False and Settings(env="uat").per_firm_limit_on is False
     assert Settings(env="prod").per_firm_limit_on is True and Settings(env="uat", per_firm_limit=True).per_firm_limit_on
+
+
+def test_positive_reply_flags_an_existing_card_too(client):
+    FakeGmail.reset()
+    seq = _approved(client)
+    inv_id = client.get(f"/sequences/{seq['id']}").json()["investor_id"]
+    card = client.post("/funnel", json={"investor_id": inv_id}).json()
+    with SessionLocal() as db:
+        first = db.scalar(select(Email).where(Email.sequence_id == seq["id"], Email.step == 1))
+        db.get(GmailAccount, first.user_id).next_send_at = None
+        db.commit()
+        mailer.send_due(db, first.scheduled_for + timedelta(seconds=1))
+        db.refresh(first)
+        FakeGmail.inbound(first.gmail_thread_id, "Ada <ada@seedfund.vc>", "No thanks.")  # an earlier answer...
+        FakeGmail.inbound(first.gmail_thread_id, "Ada <ada@seedfund.vc>", "Actually, interested. Send the deck.")
+        assert mailer.poll_replies(db) == 1
+        c = db.get(FunnelCard, card["id"])
+        assert "auto-added" in c.tags and c.stage == 5  # the newest reply counts; flagged until the founder acts

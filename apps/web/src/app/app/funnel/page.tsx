@@ -51,7 +51,7 @@ const isAuto = (c: Card) => (c.tags ?? []).includes("auto-added");
 function CardBody({ c }: { c: Card }) {
   return (
     <>
-      {isAuto(c) && <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-sky-700">New · added automatically</div>}
+      {isAuto(c) && <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-sky-700">Added or moved automatically</div>}
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium flex items-center gap-1.5 min-w-0">
@@ -350,7 +350,7 @@ function FunnelInner() {
             </thead>
             <tbody>
               {cards.map((c) => (
-                <tr key={c.id} className={clsx("border-b border-line last:border-0 hover:bg-surface cursor-pointer", isAuto(c) && "bg-sky-500/10")} title={isAuto(c) ? "Added automatically. It goes back to normal once you change it." : undefined} onClick={() => setOpenId(c.id)}>
+                <tr key={c.id} className={clsx("border-b border-line last:border-0 hover:bg-surface cursor-pointer", isAuto(c) && "bg-sky-500/10")} title={isAuto(c) ? "Added or moved by a reply. It goes back to normal once you change it." : undefined} onClick={() => setOpenId(c.id)}>
                   <td className="px-3 py-2 font-mono text-xs text-muted">{c.number || ""}</td>
                   <td className="px-3 py-2 font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5">
