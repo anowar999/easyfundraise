@@ -332,3 +332,29 @@ def test_first_name_field_is_filled_at_send(client):
         assert first.status == "sent" and first.body == "Hi Ada,\n\nQuick note for Ada."
     sent = FakeGmail.sent[-1].get_body(preferencelist=("plain",)).get_content()
     assert sent.startswith("Hi Ada,") and "{first" not in sent
+
+
+def test_per_firm_limit_ignores_personal_mail_domains(client):
+    """Three emails already went to seedfund.vc today: a fourth waits. Gmail addresses are never one 'firm'."""
+    FakeGmail.reset()
+    seq = _approved(client)
+    with SessionLocal() as db:
+        first = db.scalar(select(Email).where(Email.sequence_id == seq["id"], Email.step == 1))
+        when = first.scheduled_for + timedelta(seconds=1)
+        for addr in ("a@seedfund.vc", "b@seedfund.vc", "c@seedfund.vc"):
+            db.add(Email(workspace_id=first.workspace_id, user_id=first.user_id, to_email=addr, step=1, subject="s",
+                         body="b", status="sent", sent_at=when - timedelta(hours=1)))
+        db.get(GmailAccount, first.user_id).next_send_at = None
+        db.commit()
+        mailer.send_due(db, when)
+        db.refresh(first)
+        assert first.status == "scheduled" and "per-firm" in first.error
+        first.to_email, first.error, first.scheduled_for = "ada.personal@gmail.com", "", when
+        for addr in ("x@gmail.com", "y@gmail.com", "z@gmail.com"):
+            db.add(Email(workspace_id=first.workspace_id, user_id=first.user_id, to_email=addr, step=1, subject="s",
+                         body="b", status="sent", sent_at=when - timedelta(hours=1)))
+        db.get(GmailAccount, first.user_id).next_send_at = None
+        db.commit()
+        mailer.send_due(db, when)
+        db.refresh(first)
+        assert first.status == "sent"

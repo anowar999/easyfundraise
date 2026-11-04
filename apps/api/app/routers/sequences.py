@@ -181,6 +181,9 @@ def list_sequences(c: Ctx = Depends(ctx)):
                                     if e.replied_at and e.reply_kind not in ("bounce", "auto")), default=(None, ""))[1],
                       "paused": sum(e.status == "paused" for e in s.emails),
                       "bounced": any(e.bounced_at is not None for e in s.emails),
+                      # why the next email moved (allowance, per-firm limit, pacing...), shown under the row
+                      "note": next((e.error for e in sorted(s.emails, key=lambda e: e.step)
+                                    if e.status == "scheduled" and e.error), ""),
                       "sent": sum(e.status == "sent" for e in s.emails),
                       "next_at": min((e.scheduled_for for e in s.emails if e.status == "scheduled"), default=None)})
     return {"auto_send": auto_send_on(c.workspace), "auto_send_when": auto_send_when(c.workspace), "items": items}

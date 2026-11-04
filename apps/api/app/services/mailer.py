@@ -78,6 +78,17 @@ def sent_metric(user_id) -> str:
     return f"sent:{user_id.hex[:24]}"
 
 
+FREE_MAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "msn.com", "yahoo.com",
+             "yahoo.co.uk", "icloud.com", "me.com", "mac.com", "aol.com", "proton.me", "protonmail.com", "gmx.com",
+             "gmx.de", "zoho.com", "yandex.com", "mail.com", "hotmail.co.uk", "outlook.co.uk"}
+
+
+def who_of(db: Session, em: Email) -> str:
+    seq = db.get(Sequence, em.sequence_id) if em.sequence_id else None
+    inv = db.get(Investor, seq.investor_id) if seq is not None and seq.investor_id else None
+    return inv.name if inv else ""
+
+
 def domain(addr: str) -> str:
     return addr.rsplit("@", 1)[-1].lower() if "@" in addr else ""
 
@@ -274,10 +285,15 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
         return 0
     per_domain = int(cfg(db, "sending", {}).get("per_domain_daily_cap", 3))
     start = now - timedelta(hours=24)
-    if not direct and db.scalar(select(func.count()).select_from(Email).where(
-            Email.workspace_id == ws.id, Email.sent_at > start,
-            func.lower(Email.to_email).like(f"%@{domain(em.to_email)}"))) >= per_domain:
-        _reschedule(em, now, tz, "Per-firm daily cap reached")
+    dom = domain(em.to_email)
+    # The per-firm cap is about one firm's inbox: gmail.com, outlook.com etc. are different people, never one firm
+    if not direct and em.step == 1 and dom and dom not in FREE_MAIL and db.scalar(
+            select(func.count()).select_from(Email).where(
+                Email.workspace_id == ws.id, Email.sent_at > start, func.lower(Email.to_email).like(f"%@{dom}"))) >= per_domain:
+        _reschedule(em, now, tz, f"Moved to the next send day: already {per_domain} emails to {dom} today (per-firm limit)")
+        notify(db, ws.id, user.id, "cap_reached", f"{who_of(db, em) or em.to_email} moved to the next send day",
+               f"{per_domain} emails already went to {dom} in the last 24 hours. We keep it to {per_domain} a day "
+               "per firm so you don't land in spam.", "/app/outreach")
         return 0
 
     # Threading (MAIL-02): steps 2 and 3 reply in the thread of step 1.
