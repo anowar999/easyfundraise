@@ -13,7 +13,7 @@ type Result = { done?: number; queued?: number; skipped?: Skip[]; kept_history?:
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Actions for the ticked rows. Each id list is already narrowed to the rows the action applies to. */
-export function BulkBar({ ids, onClear, onRegenerated }: { ids: { send: string[]; regenerate: string[]; remove: string[] }; onClear: () => void; onRegenerated: () => void }) {
+export function BulkBar({ ids, onClear, onRegenerated, busy = false }: { ids: { send: string[]; regenerate: string[]; remove: string[] }; onClear: () => void; onRegenerated: (ids: string[]) => void; busy?: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [asking, setAsking] = useState<Action | null>(null);
@@ -24,8 +24,8 @@ export function BulkBar({ ids, onClear, onRegenerated }: { ids: { send: string[]
       const skip = skipped ? ` ${plural(skipped, "was", "were")} skipped${r.skipped?.[0] ? ` (e.g. ${r.skipped[0].name}: ${r.skipped[0].reason})` : ""}.` : "";
       if (action === "send") toast(`Scheduled outreach to ${plural(r.done ?? 0, "investor")}. Emails go in their local send window and stop on any reply.${skip}`);
       if (action === "regenerate") {
-        toast(`Rewriting drafts for ${plural(r.queued ?? 0, "investor")}. They'll update here in about a minute.${skip}`);
-        onRegenerated();
+        toast(`Rewriting drafts for ${plural(r.queued ?? 0, "investor")}. Each row unlocks as soon as its new emails are ready.${skip}`);
+        onRegenerated(ids.regenerate.filter((id) => !r.skipped?.some((s) => s.id === id)));
       }
       if (action === "remove") toast(`Removed ${plural(r.done ?? 0, "investor")} from outreach.${r.kept_history ? " Sent emails stay in Activity." : ""}`);
       setAsking(null);
@@ -58,13 +58,13 @@ export function BulkBar({ ids, onClear, onRegenerated }: { ids: { send: string[]
       ) : (
         <>
           <span className="font-medium mr-auto">{total} selected</span>
-          <button className="btn-primary btn-sm" disabled={!ids.send.length} onClick={() => setAsking("send")}>
+          <button className="btn-primary btn-sm" disabled={busy || !ids.send.length} onClick={() => setAsking("send")}>
             <Send size={14} /> Send ({ids.send.length})
           </button>
-          <button className="btn-ghost btn-sm" disabled={!ids.regenerate.length} onClick={() => setAsking("regenerate")}>
+          <button className="btn-ghost btn-sm" disabled={busy || !ids.regenerate.length} onClick={() => setAsking("regenerate")}>
             <RefreshCw size={14} /> Regenerate ({ids.regenerate.length})
           </button>
-          <button className="btn-ghost btn-sm text-warn" disabled={!total} onClick={() => setAsking("remove")}>
+          <button className="btn-ghost btn-sm text-warn" disabled={busy || !total} onClick={() => setAsking("remove")}>
             <Trash2 size={14} /> Remove ({total})
           </button>
           <button type="button" className="text-xs text-muted hover:text-brand underline" onClick={onClear}>

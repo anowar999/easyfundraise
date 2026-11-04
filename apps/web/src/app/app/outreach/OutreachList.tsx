@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertTriangle, CheckCircle2, Eye, MailPlus, Search, Send, Trash2, Zap } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, Eye, MailPlus, RefreshCw, Search, Send, Trash2, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { from } from "@/components/Crumbs";
 import Link from "next/link";
@@ -40,6 +40,7 @@ type Item = {
   seen?: boolean;
   replied?: boolean;
   ready?: boolean;
+  drafting?: boolean;
 };
 type List = { auto_send: boolean; items: Item[] };
 type Bulk = { needs_confirm: true; from: string; ready: { id: string; name: string; to: string }[]; skipped: { id: string; name: string; reason: string }[] };
@@ -132,7 +133,22 @@ export function OutreachList() {
   const toast = useToast();
   // After a bulk regenerate, poll for ~60s so the rewritten drafts show up without a reload.
   const pollUntil = useRef(0);
-  const q = useQuery<List>({ queryKey: ["sequences"], queryFn: () => api("/sequences"), refetchInterval: () => (Date.now() < pollUntil.current ? 5000 : false) });
+  const q = useQuery<List>({
+    queryKey: ["sequences"],
+    queryFn: () => api("/sequences"),
+    // While drafts are being rewritten, refresh every few seconds so each row comes back as soon as it's done.
+    refetchInterval: (query) => (query.state.data?.items.some((x) => x.drafting) || Date.now() < pollUntil.current ? 2500 : false),
+  });
+  // Bulk regenerate progress: the rows queued in this batch, and the ones that have finished since.
+  const [regen, setRegen] = useState<string[]>([]);
+  const drafting = (q.data?.items ?? []).filter((x) => x.drafting);
+  const regenDone = regen.filter((id) => !drafting.some((x) => x.id === id));
+  useEffect(() => {
+    if (regen.length && regenDone.length === regen.length) {
+      toast(`All ${regen.length} draft${regen.length === 1 ? "" : "s"} rewritten. Preview and Send are ready.`);
+      setRegen([]);
+    }
+  }, [regen, regenDone.length, toast]);
   const [find, setFind] = useState("");
   const [status, setStatus] = useState<StatusKey>("all");
   const [country, setCountry] = useState("all");
@@ -279,11 +295,31 @@ export function OutreachList() {
                 remove: selected.map((x) => x.id),
               }}
               onClear={() => setPicked(new Set())}
-              onRegenerated={() => {
-                pollUntil.current = Date.now() + 60_000;
+              busy={drafting.length > 0}
+              onRegenerated={(ids) => {
+                pollUntil.current = Date.now() + 10_000;
+                setRegen(ids);
                 q.refetch();
               }}
             />
+          )}
+          {drafting.length > 0 && (
+            <div className="px-4 py-2.5 border-b border-line bg-brand/5 text-sm" role="status" aria-live="polite">
+              <div className="flex items-center gap-2">
+                <RefreshCw size={14} className="animate-spin text-brand" />
+                <span className="flex-1">
+                  {regen.length
+                    ? `Rewriting drafts: ${regenDone.length} of ${regen.length} done`
+                    : `Rewriting ${drafting.length} draft${drafting.length === 1 ? "" : "s"}…`}
+                </span>
+                <span className="text-xs text-muted hidden sm:inline">Each row unlocks when its new emails are ready</span>
+              </div>
+              {regen.length > 0 && (
+                <div className="mt-2 h-1.5 rounded-full bg-line overflow-hidden">
+                  <div className="h-full bg-brand transition-all duration-500" style={{ width: `${Math.round((regenDone.length / regen.length) * 100)}%` }} />
+                </div>
+              )}
+            </div>
           )}
           <div className="divide-y divide-line">
             {filtered && shown.length === 0 && (
@@ -297,6 +333,7 @@ export function OutreachList() {
                   type="checkbox"
                   className="h-4 w-4 accent-[var(--brand)] shrink-0"
                   checked={picked.has(x.id)}
+                  disabled={x.drafting}
                   onChange={() => toggle(x.id)}
                   aria-label={`Select ${x.investor.name}`}
                 />
@@ -309,8 +346,27 @@ export function OutreachList() {
                     </div>
                   )}
                 </Link>
-                <span className={clsx("chip text-xs hidden sm:inline-flex", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>
-                {removing === x.id ? (
+                {x.drafting ? (
+                  <span className="chip text-xs text-brand border-brand/40 inline-flex items-center gap-1">
+                    <RefreshCw size={12} className="animate-spin" /> Rewriting…
+                  </span>
+                ) : regen.includes(x.id) ? (
+                  <span className="chip text-xs text-emerald-700 border-emerald-600/30 inline-flex items-center gap-1">
+                    <Check size={12} /> New draft ready
+                  </span>
+                ) : (
+                  <span className={clsx("chip text-xs hidden sm:inline-flex", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>
+                )}
+                {x.drafting ? (
+                  <span className="inline-flex items-center gap-1.5 opacity-50" aria-hidden>
+                    <IconBtn label="Being rewritten" disabled onClick={() => {}}>
+                      <Eye size={14} />
+                    </IconBtn>
+                    <IconBtn label="Being rewritten" disabled onClick={() => {}}>
+                      <Trash2 size={14} />
+                    </IconBtn>
+                  </span>
+                ) : removing === x.id ? (
                   <span className="inline-flex flex-wrap items-center gap-1.5 text-xs">
                     <span>{x.sent ? `Remove ${x.investor.name}? Unsent emails are cancelled; sent ones stay in Activity.` : `Remove ${x.investor.name} from outreach?`}</span>
                     <button className="btn-ghost btn-sm text-warn" disabled={remove.isPending} onClick={() => remove.mutate(x)}>

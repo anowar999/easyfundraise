@@ -149,7 +149,8 @@ def list_sequences(c: Ctx = Depends(ctx)):
                       "firm": i.current_firm or i.company}, "created_at": s.created_at,
                       "country": i.country or "",
                       "email": next((e.to_email for e in s.emails if e.to_email), ""),
-                      "blocker": why, "ready": s.status == "draft" and why is None,
+                      "blocker": why, "ready": s.status == "draft" and why is None and s.engine != DRAFTING,
+                      "drafting": s.engine == DRAFTING,
                       "seen": any(e.status == "sent" and (e.open_count or 0) > 0 for e in s.emails),
                       "replied": any(e.replied_at is not None and e.reply_kind not in ("bounce", "auto")
                                      for e in s.emails),
@@ -434,7 +435,12 @@ def bulk_redraft(seq_ids: list[uuid.UUID], user_id: uuid.UUID) -> None:
         for sid in seq_ids:
             try:
                 s = db.get(Sequence, sid)
-                if s is None or s.status != "draft":
+                if s is None:
+                    continue
+                if s.status != "draft":  # sent or removed meanwhile: don't leave it looking "rewriting"
+                    if s.engine == DRAFTING:
+                        s.engine = "template"
+                        db.commit()
                     continue
                 persona = s.persona if s.persona in PERSONAS else "momentum"
                 redraft(db, db.get(Workspace, s.workspace_id), s, persona, signature)
