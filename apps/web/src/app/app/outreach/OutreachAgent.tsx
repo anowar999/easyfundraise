@@ -2,7 +2,7 @@
 
 import { ChatMarkdown } from "@/lib/markdown";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Check, MessageSquare, Sparkles, X } from "lucide-react";
+import { Check, MessageSquare, SendHorizontal, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { openAgent } from "@/components/AgentChat";
@@ -61,6 +61,7 @@ export function OutreachAgent() {
           id="outreach-agent"
           rows={2}
           className="textarea resize-y min-h-[4.25rem]"
+          placeholder="Type what you need, e.g. rewrite email 1 to be shorter, or pause outreach…"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
@@ -73,7 +74,7 @@ export function OutreachAgent() {
         <div className="mt-2 flex items-center justify-end gap-3">
           <span className="hidden sm:inline text-xs text-muted">Enter for a new line · ⌘/Ctrl + Enter to ask</span>
           <button className="btn-primary btn-sm" disabled={!text.trim() || ask.isPending}>
-            {ask.isPending ? "Thinking…" : "Ask"} <ArrowRight size={14} />
+            <SendHorizontal size={14} /> {ask.isPending ? "Thinking…" : "Ask"}
           </button>
         </div>
       </form>

@@ -19,8 +19,10 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
+import { TicketChip, TypeChip } from "@/components/InvestorChips";
 import { Empty, ErrorState, Field, ListSkeleton, Sheet, StatusBadge, errText, useToast } from "@/components/ui";
 import { api, fmtDate, qs } from "@/lib/api";
+import { fmtTicket } from "@/lib/money";
 import type { Card, FunnelMeta } from "@/lib/types";
 import { QuickCard } from "./QuickCard";
 import { ActionTray, DEFAULT_STATUSES, StaleDot, StarMark, StatusMulti } from "./TrackerBits";
@@ -67,7 +69,8 @@ function CardBody({ c }: { c: Card }) {
           </span>
         )}
         {c.due_today && <span className="chip text-brand border-brand/30">due today</span>}
-        {c.ticket_size && <span className="text-xs text-muted">{c.ticket_size}</span>}
+        <TypeChip type={c.investor_type} />
+        {c.ticket_source ? <TicketChip t={c} /> : c.ticket_size && <span className="text-xs text-muted">{c.ticket_size}</span>}
       </div>
     </>
   );
@@ -351,13 +354,17 @@ function FunnelInner() {
                     </span>
                   </td>
                   <td className="px-3 py-2 text-muted">{c.firm}</td>
-                  <td className="px-3 py-2 text-muted whitespace-nowrap">{c.investor_type}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <TypeChip type={c.investor_type} />
+                  </td>
                   <td className="px-3 py-2 font-mono text-xs">{c.priority}</td>
                   <td className="px-3 py-2">
                     <StatusBadge status={c.status} />
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">{c.stage_label}</td>
-                  <td className="px-3 py-2">{c.ticket_size}</td>
+                  <td className="px-3 py-2 whitespace-nowrap" title={c.ticket_source === "directory" ? "From the directory listing, not yet verified" : undefined}>
+                    {c.ticket_source ? `${c.ticket_source === "directory" ? "~" : ""}${fmtTicket(c.ticket_min, c.ticket_max, c.ticket_currency)}` : c.ticket_size}
+                  </td>
                   <td className="px-3 py-2">{c.can_lead}</td>
                   <td className="px-3 py-2 text-muted">{c.referrer}</td>
                   <td className="px-3 py-2 text-muted whitespace-nowrap">{fmtDate(c.last_contacted_at)}</td>

@@ -2,7 +2,7 @@
 
 import { ChatMarkdown } from "@/lib/markdown";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Check, MessageSquare, Sparkles, X } from "lucide-react";
+import { Check, Loader2, MessageSquare, SendHorizontal, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { openAgent } from "@/components/AgentChat";
@@ -100,23 +100,29 @@ export function TrackerAgent({ cards, onFilter }: { cards: Card[]; onFilter: (f:
 
   return (
     <div className="mb-4 rounded-2xl border border-brand/25 bg-gradient-to-r from-brand/[0.06] to-transparent p-2.5 sm:p-3">
+      <label htmlFor="tracker-agent" className="flex items-center gap-1.5 px-1 pb-1.5 text-xs font-semibold text-brand">
+        <Sparkles size={14} className="shrink-0" /> Raise Agent
+      </label>
+      {/* A real text field (border, white background, focus ring, send button) so it reads as somewhere to type. */}
       <form
-        className="flex items-center gap-2"
+        className="flex items-center gap-2 rounded-xl border border-line bg-card pl-3.5 pr-1.5 py-1.5 shadow-sm cursor-text transition hover:border-brand/50 focus-within:border-brand focus-within:ring-4 focus-within:ring-brand/15"
+        onClick={(e) => e.currentTarget.querySelector("input")?.focus()}
         onSubmit={(e) => {
           e.preventDefault();
           submit(text);
         }}
       >
-        <Sparkles size={18} className="text-brand shrink-0 ml-1" />
         <input
-          className="flex-1 min-w-0 bg-transparent text-[15px] outline-none placeholder:text-muted py-1.5"
-          placeholder={narrow ? "Ask your Raise Agent…" : "Ask your Raise Agent: show overdue, follow up #10 on 02/Nov, add a note…"}
+          id="tracker-agent"
+          className="flex-1 min-w-0 bg-transparent text-[15px] sm:text-sm text-ink outline-none placeholder:text-[#8a94a8] py-1.5"
+          placeholder={narrow ? "Type a question or a change…" : "Type a question or a change, e.g. show overdue, follow up #10 on 02/Nov, add a note…"}
           value={text}
           onChange={(e) => setText(e.target.value)}
           aria-label="Ask your Raise Agent about your tracker"
         />
-        <button className="btn-primary btn-sm shrink-0" disabled={!text.trim() || ask.isPending}>
-          {ask.isPending ? "Thinking…" : "Ask"} <ArrowRight size={14} className="hidden sm:inline" />
+        <button className="btn-primary btn-sm shrink-0" disabled={!text.trim() || ask.isPending} aria-label="Ask your Raise Agent">
+          {ask.isPending ? <Loader2 size={14} className="animate-spin" /> : <SendHorizontal size={14} />}
+          <span className="hidden sm:inline">{ask.isPending ? "Thinking…" : "Ask"}</span>
         </button>
       </form>
 

@@ -136,3 +136,34 @@ def test_add_to_outreach_from_list_marks_the_row(client):
     assert client.post("/sequences", json={"investor_id": ada["id"]}).status_code == 200
     again = next(x for x in client.get("/investors", params={"q": "Ada"}).json()["items"])
     assert again["in_outreach"] is True and again["in_funnel"] is False
+
+
+def test_ticket_size_and_type_on_lists(client):
+    from sqlalchemy import text
+
+    from app.db import SessionLocal
+    from app.services.ticket import parse
+
+    assert parse("$50K-$2M") == {"min": 50_000, "max": 2_000_000, "currency": "USD"}
+    assert parse("up to €1m") == {"min": None, "max": 1_000_000, "currency": "EUR"}
+    assert parse("$250K+")["max"] is None and parse("unknown (Round Funded lists $2M)") is None
+    with SessionLocal() as db:
+        db.execute(text("update investors set typical_check_size = '$50K-$2M (firm site)', check_size_src = '$500K' "
+                        "where name = 'Ada Seed'"))
+        db.execute(text("update investors set typical_check_size = 'unknown', check_size_src = '$2M' "
+                        "where name = 'Bob Buyout'"))
+        db.commit()
+    items = {x["name"]: x for x in client.get("/investors").json()["items"]}
+    ada, bob = items["Ada Seed"], items["Bob Buyout"]
+    assert (ada["ticket_min"], ada["ticket_max"], ada["ticket_currency"], ada["ticket_source"]) == (
+        50_000, 2_000_000, "USD", "research")
+    assert ada["investor_type"] and ada["investor_type_label"]
+    assert bob["ticket_min"] is None and bob["ticket_source"] is None  # researched as unknown: no unreliable fallback
+    client.put(f"/shortlist/{ada['id']}")
+    assert client.get("/shortlist").json()["items"][0]["ticket_max"] == 2_000_000
+    client.post("/funnel", json={"investor_id": ada["id"]})
+    card = next(c for c in client.get("/funnel").json()["items"] if c["investor_id"] == ada["id"])
+    assert card["investor_type"] and (card["ticket_min"], card["ticket_source"]) == (50_000, "research")
+    client.patch(f"/funnel/{card['id']}", json={"ticket_size": "$100k"})
+    card = client.get(f"/funnel/{card['id']}").json()
+    assert (card["ticket_min"], card["ticket_max"], card["ticket_source"]) == (100_000, 100_000, "tracker")
