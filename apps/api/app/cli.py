@@ -13,7 +13,7 @@ import argparse
 import secrets
 from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
 from .db import SessionLocal
 from .models import Investor, User
@@ -83,6 +83,7 @@ def main() -> None:
     a = ap.parse_args()
 
     with SessionLocal() as db:
+        db.execute(text("SET statement_timeout = 0"))  # imports and bulk deletes may run long; the API keeps its cap
         if a.cmd == "seed":
             seed(db)
             print("seeded")

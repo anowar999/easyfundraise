@@ -134,19 +134,36 @@ def _base_filters(c: Ctx, p: SearchParams):
     return conds
 
 
-def _shortlist_ids(c: Ctx) -> set:
-    return set(c.db.scalars(select(ShortlistItem.investor_id).where(ShortlistItem.workspace_id == c.ws_id)))
+def _only(q, col, ids):
+    """Membership checks only need the investors on screen: with `ids` the lookup stays ten rows however big the
+    workspace's shortlist / outreach / tracker grows."""
+    return q if ids is None else q.where(col.in_(list(ids)))
 
 
-def _outreach_ids(c: Ctx) -> set:
+def _shortlist_ids(c: Ctx, ids=None) -> set:
+    return set(c.db.scalars(_only(select(ShortlistItem.investor_id).where(ShortlistItem.workspace_id == c.ws_id),
+                                  ShortlistItem.investor_id, ids)))
+
+
+def _outreach_ids(c: Ctx, ids=None) -> set:
     """Investors with an email sequence (draft or live) in this workspace."""
-    return set(c.db.scalars(select(Sequence.investor_id).where(Sequence.workspace_id == c.ws_id,
-                                                                Sequence.status != "stopped")))
+    return set(c.db.scalars(_only(select(Sequence.investor_id).where(Sequence.workspace_id == c.ws_id,
+                                                                      Sequence.status != "stopped"),
+                                  Sequence.investor_id, ids)))
 
 
-def _funnel_ids(c: Ctx) -> set:
-    return set(c.db.scalars(select(FunnelCard.investor_id).where(
-        FunnelCard.workspace_id == c.ws_id, FunnelCard.investor_id.is_not(None), FunnelCard.deleted_at.is_(None))))
+def _funnel_ids(c: Ctx, ids=None) -> set:
+    return set(c.db.scalars(_only(select(FunnelCard.investor_id).where(
+        FunnelCard.workspace_id == c.ws_id, FunnelCard.investor_id.is_not(None), FunnelCard.deleted_at.is_(None)),
+        FunnelCard.investor_id, ids)))
+
+
+def _marks(c: Ctx, invs) -> tuple[set, set, set]:
+    """(in tracker, in shortlist, in outreach) for just these investors."""
+    ids = [i.id for i in invs]
+    if not ids:
+        return set(), set(), set()
+    return _funnel_ids(c, ids), _shortlist_ids(c, ids), _outreach_ids(c, ids)
 
 
 @router.get("")
@@ -184,7 +201,7 @@ def search(
     n = min(page_size, cap - (page - 1) * page_size) if cap else page_size  # the last capped page may be short
     rows = c.db.scalars(select(Investor).where(*conds).order_by(*order).offset((page - 1) * page_size).limit(n)).all()
     prof = c.db.get(CompanyProfile, c.ws_id)
-    fids, sids, oids = _funnel_ids(c), _shortlist_ids(c), _outreach_ids(c)
+    fids, sids, oids = _marks(c, rows)
     c.access("search", None, params=p.model_dump(exclude_defaults=True), results=len(rows))
     c.db.commit()
     return {
@@ -261,8 +278,8 @@ def recommended(c: Ctx = Depends(ctx)):
     excl = _exclusions(c)
     scored = [(fit(i, prof), i) for i in cand if not is_excluded(i, excl)]
     scored.sort(key=lambda x: -x[0]["score"])
-    fids, sids, oids = _funnel_ids(c), _shortlist_ids(c), _outreach_ids(c)
     cap = limit(c.db, c.workspace, "result_cap") or 100  # paged ten at a time in the app
+    fids, sids, oids = _marks(c, [i for _, i in scored[:cap]])
     return {"items": [card(i, f, i.id in fids, i.id in sids, i.id in oids) for f, i in scored[:cap]],
             "needs_profile": False}
 
@@ -329,11 +346,12 @@ def recent(limit: int = 3, c: Ctx = Depends(ctx)):
         DataAccessEvent.kind == "profile", DataAccessEvent.investor_id.is_not(None))
         .order_by(DataAccessEvent.created_at.desc()).limit(60)).all()
     out, seen = [], set()
+    invs = {i.id: i for i in c.db.scalars(select(Investor).where(Investor.id.in_({r[0] for r in rows})))} if rows else {}
     for iid, at in rows:
         if iid in seen:
             continue
         seen.add(iid)
-        inv = c.db.get(Investor, iid)
+        inv = invs.get(iid)
         if not test_investors.visible(inv, c.user.email):
             continue
         out.append({"id": str(inv.id), "name": inv.name, "firm": inv.current_firm or inv.company, "title": inv.title,
@@ -356,7 +374,7 @@ def profile(iid: str, c: Ctx = Depends(ctx)):
     c.db.commit()
     return {
         **card(inv, fit(inv, prof), funnel is not None, c.db.get(ShortlistItem, (c.ws_id, inv.id)) is not None,
-               inv.id in _outreach_ids(c)),
+               inv.id in _outreach_ids(c, [inv.id])),
         "funnel_card_id": str(funnel.id) if funnel else None,
         "excluded": is_excluded(inv, _exclusions(c)),
         "about": inv.about, "investment_thesis": inv.investment_thesis, "focus_sectors": inv.focus_sectors,
@@ -413,7 +431,7 @@ def similar(iid: str, c: Ctx = Depends(ctx)):
     prof = c.db.get(CompanyProfile, c.ws_id)
     # Pull a wider pool of lookalikes, then show the best matches for this founder first.
     scored = sorted(((fit(i, prof), i) for i in invs), key=lambda x: -x[0]["score"])[:12]
-    fids, sids, oids = _funnel_ids(c), _shortlist_ids(c), _outreach_ids(c)
+    fids, sids, oids = _marks(c, [i for _, i in scored])
     return {"items": [card(i, f, i.id in fids, i.id in sids, i.id in oids) for f, i in scored]}
 
 
@@ -494,7 +512,7 @@ def company_lookup(name: str = Query(min_length=2, max_length=200), c: Ctx = Dep
         Investor.enrichment["recent_investments_12mo"].astext.ilike(f"%{n}%"),
     )).limit(25)).all()
     prof = c.db.get(CompanyProfile, c.ws_id)
-    sids, oids = _shortlist_ids(c), _outreach_ids(c)
+    _, sids, oids = _marks(c, rows)
     items = []
     for i in rows:
         e = i.enrichment or {}
@@ -509,6 +527,8 @@ def company_lookup(name: str = Query(min_length=2, max_length=200), c: Ctx = Dep
                                                    Investor.industries.overlap(inds), ~Investor.id.in_(seen))
                             .order_by(Investor.enriched.desc(), Investor.seed_fit.desc().nulls_last()).limit(200)).all()
         scored = sorted(((fit(i, prof), i) for i in cand), key=lambda x: -x[0]["score"])[:10]
+        _, sids2, oids2 = _marks(c, [i for _, i in scored])
+        sids, oids = sids | sids2, oids | oids2
         similar_items = [card(i, f, False, i.id in sids, i.id in oids) for f, i in scored]
     c.access("search", None, company_lookup=name, results=len(items))
     c.db.commit()

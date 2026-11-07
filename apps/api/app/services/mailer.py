@@ -11,6 +11,7 @@ import logging
 import random
 import re
 import secrets
+import time
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -175,12 +176,23 @@ def _reschedule(em: Email, now: datetime, tz: str, reason: str) -> None:
     em.error = reason
 
 
-def send_due(db: Session, now: datetime | None = None, limit_n: int = 50) -> int:
+def send_due(db: Session, now: datetime | None = None, limit_n: int = 50, budget_s: float | None = None) -> int:
+    """Sends due emails, oldest first: up to limit_n of them, or until budget_s seconds have passed.
+
+    Each email is claimed on its own (FOR UPDATE SKIP LOCKED, one row) and committed before the next, so the lock
+    is held for exactly the email being sent. Several workers can then drain one queue side by side without ever
+    picking up the same email."""
     now = now or datetime.now(UTC)
-    rows = db.scalars(select(Email).where(Email.status == "scheduled", Email.scheduled_for <= now)
-                      .order_by(Email.scheduled_for).limit(limit_n).with_for_update(skip_locked=True)).all()
-    sent = 0
-    for em in rows:
+    started = time.monotonic()
+    sent, seen = 0, []
+    while len(seen) < limit_n and (budget_s is None or time.monotonic() - started < budget_s):
+        q = select(Email).where(Email.status == "scheduled", Email.scheduled_for <= now)
+        if seen:
+            q = q.where(Email.id.notin_(seen))  # one look per email per run, even if it stays due
+        em = db.scalar(q.order_by(Email.scheduled_for).limit(1).with_for_update(skip_locked=True))
+        if em is None:
+            break
+        seen.append(em.id)
         try:
             sent += _send_one(db, em, now)
         except Exception as e:  # one bad email never blocks the queue
@@ -188,6 +200,7 @@ def send_due(db: Session, now: datetime | None = None, limit_n: int = 50) -> int
             em.status, em.error = "failed", str(e)[:500]
         db.commit()
     return sent
+
 
 
 def send_now_one(email_id) -> int:
@@ -511,42 +524,62 @@ def _stop(db: Session, em: Email, status: str = "stopped") -> None:
 
 
 def poll_replies(db: Session, now: datetime | None = None) -> int:
-    """MAIL-03 polling fallback: checks threads we started that have no reply yet (last 60 days)."""
-    now = now or datetime.now(UTC)
+    """MAIL-03 polling fallback: checks threads we started that have no reply yet (last 60 days).
+    One mailbox at a time here; the worker runs poll_mailbox for many mailboxes in parallel."""
     found = 0
-    for acc in db.scalars(select(GmailAccount).where(GmailAccount.status == "connected")).all():
-        tracked = db.scalars(select(Email).where(Email.user_id == acc.user_id, Email.status == "sent",
-                                                 Email.replied_at.is_(None), Email.bounced_at.is_(None),
-                                                 Email.sent_at > now - timedelta(days=60))).all()
-        if not tracked:
-            continue
+    for uid in mailboxes_to_poll(db):
+        found += poll_mailbox(db, uid, now)
+    return found
+
+
+def mailboxes_to_poll(db: Session) -> list:
+    return list(db.scalars(select(GmailAccount.user_id).where(GmailAccount.status == "connected")))
+
+
+def poll_mailbox(db: Session, user_id, now: datetime | None = None) -> int:
+    """Reply check for one connected mailbox. A failure here (Gmail outage, bad token) is logged and never stops
+    the other mailboxes from being checked."""
+    now = now or datetime.now(UTC)
+    acc = db.get(GmailAccount, user_id)
+    if acc is None or acc.status != "connected":
+        return 0
+    tracked = db.scalars(select(Email).where(Email.user_id == acc.user_id, Email.status == "sent",
+                                             Email.replied_at.is_(None), Email.bounced_at.is_(None),
+                                             Email.sent_at > now - timedelta(days=60))).all()
+    if not tracked:
+        return 0
+    found = 0
+    try:
         gm = client_for(db, acc)
-        try:
-            changed = gm.changed_threads()
-            by_thread: dict[str, list[Email]] = {}
-            for e in tracked:
-                by_thread.setdefault(e.gmail_thread_id, []).append(e)
-            for tid, ems in by_thread.items():
-                if changed is not None and tid not in changed:
-                    continue
-                ours = {e.gmail_message_id for e in ems}
-                latest = max(ems, key=lambda e: e.step)
-                msgs = gm.thread(tid)  # oldest first
-                # Only what came after our first email in this thread: Gmail can put a new sequence into an
-                # older thread (same subject), and an earlier reply there (e.g. last week's "no") isn't an answer
-                start = next((i for i, m in enumerate(msgs) if m.id in ours), 0)
-                fresh = [m for m in msgs[start:] if m.id not in ours and acc.email.lower() not in m.sender.lower()
-                         and not db.scalar(select(func.count()).select_from(EmailEvent).where(
-                             EmailEvent.email_id == latest.id, EmailEvent.meta["message_id"].astext == m.id))]
-                if fresh:
-                    handle_reply(db, latest, fresh[-1], now)  # the newest reply is their answer
-                    for m in fresh:
-                        db.add(EmailEvent(workspace_id=latest.workspace_id, email_id=latest.id, kind="seen",
-                                          meta={"message_id": m.id}))
-                    found += 1
-        except GmailRevoked:
-            acc.status = "revoked"
-            notify(db, tracked[0].workspace_id, acc.user_id, "gmail_disconnected", "Gmail disconnected",
-                   "Reconnect Gmail in Settings to resume sending and reply tracking.", "/app/settings")
-        db.commit()
+        changed = gm.changed_threads()
+        by_thread: dict[str, list[Email]] = {}
+        for e in tracked:
+            by_thread.setdefault(e.gmail_thread_id, []).append(e)
+        for tid, ems in by_thread.items():
+            if changed is not None and tid not in changed:
+                continue
+            ours = {e.gmail_message_id for e in ems}
+            latest = max(ems, key=lambda e: e.step)
+            msgs = gm.thread(tid)  # oldest first
+            # Only what came after our first email in this thread: Gmail can put a new sequence into an
+            # older thread (same subject), and an earlier reply there (e.g. last week's "no") isn't an answer
+            start = next((i for i, m in enumerate(msgs) if m.id in ours), 0)
+            fresh = [m for m in msgs[start:] if m.id not in ours and acc.email.lower() not in m.sender.lower()
+                     and not db.scalar(select(func.count()).select_from(EmailEvent).where(
+                         EmailEvent.email_id == latest.id, EmailEvent.meta["message_id"].astext == m.id))]
+            if fresh:
+                handle_reply(db, latest, fresh[-1], now)  # the newest reply is their answer
+                for m in fresh:
+                    db.add(EmailEvent(workspace_id=latest.workspace_id, email_id=latest.id, kind="seen",
+                                      meta={"message_id": m.id}))
+                found += 1
+    except GmailRevoked:
+        acc.status = "revoked"
+        notify(db, tracked[0].workspace_id, acc.user_id, "gmail_disconnected", "Gmail disconnected",
+               "Reconnect Gmail in Settings to resume sending and reply tracking.", "/app/settings")
+    except Exception:
+        log.exception("reply poll failed for mailbox of user %s", user_id)
+        db.rollback()
+        return 0
+    db.commit()
     return found

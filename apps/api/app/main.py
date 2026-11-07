@@ -4,6 +4,7 @@ import uuid
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.gzip import GZipMiddleware
 
 from .config import get_settings
 from .db import SessionLocal
@@ -60,6 +61,10 @@ def record_action(request: Request, status: int) -> None:
             db.commit()
     except Exception:
         logging.getLogger(__name__).exception("audit write failed")
+
+
+# JSON lists (search results, tracker, outreach) shrink 5-10x on the wire; tiny responses are left alone
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.middleware("http")

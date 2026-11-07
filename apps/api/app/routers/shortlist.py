@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from ..deps import Ctx, ctx
 from ..errors import not_found
@@ -55,7 +55,7 @@ def remove(iid: str, c: Ctx = Depends(ctx)):
 
 
 def _count(c: Ctx) -> int:
-    return len(c.db.scalars(select(ShortlistItem.investor_id).where(ShortlistItem.workspace_id == c.ws_id)).all())
+    return c.db.scalar(select(func.count()).select_from(ShortlistItem).where(ShortlistItem.workspace_id == c.ws_id)) or 0
 
 
 class ToTrackerIn(BaseModel):

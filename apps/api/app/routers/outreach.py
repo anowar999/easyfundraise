@@ -205,8 +205,9 @@ def stats(days: int = 90, c: Ctx = Depends(ctx)):
                           .where(Email.workspace_id == c.ws_id, Email.status.in_(["sent", "sending", "failed", "cancelled"]),
                                  Email.scheduled_for.is_not(None) | Email.sent_at.is_not(None))
                           .order_by(func.coalesce(Email.sent_at, Email.updated_at).desc()).limit(200)).all()
+    shown = {e.sequence_id for e, _, _ in recent if e.sequence_id}  # only the sequences listed below
     replied_seqs = {sid for (sid,) in c.db.execute(select(Email.sequence_id).where(
-        Email.workspace_id == c.ws_id, Email.sequence_id.is_not(None), Email.replied_at.is_not(None))).all()}
+        Email.sequence_id.in_(shown), Email.replied_at.is_not(None))).all()} if shown else set()
     return {
         "total": total[0] if total else {"sent": 0, "opened": 0, "replied": 0, "positive": 0, "bounced": 0,
                                          "open_rate": 0, "reply_rate": 0},

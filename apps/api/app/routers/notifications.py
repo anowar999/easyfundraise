@@ -15,11 +15,16 @@ from ..models import STAGES, FunnelCard, Notification, Reminder
 router = APIRouter(tags=["notifications"])
 
 
-def fire_due_reminders(db: Session, now: datetime | None = None) -> int:
-    """Turns due reminders into notifications. Idempotent: run by the worker every minute and lazily on read."""
+def fire_due_reminders(db: Session, now: datetime | None = None, user_id=None) -> int:
+    """Turns due reminders into notifications. Idempotent: run by the worker every minute for everyone, and lazily
+    on read for just the reader (so a page load never scans or locks other users' reminders)."""
     now = now or datetime.now(UTC)
-    due = db.scalars(select(Reminder).where(Reminder.due_at <= now, Reminder.notified_at.is_(None),
-                                            Reminder.done_at.is_(None)).limit(500).with_for_update(skip_locked=True)).all()
+    q = select(Reminder).where(Reminder.due_at <= now, Reminder.notified_at.is_(None), Reminder.done_at.is_(None))
+    if user_id is not None:
+        q = q.where(Reminder.user_id == user_id)
+    due = db.scalars(q.limit(500).with_for_update(skip_locked=True)).all()
+    if not due:
+        return 0
     for r in due:
         db.add(Notification(workspace_id=r.workspace_id, user_id=r.user_id, kind="reminder", title=r.title,
                             link=f"/app/funnel/{r.card_id}" if r.card_id else "/app"))
@@ -35,7 +40,7 @@ def n_out(n: Notification) -> dict:
 
 @router.get("/notifications")
 def list_notifications(unread: bool = False, c: Ctx = Depends(ctx)):
-    fire_due_reminders(c.db)
+    fire_due_reminders(c.db, user_id=c.user.id)
     conds = [Notification.user_id == c.user.id, Notification.workspace_id == c.ws_id]
     if unread:
         conds.append(Notification.read_at.is_(None))
@@ -132,7 +137,7 @@ def home_meetings(days: int = 7, c: Ctx = Depends(ctx)):
 @router.get("/home")
 def home(c: Ctx = Depends(ctx)):
     """Daily brief: follow-ups due, overdue, going cold, stage counts and next-best actions."""
-    fire_due_reminders(c.db)
+    fire_due_reminders(c.db, user_id=c.user.id)
     today = date.today()
     base = [FunnelCard.workspace_id == c.ws_id, FunnelCard.deleted_at.is_(None)]
     counts = dict(c.db.execute(select(FunnelCard.stage, func.count()).where(*base).group_by(FunnelCard.stage)).all())

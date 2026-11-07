@@ -20,6 +20,7 @@ from sqlalchemy import (
     event,
     func,
     select,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
@@ -82,7 +83,9 @@ class AuthSession(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     mfa_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = created()
-    user: Mapped[User] = relationship()
+    user: Mapped[User] = relationship(lazy="joined")  # read on every request: one query, not two
+
+    __table_args__ = (Index("ix_sessions_expires_at", "expires_at"),)  # expired-session cleanup
 
 
 class Workspace(Base):
@@ -110,6 +113,8 @@ class WorkspaceMember(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     role: Mapped[str] = mapped_column(String(16), default="owner")  # owner | editor | viewer
     created_at: Mapped[datetime] = created()
+
+    __table_args__ = (Index("ix_workspace_members_user", "user_id"),)  # deps.ctx() looks members up by user
 
 
 # ---------- tiers & usage (spec §6) ----------
@@ -147,6 +152,8 @@ class RateLimit(Base):
     key: Mapped[str] = mapped_column(String(200), primary_key=True)
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     count: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (Index("ix_rate_limits_window", "window_start"),)  # old windows are purged by the worker
 
 
 # ---------- investor data layer (spec §8) ----------
@@ -217,6 +224,20 @@ class Investor(Base):
         Index("ix_investors_tsv", "search_tsv", postgresql_using="gin"),
         Index("ix_investors_industries", "industries", postgresql_using="gin"),
         Index("ix_investors_name_trgm", "name", postgresql_using="gin", postgresql_ops={"name": "gin_trgm_ops"}),
+        # Substring (ILIKE '%x%') filters in search, recommendations and stage facets (perf pass, 0014)
+        Index("ix_investors_company_trgm", "company", postgresql_using="gin", postgresql_ops={"company": "gin_trgm_ops"}),
+        Index("ix_investors_current_firm_trgm", "current_firm", postgresql_using="gin", postgresql_ops={"current_firm": "gin_trgm_ops"}),
+        Index("ix_investors_location_trgm", "location", postgresql_using="gin", postgresql_ops={"location": "gin_trgm_ops"}),
+        Index("ix_investors_geography_focus_trgm", "geography_focus", postgresql_using="gin", postgresql_ops={"geography_focus": "gin_trgm_ops"}),
+        Index("ix_investors_focus_stages_trgm", "focus_stages", postgresql_using="gin", postgresql_ops={"focus_stages": "gin_trgm_ops"}),
+        Index("ix_investors_stages_src_trgm", "stages_src", postgresql_using="gin", postgresql_ops={"stages_src": "gin_trgm_ops"}),
+        Index("ix_investors_focus_sectors_trgm", "focus_sectors", postgresql_using="gin", postgresql_ops={"focus_sectors": "gin_trgm_ops"}),
+        Index("ix_investors_country_lower", text("lower(country)")),
+        Index("ix_investors_email_lower", text("lower(email)")),
+        Index("ix_investors_type", "investor_type"),
+        # Default directory order (browse with no query): enriched first, then seed fit, then name
+        Index("ix_investors_browse", text("enriched DESC"), text("seed_fit DESC NULLS LAST"), "name",
+              postgresql_where=text("NOT suppressed")),
     )
 
 
@@ -293,6 +314,11 @@ class DataAccessEvent(Base):
     meta: Mapped[dict] = mapped_column(JSONB, default=dict)
     ip: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = created()
+
+    __table_args__ = (
+        Index("ix_access_user_kind_created", "user_id", "kind", "created_at"),  # /investors/recent
+        Index("ix_access_ws_created", "workspace_id", "created_at"),
+    )
 
 
 # ---------- workspace data ----------
@@ -378,7 +404,12 @@ class FunnelCard(Base):
     updated_at: Mapped[datetime] = updated()
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (Index("ix_cards_ws_stage", "workspace_id", "stage", "position"),)
+    __table_args__ = (
+        Index("ix_cards_ws_stage", "workspace_id", "stage", "position"),
+        Index("ix_cards_ws_number", "workspace_id", "number"),
+        Index("ix_cards_ws_investor", "workspace_id", "investor_id", postgresql_where=text("deleted_at IS NULL")),
+        Index("ix_cards_call_at", "call_at", postgresql_where=text("call_at IS NOT NULL AND deleted_at IS NULL")),
+    )
 
 
 @event.listens_for(Session, "before_flush")
@@ -398,12 +429,17 @@ class CardEvent(Base):
     __tablename__ = "card_events"
     id: Mapped[uuid.UUID] = pk()
     workspace_id: Mapped[uuid.UUID] = ws_fk()
-    card_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("funnel_cards.id", ondelete="CASCADE"), index=True)
+    card_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("funnel_cards.id", ondelete="CASCADE"))
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     kind: Mapped[str] = mapped_column(String(20))  # note | stage | status | call | contact | created
     body: Mapped[str] = mapped_column(Text, default="")
     meta: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = created()
+
+    __table_args__ = (
+        Index("ix_card_events_card_created", "card_id", "created_at"),  # a card's timeline, newest first
+        Index("ix_card_events_ws_card_created", "workspace_id", "card_id", "created_at"),  # last activity per card
+    )
 
 
 class FounderTask(Base):
@@ -428,6 +464,8 @@ class FounderTask(Base):
     created_at: Mapped[datetime] = created()
     updated_at: Mapped[datetime] = updated()
 
+    __table_args__ = (Index("ix_founder_tasks_ws_status", "workspace_id", "status"),)
+
 
 class Reminder(Base):
     __tablename__ = "reminders"
@@ -441,6 +479,12 @@ class Reminder(Base):
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = created()
 
+    __table_args__ = (
+        # The worker's "what's due" query only ever looks at open, un-notified reminders
+        Index("ix_reminders_pending", "due_at", postgresql_where=text("notified_at IS NULL AND done_at IS NULL")),
+        Index("ix_reminders_card", "card_id"),
+    )
+
 
 class Notification(Base):
     __tablename__ = "notifications"
@@ -453,6 +497,11 @@ class Notification(Base):
     link: Mapped[str] = mapped_column(Text, default="")
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = created()
+
+    __table_args__ = (
+        Index("ix_notifications_user_ws_created", "user_id", "workspace_id", "created_at"),
+        Index("ix_notifications_unread", "user_id", "workspace_id", postgresql_where=text("read_at IS NULL")),
+    )
 
 
 class Exclusion(Base):
@@ -487,7 +536,14 @@ class Sequence(Base):
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft | approved | stopped | replied | done
     created_at: Mapped[datetime] = created()
     updated_at: Mapped[datetime] = updated()
-    emails: Mapped[list["Email"]] = relationship(order_by="Email.step", cascade="all, delete-orphan")
+    # selectin: loading N sequences fetches all their emails in one extra query instead of N (no N+1)
+    emails: Mapped[list["Email"]] = relationship(order_by="Email.step", cascade="all, delete-orphan", lazy="selectin")
+
+    __table_args__ = (
+        Index("ix_sequences_ws_created", "workspace_id", "created_at"),
+        Index("ix_sequences_ws_investor", "workspace_id", "investor_id"),
+        Index("ix_sequences_card", "card_id"),
+    )
 
 
 class Email(Base):
@@ -524,6 +580,17 @@ class Email(Base):
     reply_kind: Mapped[str] = mapped_column(String(16), default="")  # positive|neutral|negative|auto|bounce|opt_out
     bounced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = updated()
+
+    __table_args__ = (
+        # The sender's queue: only scheduled rows, in send order
+        Index("ix_emails_due", "scheduled_for", postgresql_where=text("status = 'scheduled'")),
+        # Stats, per-firm caps and the outreach page (workspace + time window)
+        Index("ix_emails_ws_sent", "workspace_id", "sent_at"),
+        # Reply polling and burst checks (one sender's recent mail)
+        Index("ix_emails_user_sent", "user_id", "sent_at", postgresql_where=text("status = 'sent'")),
+        Index("ix_emails_card", "card_id"),
+        Index("ix_emails_ws_to_lower", "workspace_id", text("lower(to_email)")),
+    )
 
 
 class EmailEvent(Base):
@@ -572,7 +639,7 @@ class Broadcast(Base):
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft | scheduled | done | cancelled
     created_at: Mapped[datetime] = created()
     updated_at: Mapped[datetime] = updated()
-    emails: Mapped[list["Email"]] = relationship(cascade="all, delete-orphan")
+    emails: Mapped[list["Email"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
 
 
 # ---------- agent (§9.1) ----------
@@ -601,6 +668,8 @@ class ChatMessage(Base):
     text: Mapped[str] = mapped_column(Text, default="")
     actions: Mapped[list] = mapped_column(JSONB, default=list)  # [{id, type, label, args, state}]
     created_at: Mapped[datetime] = created()
+
+    __table_args__ = (Index("ix_agent_chat_ws_user_created", "workspace_id", "user_id", "created_at"),)
 
 
 class MeetingBrief(Base):
