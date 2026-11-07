@@ -2,11 +2,15 @@ import logging
 import uuid
 
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
 
 from .config import get_settings
+from .db import SessionLocal
+from .deps import client_ip
 from .errors import ApiError, api_error_handler, problem, unhandled_error_handler
+from .models import AuditLog
 from .routers import (
     admin,
     agent,
@@ -44,6 +48,21 @@ def csrf_ok(request: Request) -> bool:
     return not origin or any(origin == a or origin.startswith(a + "/") for a in allowed)
 
 
+def record_action(request: Request, status: int) -> None:
+    """Every change a signed-in user makes lands in the audit log (Admin > Audit log): who, what, when, from
+    where, and whether it went through. Request bodies are not stored; the key actions add their own details."""
+    route = request.scope.get("route")
+    try:
+        with SessionLocal() as db:
+            db.add(AuditLog(actor_id=request.state.user_id, action=f"{request.method} {getattr(route, 'path', '')}"[:60],
+                            target=request.url.path[:500], ip=client_ip(request),
+                            after={"status": status, "workspace": str(getattr(request.state, "ws_id", "") or ""),
+                                   "user_agent": request.headers.get("user-agent", "")[:300]}))
+            db.commit()
+    except Exception:
+        logging.getLogger(__name__).exception("audit write failed")
+
+
 # JSON lists (search results, tracker, outreach) shrink 5-10x on the wire; tiny responses are left alone
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
@@ -54,6 +73,8 @@ async def context_and_headers(request: Request, call_next):
     if not csrf_ok(request):
         return problem(403, "EF-CSRF-001", "Cross-site request blocked", "", request.state.ref)
     response = await call_next(request)
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and getattr(request.state, "user_id", None):
+        await run_in_threadpool(record_action, request, response.status_code)
     response.headers.setdefault("X-Correlation-Id", request.state.ref)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

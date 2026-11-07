@@ -1,6 +1,6 @@
 """Background worker (TZ-03/04, MAIL-03, AGT-02). Run: python -m app.worker
 
-Every minute: fire due reminders, send due emails, prepare call briefs, daily briefs.
+Every 15 seconds: send due emails. Every minute: fire due reminders, prepare call briefs, daily briefs.
 Every 5 minutes: poll Gmail threads for replies and bounces (many mailboxes in parallel).
 Every hour: purge old rate-limit windows and expired sessions.
 Sending and reminders use row locks with SKIP LOCKED, so a second worker process can share that load.
@@ -22,8 +22,8 @@ from .services.mailer import mailboxes_to_poll, poll_mailbox, send_due
 
 log = logging.getLogger("easyfundraise.worker")
 
-TICK_S = 60
-SEND_BUDGET_S = 45  # keep sending through a backlog for most of the minute, then let the other jobs run
+TICK_S = 15
+SEND_BUDGET_S = 10  # keep sending through a backlog for most of the tick, then let the other jobs run
 
 
 def release_stuck_drafts(db) -> int:
@@ -36,7 +36,7 @@ def release_stuck_drafts(db) -> int:
 
 
 def send(db) -> int:
-    """Drains the due queue (not just a fixed 50 a minute), so morning send windows don't build a backlog."""
+    """Drains the due queue (not just a fixed 50 per tick), so morning send windows don't build a backlog."""
     return send_due(db, limit_n=5000, budget_s=SEND_BUDGET_S)
 
 
@@ -66,11 +66,15 @@ def cleanup(db) -> int:
 
 
 def tick(n: int) -> None:
-    jobs = [("stuck drafts", release_stuck_drafts), ("reminders", fire_due_reminders), ("send", send),
-            ("call briefs", prepare_call_briefs), ("daily briefs", send_daily_briefs)]
-    if n % 5 == 0:
+    """Runs every 15 seconds: sending (so a queue of Send now emails moves along promptly); the other jobs every
+    minute, reply polling every 5 minutes and cleanup every hour."""
+    jobs = [("send", send)]
+    if n % 4 == 0:
+        jobs += [("stuck drafts", release_stuck_drafts), ("reminders", fire_due_reminders), ("call briefs", prepare_call_briefs),
+                 ("daily briefs", send_daily_briefs)]
+    if n % 20 == 0:
         jobs.append(("replies", poll_all_replies))
-    if n % 60 == 0:
+    if n % 240 == 0:
         jobs.append(("cleanup", cleanup))
     for name, fn in jobs:
         try:

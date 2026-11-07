@@ -7,15 +7,15 @@ import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..db import SessionLocal
 from ..deps import Ctx, ctx
 from ..errors import ApiError, not_found
-from ..models import CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence, User, Workspace
-from ..services import agent, ai, mailer, outreach, spam, test_investors, tracker_link
+from ..models import AuditLog, CompanyProfile, Email, FunnelCard, GmailAccount, Investor, Reveal, Sequence, User, Workspace
+from ..services import agent, ai, mailer, outreach, send_plan, spam, test_investors, tracker_link
 from ..services.entitlements import can, consume, limit
 from .investors import _exclusions, auto_reveal, is_excluded
 
@@ -49,6 +49,7 @@ class DraftIn(BaseModel):
     first_email: FirstEmail | None = None  # written on the investor profile; replaces email 1
     persona: str = Field("momentum", pattern="^(momentum|warm-intro|technical-founder|humble-expert)$")
     hold: bool = False  # the quick preview: draft only, even with auto-send on; the founder decides in the sheet
+    readd: bool = False  # yes, add them again although they were removed from outreach a moment ago
 
 
 def with_opt_out(body: str, signature: str) -> str:
@@ -89,45 +90,71 @@ def finish_ai_draft(seq_id: uuid.UUID, user_id: uuid.UUID, placed: dict[int, str
         finally:
             s.engine = engine
             db.commit()
+        # Send now was pressed while this was being written: send email 1 the moment it's ready (or queue it behind
+        # the one before it), instead of waiting for the worker's next pass
+        if s.status == "approved":
+            first = next((e for e in s.emails if e.step == 1 and e.status == "scheduled"), None)
+            if first is not None and first.scheduled_for and first.scheduled_for <= datetime.now(UTC) + timedelta(seconds=40):
+                first.scheduled_for = min(first.scheduled_for, datetime.now(UTC))
+                db.commit()
+                mailer.send_now_one(first.id)
 
 
-@router.post("")
-def draft(body: DraftIn, c: Ctx = Depends(ctx), background: BackgroundTasks = None):
-    c.require_editor()
-    inv = c.db.get(Investor, uuid.UUID(body.investor_id))
+def _addable(c: Ctx, inv: Investor | None, excl=None) -> Investor:
+    """Raises the reason this investor can't be added to outreach."""
     if not test_investors.visible(inv, c.user.email):
         raise not_found("Investor")
-    if is_excluded(inv, _exclusions(c)):  # SEQ-06
+    if is_excluded(inv, excl if excl is not None else _exclusions(c)):  # SEQ-06
         raise ApiError(409, "EF-SEQ-001", "This investor is on your exclusion list")
+    return inv
+
+
+def _new_sequence(c: Ctx, inv: Investor, persona: str, later: bool, first_email: "FirstEmail | None" = None):
+    """Creates the draft sequence (template emails, AI later when `later`) and commits. Returns (seq, placed)."""
     if not can(c.db, c.workspace, "send"):  # trial: up to N sample drafts
         consume(c.db, c.workspace, "sample_drafts", "all", limit(c.db, c.workspace, "sample_drafts"))
     prof = c.db.get(CompanyProfile, c.ws_id)
     card = c.db.scalar(select(FunnelCard).where(FunnelCard.workspace_id == c.ws_id, FunnelCard.investor_id == inv.id,
                                                 FunnelCard.deleted_at.is_(None)))
-    auto = auto_send_on(c.workspace)
-    # Answer at once with lint-clean template drafts; the AI versions (10-20s) are written in the background.
-    later = background is not None and ai.available()
-    emails, engine = agent.draft_sequence(c.db, c.workspace, inv, prof, body.persona, c.user.signature,
-                                          use_ai=not later)
+    emails, engine = agent.draft_sequence(c.db, c.workspace, inv, prof, persona, c.user.signature, use_ai=not later)
     if later:
         engine = DRAFTING
-    seq = Sequence(workspace_id=c.ws_id, investor_id=inv.id, card_id=card.id if card else None, persona=body.persona,
+    seq = Sequence(workspace_id=c.ws_id, investor_id=inv.id, card_id=card.id if card else None, persona=persona,
                    user_id=c.user.id, engine=engine)
     c.db.add(seq)
     c.db.flush()
-    if body.first_email:
-        emails[0] = {**emails[0], "subject": body.first_email.subject.strip(),
-                     "body": with_opt_out(body.first_email.body.strip(), c.user.signature)}
+    if first_email:
+        emails[0] = {**emails[0], "subject": first_email.subject.strip(),
+                     "body": with_opt_out(first_email.body.strip(), c.user.signature)}
         outreach.thread_subjects(emails)
     for e in emails:
         c.db.add(Email(workspace_id=c.ws_id, sequence_id=seq.id, user_id=c.user.id, **e))
     if not (card and card.email):
         auto_reveal(c, inv)  # so it's ready to send with no "reveal first" step
+    c.audit("sequence.create", str(seq.id), after={"investor_id": str(inv.id), "investor": inv.name})
     c.db.commit()
     c.db.refresh(seq)
+    placed = {e.step: e.body for e in seq.emails if not (first_email and e.step == 1)}
+    return seq, placed
+
+
+@router.post("")
+def draft(body: DraftIn, c: Ctx = Depends(ctx), background: BackgroundTasks = None):
+    c.require_editor()
+    inv = _addable(c, c.db.get(Investor, uuid.UUID(body.investor_id)))
+    if not body.readd and (gone := c.db.scalar(select(AuditLog.created_at).where(
+            AuditLog.actor_id == c.user.id, AuditLog.action == "sequence.remove",
+            AuditLog.after["investor_id"].astext == str(inv.id),
+            AuditLog.created_at > datetime.now(UTC) - timedelta(minutes=30)).order_by(AuditLog.created_at.desc()).limit(1))):
+        mins = max(int((datetime.now(UTC) - gone).total_seconds() // 60), 0)
+        raise ApiError(409, "EF-SEQ-031", f"You removed {inv.name} from outreach {'just now' if mins < 1 else f'{mins} min ago'}",
+                       "Add them again?", {"needs_readd": True})
+    auto = auto_send_on(c.workspace)
+    # Answer at once with lint-clean template drafts; the AI versions (10-20s) are written in the background.
+    later = background is not None and ai.available()
+    seq, placed = _new_sequence(c, inv, body.persona, later, body.first_email)
     if later:
-        background.add_task(finish_ai_draft, seq.id, c.user.id,
-                            {e.step: e.body for e in seq.emails if not (body.first_email and e.step == 1)})
+        background.add_task(finish_ai_draft, seq.id, c.user.id, placed)
     sent = try_auto_send(c, seq) if auto and not body.hold else None
     return {**s_out(seq, inv, c.user.signature), "auto": sent}
 
@@ -158,6 +185,13 @@ def list_sequences(c: Ctx = Depends(ctx)):
                       "seen": any(e.status == "sent" and (e.open_count or 0) > 0 for e in s.emails),
                       "replied": any(e.replied_at is not None and e.reply_kind not in ("bounce", "auto")
                                      for e in s.emails),
+                      "reply": max(((e.replied_at, e.reply_kind) for e in s.emails
+                                    if e.replied_at and e.reply_kind not in ("bounce", "auto")), default=(None, ""))[1],
+                      "paused": sum(e.status == "paused" for e in s.emails),
+                      "bounced": any(e.bounced_at is not None for e in s.emails),
+                      # why the next email moved (allowance, per-firm limit, pacing...), shown under the row
+                      "note": next((e.error for e in sorted(s.emails, key=lambda e: e.step)
+                                    if e.status == "scheduled" and e.error), ""),
                       "sent": sum(e.status == "sent" for e in s.emails),
                       "next_at": min((e.scheduled_for for e in s.emails if e.status == "scheduled"), default=None)})
     return {"auto_send": auto_send_on(c.workspace), "auto_send_when": auto_send_when(c.workspace), "items": items}
@@ -362,12 +396,13 @@ def bulk(body: BulkIn, background: BackgroundTasks, c: Ctx = Depends(ctx)):
     ids = [str(s.id) for s, _, _ in eligible]
     if body.action == "send":
         now = datetime.now(UTC)
+        plan = _planner(c, now)
         for s, inv, to in eligible:
-            outreach.schedule(s.emails, now, inv.timezone)
-            _schedule(c, s, inv, to)
+            outreach.schedule(s.emails, now, inv.timezone, first_at=plan.place(inv.timezone))
+            _schedule(c, s, inv, to, {"via": "outreach_bulk_send", "when": "window", "confirmed": True})
         c.audit("sequence.bulk_send", str(c.ws_id), after={"ids": ids})
         c.db.commit()
-        return {"done": len(eligible), "skipped": skipped}
+        return {"done": len(eligible), "skipped": skipped, "allowance": plan.summary()}
     if body.action == "regenerate":
         for s, _, _ in eligible:
             s.engine = DRAFTING  # the list shows them as being redrafted until the background task finishes
@@ -508,6 +543,10 @@ def _ready(c: Ctx, s: Sequence, reveal: bool = True) -> tuple[Investor, str, Gma
     return inv, to, acc
 
 
+def _planner(c: Ctx, now: datetime) -> send_plan.DayPlanner:
+    return send_plan.DayPlanner(c.db, c.workspace, c.user, c.db.get(GmailAccount, c.user.id), now)
+
+
 def blocker(c: Ctx, s: Sequence) -> str | None:
     """Why this draft can't be scheduled yet, in plain words (None when it's ready)."""
     try:
@@ -517,14 +556,18 @@ def blocker(c: Ctx, s: Sequence) -> str | None:
     return None
 
 
-def _schedule(c: Ctx, s: Sequence, inv: Investor, to: str) -> None:
+def _schedule(c: Ctx, s: Sequence, inv: Investor, to: str, how: dict | None = None) -> None:
     s.status, s.user_id = "approved", c.user.id
     if s.card_id is None:  # already in the tracker: log there. Otherwise they join it on "Add to tracker" or a positive reply
         card = tracker_link.card_of(c.db, c.ws_id, inv.id)
         s.card_id = card.id if card else None
     for em in s.emails:
         em.to_email, em.card_id, em.user_id = to, s.card_id, c.user.id
-    c.audit("sequence.approve", str(s.id))
+    # The record of consent: who approved sending what, to whom, when, from where (shown in Admin > Audit log)
+    c.audit("sequence.approve", str(s.id), after={
+        "investor": inv.name, "to": to, **(how or {}),
+        "emails": [{"step": e.step, "subject": e.subject, "scheduled_for": e.scheduled_for.isoformat()
+                    if e.scheduled_for else None} for e in sorted(s.emails, key=lambda e: e.step)]})
 
 
 def auto_send_when(ws) -> str:
@@ -546,9 +589,9 @@ def try_auto_send(c: Ctx, s: Sequence) -> dict:
     now = datetime.now(UTC)
     # "As soon as added": a couple of minutes' grace so the AI version (written in the background) goes, not the
     # template; the mailer still spaces sends out and keeps the daily limit. Otherwise their morning send window.
-    first_at = now + timedelta(minutes=2) if auto_send_when(c.workspace) == "now" else None
-    outreach.schedule(s.emails, now, inv.timezone, first_at=first_at)
-    _schedule(c, s, inv, to)
+    first_at = now if auto_send_when(c.workspace) == "now" else None  # the mailer waits for the AI version
+    outreach.schedule(s.emails, now, inv.timezone, first_at=_planner(c, now).place(inv.timezone, first_at))
+    _schedule(c, s, inv, to, {"via": "auto_send_setting", "when": "now" if first_at else "window"})
     c.db.commit()
     return {"scheduled": True, "reason": "", "when": "now" if first_at else "window"}
 
@@ -562,15 +605,20 @@ def approve(sid: str, body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
     s = _get(c, sid)
     inv, to, acc = _ready(c, s, reveal=bool(body and body.confirm))
     now = datetime.now(UTC)
-    outreach.schedule(s.emails, now, inv.timezone,
-                      first_at=now + timedelta(seconds=30) if body and body.first_at == "now" else None)
+    plan = _planner(c, now)
+    outreach.schedule(s.emails, now, inv.timezone, first_at=plan.place(
+        inv.timezone,
+        # "now": a short grace, longer while the AI version is still being written so that one goes
+        # "now" means now: if the AI version is still being written the mailer holds it and finish_ai_draft sends it
+        now if body and body.first_at == "now" else None))
     if not (body and body.confirm):
         preview = {"from": acc.email, "to": to, "investor": inv.name, "timezone": inv.timezone,
+                   "allowance": plan.summary(),
                    "emails": [{"step": e.step, "subject": e.subject, "scheduled_for": e.scheduled_for.isoformat()}
                               for e in sorted(s.emails, key=lambda e: e.step)]}
         c.db.rollback()
         raise ApiError(409, "EF-SEQ-010", "Confirm sending", "", {"needs_confirm": True, "preview": preview})
-    _schedule(c, s, inv, to)
+    _schedule(c, s, inv, to, {"via": "approve", "when": body.first_at, "confirmed": True, "from": acc.email})
     c.db.commit()
     return s_out(s, inv, c.user.signature)
 
@@ -595,11 +643,166 @@ def send_all(body: ApproveIn | None = None, c: Ctx = Depends(ctx)):
         return {"needs_confirm": True, "from": sender, "skipped": skipped,
                 "ready": [{"id": str(s.id), "name": inv.name, "to": to} for s, inv, to in ready]}
     now = datetime.now(UTC)
+    plan = _planner(c, now)
     for s, inv, to in ready:
-        outreach.schedule(s.emails, now, inv.timezone)
-        _schedule(c, s, inv, to)
+        outreach.schedule(s.emails, now, inv.timezone, first_at=plan.place(inv.timezone))
+        _schedule(c, s, inv, to, {"via": "send_all", "when": "window", "confirmed": True})
     c.db.commit()
-    return {"scheduled": len(ready), "skipped": skipped}
+    return {"scheduled": len(ready), "skipped": skipped, "allowance": plan.summary()}
+
+
+class BulkAddIn(BaseModel):
+    investor_ids: list[str] = Field(min_length=1, max_length=50)
+    action: str = Field(pattern="^(window|now|draft)$")  # schedule for their morning, send now, or keep as drafts
+    confirm: bool = False  # the founder read the confirm screen and ticked "I agree"
+    persona: str = Field("momentum", pattern="^(momentum|warm-intro|technical-founder|humble-expert)$")
+
+
+def finish_ai_drafts(jobs: list[tuple[uuid.UUID, uuid.UUID, dict]]) -> None:
+    """Personalise several sequences at once (a few in parallel) so a bulk add doesn't take one minute per investor."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for f in [pool.submit(finish_ai_draft, *j) for j in jobs]:
+            try:
+                f.result()
+            except Exception:
+                log.exception("bulk AI draft failed")
+
+
+@router.post("/bulk-add")
+def bulk_add(body: BulkAddIn, request: Request, c: Ctx = Depends(ctx), background: BackgroundTasks = None):
+    """Investor list > select > Add to outreach: AI-personalised 3-email sequences for each, then scheduled for
+    their morning, sent now, or kept as drafts. Scheduling or sending needs confirm=true; without it the reply is
+    the confirm screen (who, from which mailbox, who is skipped and why) and nothing is created. The founder's
+    acceptance is written to the audit log with what they agreed to."""
+    c.require_editor()
+    sending = body.action != "draft"
+    acc = c.db.get(GmailAccount, c.user.id)
+    if sending:
+        if not can(c.db, c.workspace, "send"):
+            raise ApiError(402, "EF-TIER-030", "Upgrade to send emails", "Trial accounts can draft but not send.",
+                           {"upgrade": True})
+        if not c.user.signature.strip():
+            raise ApiError(409, "EF-SEQ-003", "Set your email signature first", "", {"needs_signature": True})
+        if acc is None or acc.status != "connected":
+            raise ApiError(409, "EF-SEQ-007", "Connect Gmail to send", "Emails go out from your own Gmail.",
+                           {"needs_gmail": True})
+    ids = []
+    for x in dict.fromkeys(body.investor_ids):
+        try:
+            ids.append(uuid.UUID(x))
+        except ValueError:
+            pass
+    invs = {i.id: i for i in c.db.scalars(select(Investor).where(Investor.id.in_(ids)))} if ids else {}
+    have = set(c.db.scalars(select(Sequence.investor_id).where(Sequence.workspace_id == c.ws_id,
+                                                                Sequence.status != "stopped",
+                                                                Sequence.investor_id.in_(ids)))) if ids else set()
+    excl = _exclusions(c)
+    ok, skipped = [], []
+    for i in ids:
+        inv = invs.get(i)
+        if i in have:
+            skipped.append({"id": str(i), "name": inv.name if inv else "", "reason": "Already in your outreach list"})
+            continue
+        try:
+            ok.append(_addable(c, inv, excl))
+        except ApiError as e:
+            skipped.append({"id": str(i), "name": inv.name if inv else "", "reason": e.title})
+    plan = {"action": body.action, "from": acc.email if acc else "", "count": len(ok),
+            "investors": [{"id": str(i.id), "name": i.name, "firm": i.current_firm or i.company} for i in ok],
+            "skipped": skipped, "terms": BULK_TERMS.get(body.action, "")}
+    now = datetime.now(UTC)
+    planner = _planner(c, now)
+    if sending and not body.confirm:
+        sim = _planner(c, now)  # where each first email would land, within the daily allowance
+        for inv in ok:
+            sim.place(inv.timezone, now if body.action == "now" else None)
+        return {"needs_confirm": True, **plan, "allowance": sim.summary()}
+    later = background is not None and ai.available()
+    done, drafts, failed, jobs = [], [], [], []
+    for inv in ok:
+        try:
+            seq, placed = _new_sequence(c, inv, body.persona, later)
+        except ApiError as e:
+            c.db.rollback()
+            failed.append({"id": str(inv.id), "name": inv.name, "reason": e.title})
+            continue
+        if later:
+            jobs.append((seq.id, c.user.id, placed))
+        if not sending:
+            drafts.append({"id": str(seq.id), "name": inv.name})
+            continue
+        try:
+            inv, to, _ = _ready(c, seq)
+        except ApiError as e:  # stays in outreach as a draft, with the reason
+            drafts.append({"id": str(seq.id), "name": inv.name, "reason": e.title})
+            continue
+        # "now": 90s grace so the AI-personalised version goes; the mailer spaces sends and keeps the daily limit
+        outreach.schedule(seq.emails, now, inv.timezone, first_at=planner.place(
+            inv.timezone, now if body.action == "now" else None))
+        _schedule(c, seq, inv, to, {"via": "investor_list_bulk", "when": body.action, "confirmed": True,
+                                    "from": acc.email})
+        c.db.commit()
+        done.append({"id": str(seq.id), "name": inv.name})
+    c.audit("sequence.bulk_add", str(c.ws_id), after={
+        "action": body.action, "confirmed": bool(body.confirm), "from": acc.email if acc else "",
+        "agreed_to": BULK_TERMS[body.action] if sending else "", "user_agent": request.headers.get("user-agent", "")[:300],
+        "scheduled": done, "drafts": drafts, "skipped": skipped + failed})
+    c.db.commit()
+    if jobs:
+        background.add_task(finish_ai_drafts, jobs)
+    return {"scheduled": len(done), "drafts": drafts, "skipped": skipped + failed, "action": body.action,
+            "allowance": planner.summary()}
+
+
+BULK_TERMS = {  # what the confirm screen says; stored with the acceptance in the audit log
+    "window": "AI personalises 3 emails per investor and schedules them from my Gmail: email 1 in each investor's "
+              "local morning, follow-ups 2 working days apart, stopping on any reply.",
+    "now": "AI personalises 3 emails per investor and sends email 1 from my Gmail within a few minutes; follow-ups "
+           "2 working days apart, stopping on any reply.",
+}
+
+
+class FollowUpsIn(BaseModel):
+    action: str = Field(pattern="^(resume|send_now|cancel)$")
+
+
+@router.post("/{sid}/followups")
+def followups(sid: str, body: FollowUpsIn, c: Ctx = Depends(ctx), background: BackgroundTasks = None):
+    """Follow-ups paused by a reply: resume them (next one 2 working days from now, then spaced as usual), send
+    the next one now, or cancel them. Resuming or sending is the founder's explicit choice, recorded in the log."""
+    c.require_editor()
+    s = _get(c, sid)
+    held = sorted((e for e in s.emails if e.status == "paused"), key=lambda e: e.step)
+    if not held:
+        raise ApiError(409, "EF-SEQ-030", "No paused follow-ups", "This investor has no follow-ups waiting.")
+    inv = c.db.get(Investor, s.investor_id)
+    if body.action == "cancel":
+        for e in held:
+            e.status, e.error = "cancelled", "Cancelled after their reply"
+        c.audit("sequence.followups_cancel", str(s.id), after={"investor": inv.name, "steps": [e.step for e in held]})
+        c.db.commit()
+        return s_out(s, inv, c.user.signature)
+    acc = c.db.get(GmailAccount, c.user.id)
+    if acc is None or acc.status != "connected":
+        raise ApiError(409, "EF-SEQ-007", "Connect Gmail to send", "Emails go out from your own Gmail.", {"needs_gmail": True})
+    now = datetime.now(UTC)
+    tz = inv.timezone if inv else "UTC"
+    prev = None
+    for e in held:
+        e.scheduled_for = (now if body.action == "send_now" and prev is None
+                           else outreach.follow_up_slot(prev or now, tz))
+        e.status, e.error = "scheduled", ""
+        prev = e.scheduled_for
+    s.status = "approved"  # updated_at moves past the reply, so the mailer's stop-on-reply lets these go
+    c.audit("sequence.followups_" + body.action, str(s.id), after={
+        "investor": inv.name, "confirmed": True,
+        "emails": [{"step": e.step, "scheduled_for": e.scheduled_for.isoformat()} for e in held]})
+    c.db.commit()
+    if body.action == "send_now" and background is not None:
+        background.add_task(mailer.send_now_one, held[0].id)  # goes in seconds, not at the next worker tick
+    return s_out(s, inv, c.user.signature)
 
 
 @router.delete("/{sid}")
@@ -624,7 +827,18 @@ def remove_one(c: Ctx, s: Sequence) -> bool:
     else:
         c.db.delete(s)
         kept = False
-    c.audit("sequence.remove", sid, after={"kept_history": kept})
+    # Their pending progress updates go too: removing someone from outreach means nothing more goes to them
+    inv = c.db.get(Investor, s.investor_id)
+    to = {e.to_email.lower() for e in s.emails if e.to_email} | ({inv.email.lower()} if inv and inv.email else set())
+    cond = Email.card_id == s.card_id if s.card_id else None
+    if to:
+        cond = func.lower(Email.to_email).in_(to) if cond is None else cond | func.lower(Email.to_email).in_(to)
+    updates = c.db.scalars(select(Email).where(Email.workspace_id == c.ws_id, Email.broadcast_id.is_not(None),
+                                               Email.status == "scheduled", cond)).all() if cond is not None else []
+    for e in updates:
+        e.status, e.error = "cancelled", "Removed from outreach"
+    c.audit("sequence.remove", sid, after={"kept_history": kept, "investor_id": str(s.investor_id),
+                                           "investor": inv.name if inv else "", "updates_cancelled": len(updates)})
     return kept
 
 

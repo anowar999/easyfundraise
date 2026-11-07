@@ -291,7 +291,7 @@ function Plan() {
           <div className="font-mono">{u.reveals_month} / {l.reveals_month ?? 0}</div>
         </div>
         <div className="rounded-lg border border-line p-3">
-          <div className="text-xs text-muted">Emails per day</div>
+          <div className="text-xs text-muted">New investors per day</div>
           <div className="font-mono">{l.emails_day ?? 0}</div>
         </div>
       </div>

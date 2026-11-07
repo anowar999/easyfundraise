@@ -106,7 +106,8 @@ def test_send_all_reports_then_schedules_ready_drafts(client):
     r = client.post("/sequences/send-all").json()
     assert [x["name"] for x in r["ready"]] == [ada["name"]] and r["from"]
     assert client.get(f"/sequences/{seq['id']}").json()["status"] == "draft"  # preview changes nothing
-    assert client.post("/sequences/send-all", json={"confirm": True}).json() == {"scheduled": 1, "skipped": []}
+    r = client.post("/sequences/send-all", json={"confirm": True}).json()
+    assert (r["scheduled"], r["skipped"]) == (1, []) and r["allowance"]["days"]
     s = client.get(f"/sequences/{seq['id']}").json()
     assert s["status"] == "approved" and all(e["status"] == "scheduled" for e in s["emails"])
 

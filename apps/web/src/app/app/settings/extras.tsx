@@ -47,7 +47,7 @@ export function GmailSection() {
         {g.mode === "fake" && <span className="chip">test mailbox</span>}
       </div>
       <p className="text-muted">
-        Sent today: {g.sent_today} of {g.daily_cap}. New mailboxes warm up over 10 days, and we send at most 3 a day to any one firm.
+        New investors emailed today: {g.sent_today} of {g.daily_cap} (follow-ups don&apos;t count). New mailboxes warm up over 10 days, and we send at most 3 a day to any one firm.
       </p>
       {g.paused_until ? (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400/50 bg-amber-50 p-3 text-amber-900">

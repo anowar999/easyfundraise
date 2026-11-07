@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { PageHeader } from "@/components/AppShell";
 import { ErrorState, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api, ApiError, qs, timeAgo } from "@/lib/api";
@@ -241,26 +241,47 @@ function Requests() {
   );
 }
 
+/** Every change users made, with what they agreed to on send confirmations (search "approve" or "bulk_add"). */
 function Audit() {
-  const q = useQuery<{ items: any[] }>({ queryKey: ["admin", "audit"], queryFn: () => api("/admin/audit") });
+  const [term, setTerm] = useState("");
+  const [open, setOpen] = useState<string | null>(null);
+  const q = useQuery<{ items: any[] }>({ queryKey: ["admin", "audit", term], queryFn: () => api(`/admin/audit${qs({ q: term })}`) });
   return (
-    <div className="card overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="text-xs text-muted text-left border-b border-line">
-          <tr>{["When", "Actor", "Action", "Target", "IP"].map((h) => <th key={h} className="px-3 py-2 font-medium">{h}</th>)}</tr>
-        </thead>
-        <tbody>
-          {q.data?.items.map((a) => (
-            <tr key={a.id} className="border-b border-line last:border-0">
-              <td className="px-3 py-2 whitespace-nowrap text-muted">{timeAgo(a.created_at)}</td>
-              <td className="px-3 py-2">{a.actor}</td>
-              <td className="px-3 py-2 font-mono text-xs">{a.action}</td>
-              <td className="px-3 py-2 text-muted truncate max-w-64">{a.target}</td>
-              <td className="px-3 py-2 text-muted font-mono text-xs">{a.ip}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-3">
+      <input
+        className="input w-full sm:w-96"
+        placeholder="Search by user email, action or investor (e.g. approve, bulk_add)"
+        value={term}
+        onChange={(e) => setTerm(e.target.value)}
+      />
+      <div className="card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-xs text-muted text-left border-b border-line">
+            <tr>{["When", "Actor", "Action", "Target", "IP"].map((h) => <th key={h} className="px-3 py-2 font-medium">{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {q.data?.items.map((a) => (
+              <Fragment key={a.id}>
+                <tr className="border-b border-line last:border-0 cursor-pointer hover:bg-surface/60" onClick={() => setOpen(open === a.id ? null : a.id)}>
+                  <td className="px-3 py-2 whitespace-nowrap text-muted" title={new Date(a.created_at).toLocaleString()}>{timeAgo(a.created_at)}</td>
+                  <td className="px-3 py-2">{a.actor}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{a.action}</td>
+                  <td className="px-3 py-2 text-muted truncate max-w-64">{a.target}</td>
+                  <td className="px-3 py-2 text-muted font-mono text-xs">{a.ip}</td>
+                </tr>
+                {open === a.id && (
+                  <tr className="border-b border-line bg-surface/40">
+                    <td colSpan={5} className="px-3 py-2">
+                      <div className="text-xs text-muted mb-1">{new Date(a.created_at).toLocaleString()} · {a.actor}</div>
+                      <pre className="text-xs whitespace-pre-wrap break-all">{JSON.stringify({ before: a.before ?? undefined, after: a.after ?? undefined }, null, 2)}</pre>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

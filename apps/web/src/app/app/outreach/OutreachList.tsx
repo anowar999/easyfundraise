@@ -12,6 +12,7 @@ import { ConfirmSend, type SendPreview } from "@/components/ConfirmSend";
 import { Empty, IconBtn, ListSkeleton, Sheet, errText, useToast } from "@/components/ui";
 import { api, ApiError, fmtDate } from "@/lib/api";
 import { BulkBar } from "./BulkBar";
+import { useNow } from "@/lib/useNow";
 
 /** A draft with nothing blocking it. Falls back to "draft without a blocker" if the API hasn't sent `ready`. */
 const isReady = (x: Item) => x.ready ?? (x.status === "draft" && !x.blocker);
@@ -23,6 +24,7 @@ const STATUS_FILTERS = [
   { key: "scheduled", label: "Scheduled", test: (x: Item) => Boolean(x.next_at) },
   { key: "seen", label: "Seen", test: (x: Item) => Boolean(x.seen) },
   { key: "replied", label: "Replied", test: (x: Item) => Boolean(x.replied) },
+  { key: "paused", label: "Paused", test: (x: Item) => Boolean(x.paused) },
 ] as const;
 type StatusKey = (typeof STATUS_FILTERS)[number]["key"];
 const UNKNOWN = "__unknown";
@@ -39,6 +41,10 @@ type Item = {
   country?: string;
   seen?: boolean;
   replied?: boolean;
+  reply?: string;  // positive | neutral | negative | opt_out
+  paused?: number;  // follow-ups held because they replied
+  bounced?: boolean;
+  note?: string;  // why the next email moved (allowance, per-firm limit)
   ready?: boolean;
   drafting?: boolean;
   card_id?: string | null;
@@ -46,9 +52,20 @@ type Item = {
 type List = { auto_send: boolean; auto_send_when?: "window" | "now"; items: Item[] };
 type Bulk = { needs_confirm: true; from: string; ready: { id: string; name: string; to: string }[]; skipped: { id: string; name: string; reason: string }[] };
 
+/** Its next email's time has come: the worker is sending it now (it may wait a minute or two for pacing). */
+const isDue = (x: Item, now: number) => x.status === "approved" && !!x.next_at && new Date(x.next_at).getTime() <= now;
+
+const REPLY: Record<string, { text: string; cls: string }> = {
+  positive: { text: "Replied · interested", cls: "text-emerald-700 border-emerald-600/40 bg-emerald-500/10" },
+  neutral: { text: "Replied · needs review", cls: "text-amber-700 border-amber-500/50 bg-amber-500/10" },
+  negative: { text: "Replied · passing", cls: "text-slate-600 border-slate-400/50 bg-slate-500/10" },
+  opt_out: { text: "Asked not to be contacted", cls: "text-slate-600 border-slate-400/50" },
+};
+
 function statusText(x: Item) {
   if (x.status === "draft") return x.blocker ? "Needs attention" : "Ready to send";
   if (x.status === "stopped") return "Stopped";
+  if (x.status === "replied") return `${x.sent} of 3 sent`;
   if (x.next_at) return `${x.sent} of 3 sent · next ${fmtDate(x.next_at, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`;
   return x.sent ? `${x.sent} of 3 sent` : "Scheduled";
 }
@@ -189,8 +206,24 @@ export function OutreachList() {
     queryKey: ["sequences"],
     queryFn: () => api("/sequences"),
     // While drafts are being rewritten, refresh every few seconds so each row comes back as soon as it's done.
-    refetchInterval: (query) => (query.state.data?.items.some((x) => x.drafting) || Date.now() < pollUntil.current ? 2500 : false),
+    // and while an email's time has come, so "Sending…" turns into "Sent" as soon as it goes; otherwise every minute.
+    refetchInterval: (query) =>
+      query.state.data?.items.some((x) => x.drafting) || Date.now() < pollUntil.current
+        ? 2500
+        : query.state.data?.items.some((x) => isDue(x, Date.now() + 5 * 60_000))
+          ? 4000
+          : 60_000,
   });
+  const now = useNow(5000);
+  // The send queue: emails go one at a time, a minute or two apart (pacing), so once one is due the others
+  // close behind it are "Queued #n" rather than all flashing "Sending…".
+  const queue = useMemo(() => {
+    const due = (q.data?.items ?? [])
+      .filter((x) => x.status === "approved" && !x.drafting && x.next_at && new Date(x.next_at).getTime() <= now + 5 * 60_000)
+      .sort((a, b) => new Date(a.next_at!).getTime() - new Date(b.next_at!).getTime() || a.id.localeCompare(b.id));
+    if (!due.length || new Date(due[0].next_at!).getTime() > now) return new Map<string, number>();
+    return new Map(due.map((x, i) => [x.id, i + 1]));
+  }, [q.data, now]);
   // Bulk regenerate progress: the rows queued in this batch, and the ones that have finished since.
   const [regen, setRegen] = useState<string[]>([]);
   const drafting = (q.data?.items ?? []).filter((x) => x.drafting);
@@ -214,6 +247,21 @@ export function OutreachList() {
       setRemoving(null);
       for (const k of ["sequences", "upcoming", "outreach-stats", "investors", "investor"]) qc.invalidateQueries({ queryKey: [k] });
       toast(r.kept_history ? `${x.investor.name} removed. Sent emails stay in Activity.` : `${x.investor.name} removed from outreach.`);
+    },
+    onError: (e) => toast(errText(e), "err"),
+  });
+  const follow = useMutation({
+    mutationFn: ({ x, action }: { x: Item; action: "resume" | "send_now" | "cancel" }) =>
+      api(`/sequences/${x.id}/followups`, { method: "POST", json: { action } }),
+    onSuccess: (_, { x, action }) => {
+      for (const k of ["sequences", "upcoming", "outreach-stats"]) qc.invalidateQueries({ queryKey: [k] });
+      toast(
+        action === "cancel"
+          ? `Follow-ups to ${x.investor.name} cancelled.`
+          : action === "send_now"
+            ? `Sending the next follow-up to ${x.investor.name} now. Any after it keep their 2 working day gap.`
+            : `Follow-ups to ${x.investor.name} resumed: the next one goes in 2 working days, in their morning.`,
+      );
     },
     onError: (e) => toast(errText(e), "err"),
   });
@@ -400,6 +448,14 @@ export function OutreachList() {
                 <Link href={from(`/app/sequences/${x.id}`, "outreach")} className="flex-1 min-w-0">
                   <div className="font-medium truncate">{x.investor.name}</div>
                   <div className="text-xs text-muted truncate">{x.investor.firm}</div>
+                  {x.note && <div className="text-xs text-amber-700 mt-0.5">{x.note}</div>}
+                  {(x.reply || x.bounced) && (
+                    <div className="mt-1 flex flex-wrap gap-1 [&>span]:whitespace-nowrap">
+                      {x.bounced && <span className="chip text-[11px] text-danger border-danger/40 bg-danger/5">Invalid email</span>}
+                      {x.reply && REPLY[x.reply] && <span className={clsx("chip text-[11px]", REPLY[x.reply].cls)}>{REPLY[x.reply].text}</span>}
+                      {!!x.paused && <span className="chip text-[11px] text-amber-700 border-amber-500/50" title={`${x.paused} follow-up${x.paused > 1 ? "s" : ""} paused because they replied`}>{x.paused} paused</span>}
+                    </div>
+                  )}
                   {x.blocker && (
                     <div className="text-xs text-warn flex items-center gap-1 mt-0.5">
                       <AlertTriangle size={12} /> {x.blocker}
@@ -408,14 +464,23 @@ export function OutreachList() {
                 </Link>
                 {x.drafting ? (
                   <span className="chip text-xs text-brand border-brand/40 inline-flex items-center gap-1">
-                    <RefreshCw size={12} className="animate-spin" /> Rewriting…
+                    <RefreshCw size={12} className="animate-spin" /> {x.status === "approved" ? "Writing… then sending" : "Rewriting…"}
                   </span>
                 ) : regen.includes(x.id) ? (
                   <span className="chip text-xs text-emerald-700 border-emerald-600/30 inline-flex items-center gap-1">
                     <Check size={12} /> New draft ready
                   </span>
+                ) : queue.get(x.id) === 1 ? (
+                  <span className="chip text-xs text-emerald-700 border-emerald-600/40 bg-emerald-500/10 font-medium inline-flex items-center gap-1">
+                    <Send size={12} className="animate-pulse" /> Sending email {x.sent + 1}…
+                  </span>
+                ) : queue.has(x.id) ? (
+                  <span className="chip text-xs text-sky-700 border-sky-500/40 bg-sky-500/10 inline-flex items-center gap-1" title="Emails go one at a time, a minute or two apart, so they don't look like a bulk send">
+                    Queued #{queue.get(x.id)}
+                    {x.next_at && new Date(x.next_at).getTime() > now ? ` · ≈ ${fmtDate(x.next_at, { hour: "2-digit", minute: "2-digit" })}` : ""}
+                  </span>
                 ) : (
-                  <span className={clsx("chip text-xs hidden sm:inline-flex", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>
+                  <span className={clsx("chip text-xs hidden sm:inline-flex whitespace-nowrap", x.status === "draft" && !x.blocker && "text-brand border-brand/40", x.status !== "draft" && "text-emerald-700 border-emerald-600/30")}>{statusText(x)}</span>
                 )}
                 {x.drafting ? (
                   <span className="inline-flex items-center gap-1.5 opacity-50" aria-hidden>
@@ -440,6 +505,19 @@ export function OutreachList() {
                       <Eye size={14} />
                     </IconBtn>
                     {x.status === "draft" && !x.blocker && <SendOne x={x} />}
+                    {!!x.paused && (
+                      <span className="inline-flex items-center gap-1">
+                        <button className="btn-ghost btn-sm border border-line" disabled={follow.isPending} title="Next follow-up in 2 working days, in their morning" onClick={() => follow.mutate({ x, action: "resume" })}>
+                          <CalendarClock size={13} /> Resume
+                        </button>
+                        <button className="btn-ghost btn-sm border border-line" disabled={follow.isPending} title="Send the next follow-up now" onClick={() => follow.mutate({ x, action: "send_now" })}>
+                          <Send size={13} /> Send next
+                        </button>
+                        <button className="btn-ghost btn-sm text-warn" disabled={follow.isPending} title="Cancel the paused follow-ups" onClick={() => follow.mutate({ x, action: "cancel" })}>
+                          Cancel
+                        </button>
+                      </span>
+                    )}
                     {x.card_id ? (
                       <IconBtn label="Open in Investor tracker" onClick={() => router.push(from(`/app/funnel/${x.card_id}`, "outreach"))}>
                         <KanbanSquare size={14} className="text-brand" />

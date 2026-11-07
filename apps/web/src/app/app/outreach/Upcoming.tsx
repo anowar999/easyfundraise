@@ -8,6 +8,7 @@ import { from } from "@/components/Crumbs";
 import Link from "next/link";
 import { Empty, ErrorState, IconBtn, ListSkeleton, errText, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
+import { useNow } from "@/lib/useNow";
 import { SpamChip } from "./SpamChip";
 
 export type Upcoming = {
@@ -41,13 +42,16 @@ export function useUpcoming() {
   return useQuery<{ items: Upcoming[] }>({
     queryKey: ["upcoming"],
     queryFn: () => api("/sequences/scheduled"),
-    refetchInterval: (q) => (q.state.data?.items.some((u) => u.sending) ? 2_000 : 60_000),
+    // Every few seconds while something is going out or its time has come, so rows move to Sent by themselves.
+    refetchInterval: (q) =>
+      q.state.data?.items.some((u) => u.sending || new Date(u.scheduled_for).getTime() <= Date.now() + 5000) ? 3_000 : 60_000,
   });
 }
 
 /** Every email waiting to go out, soonest first: the investor's local time (when it lands) and yours. */
 export function UpcomingList() {
   const q = useUpcoming();
+  const clock = useNow(5000);
   const qc = useQueryClient();
   const toast = useToast();
   const [asking, setAsking] = useState<{ id: string; what: "send" | "cancel" } | null>(null);  // waiting for "Yes"
@@ -132,8 +136,12 @@ export function UpcomingList() {
           <CheckCircle2 size={15} /> Sent to {who}. It&apos;s in your Gmail Sent.
         </div>
       ))}
-      {items.map((u) => {
-        const onWay = u.sending || !!going[u.email_id];
+      {items.map((u, i) => {
+        // One at a time: the soonest due email is the one going; the others due around now wait their turn
+        const due = new Date(u.scheduled_for).getTime() <= clock;
+        const anyDueBefore = items.slice(0, i).some((p) => p.sending || new Date(p.scheduled_for).getTime() <= clock);
+        const onWay = u.sending || !!going[u.email_id] || (due && !anyDueBefore);
+        const queued = !onWay && (due || (items.some((p) => new Date(p.scheduled_for).getTime() <= clock) && new Date(u.scheduled_for).getTime() <= clock + 5 * 60_000));
         const href = u.sequence_id ? from(`/app/sequences/${u.sequence_id}`, "outreach-scheduled") : u.card_id ? from(`/app/funnel/${u.card_id}`, "outreach-scheduled") : null;
         const label = (
           <>
@@ -161,9 +169,11 @@ export function UpcomingList() {
                 {open === u.email_id ? <EyeOff size={14} /> : <Eye size={14} />}
               </IconBtn>
               {u.spam && <SpamChip spam={u.spam} compact />}
-              {onWay ? (
-                <span className="chip inline-flex items-center gap-1 text-green-700">
-                  <RefreshCw size={12} className="animate-spin" /> Sending
+              {queued && !onWay ? (
+                <span className="chip inline-flex items-center gap-1 text-sky-700 border-sky-500/40 bg-sky-500/10">Queued</span>
+              ) : onWay ? (
+                <span className="chip inline-flex items-center gap-1 text-emerald-700 border-emerald-600/40 bg-emerald-500/10 font-medium">
+                  <RefreshCw size={12} className="animate-spin" /> Sending…
                 </span>
               ) : (
                 (() => {

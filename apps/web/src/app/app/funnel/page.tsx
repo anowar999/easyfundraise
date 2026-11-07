@@ -45,9 +45,13 @@ function HeatIcon({ heat }: { heat: Card["heat"] }) {
   return null;
 }
 
+/** Put in the tracker by EasyFundraise (e.g. a positive reply), not yet looked at or changed by the founder. */
+const isAuto = (c: Card) => (c.tags ?? []).includes("auto-added");
+
 function CardBody({ c }: { c: Card }) {
   return (
     <>
+      {isAuto(c) && <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-sky-700">Added or moved automatically</div>}
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium flex items-center gap-1.5 min-w-0">
@@ -86,7 +90,7 @@ function DraggableCard({ c, onOpen }: { c: Card; onOpen: () => void }) {
         {...listeners}
         {...attributes}
         onClick={onOpen}
-        className={clsx("card p-3 cursor-grab active:cursor-grabbing hover:border-brand", isDragging && "opacity-40")}
+        className={clsx("card p-3 cursor-grab active:cursor-grabbing hover:border-brand", isAuto(c) && "bg-sky-500/10 border-sky-500/40", isDragging && "opacity-40")}
       >
         <CardBody c={c} />
       </div>
@@ -346,7 +350,7 @@ function FunnelInner() {
             </thead>
             <tbody>
               {cards.map((c) => (
-                <tr key={c.id} className="border-b border-line last:border-0 hover:bg-surface cursor-pointer" onClick={() => setOpenId(c.id)}>
+                <tr key={c.id} className={clsx("border-b border-line last:border-0 hover:bg-surface cursor-pointer", isAuto(c) && "bg-sky-500/10")} title={isAuto(c) ? "Added or moved by a reply. It goes back to normal once you change it." : undefined} onClick={() => setOpenId(c.id)}>
                   <td className="px-3 py-2 font-mono text-xs text-muted">{c.number || ""}</td>
                   <td className="px-3 py-2 font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5">

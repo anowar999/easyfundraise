@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import (
+    AuditLog,
     Broadcast,
     CardEvent,
     ConfigKV,
@@ -76,6 +77,17 @@ def daily_cap(db: Session, ws: Workspace, acc: GmailAccount, now: datetime) -> i
 def sent_metric(user_id) -> str:
     """Per-sender daily counter key (usage_counters.metric is 32 chars)."""
     return f"sent:{user_id.hex[:24]}"
+
+
+FREE_MAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "msn.com", "yahoo.com",
+             "yahoo.co.uk", "icloud.com", "me.com", "mac.com", "aol.com", "proton.me", "protonmail.com", "gmx.com",
+             "gmx.de", "zoho.com", "yandex.com", "mail.com", "hotmail.co.uk", "outlook.co.uk"}
+
+
+def who_of(db: Session, em: Email) -> str:
+    seq = db.get(Sequence, em.sequence_id) if em.sequence_id else None
+    inv = db.get(Investor, seq.investor_id) if seq is not None and seq.investor_id else None
+    return inv.name if inv else ""
 
 
 def domain(addr: str) -> str:
@@ -202,6 +214,8 @@ def send_now_one(email_id) -> int:
                        .with_for_update(skip_locked=True))
         if em is None:
             return 0
+        if em.user_id:  # one send at a time per mailbox, so the pacing gap holds when several finish together
+            db.get(GmailAccount, em.user_id, with_for_update=True, populate_existing=True)
         try:
             n = _send_one(db, em, now)
         except Exception as e:
@@ -221,6 +235,9 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     if seq is not None and seq.status != "approved":
         em.status = "cancelled"
         return 0
+    if seq is not None and seq.engine == "drafting" and seq.created_at and seq.created_at > now - timedelta(minutes=10):
+        em.scheduled_for = now + timedelta(seconds=30)  # the AI-personalised version is still being written: wait for it
+        return 0
     if em.broadcast_id and db.get(Broadcast, em.broadcast_id).status == "cancelled":
         em.status = "cancelled"
         return 0
@@ -233,9 +250,10 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
     if em.to_email.lower().startswith(ROLE_PREFIXES) and not (seq and seq.persona == "allow-role"):
         em.status, em.error = "cancelled", "Role address (info@, press@...) skipped"
         return 0
-    if seq is not None:  # stop on any reply (SEQ-01)
+    if seq is not None:  # stop on any reply (SEQ-01), unless the founder resumed the follow-ups after it
         if db.scalar(select(func.count()).select_from(Email).where(Email.sequence_id == seq.id,
-                                                                    Email.replied_at.is_not(None))):
+                                                                    Email.replied_at.is_not(None),
+                                                                    Email.replied_at > seq.updated_at)):
             em.status = "cancelled"
             return 0
     if em.broadcast_id and em.step > 1 and db.scalar(select(func.count()).select_from(Email).where(
@@ -267,21 +285,30 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
 
     day = user_day(user, now)
     cap = daily_cap(db, ws, acc, now)
+    # The daily allowance counts investors, not emails: only a first email counts, never a follow-up or a reply
+    # in a conversation that is already going (services/send_plan.py places first emails within it).
+    counted = em.step == 1 and not em.broadcast_id and not (direct and em.gmail_thread_id)
     used = usage(db, ws, sent_metric(user.id), day)
-    if used >= cap:
-        _reschedule(em, now, tz, "Daily send cap reached")
+    if counted and used >= cap:
+        _reschedule(em, now, tz, f"Daily allowance reached ({cap} new investors a day): moved to the next send day")
         if not db.scalar(select(func.count()).select_from(Notification).where(
                 Notification.user_id == user.id, Notification.kind == "cap_reached",
                 Notification.created_at > now - timedelta(hours=20))):
-            notify(db, ws.id, user.id, "cap_reached", f"Daily send cap reached ({cap})",
-                   "Remaining emails move to your next send window.", "/app/outreach")
+            notify(db, ws.id, user.id, "cap_reached", f"Today's allowance used: {cap} new investors",
+                   "First emails to the rest go in the next send window. Follow-ups still go as planned.",
+                   "/app/outreach")
         return 0
     per_domain = int(cfg(db, "sending", {}).get("per_domain_daily_cap", 3))
     start = now - timedelta(hours=24)
-    if not direct and db.scalar(select(func.count()).select_from(Email).where(
-            Email.workspace_id == ws.id, Email.sent_at > start,
-            func.lower(Email.to_email).like(f"%@{domain(em.to_email)}"))) >= per_domain:
-        _reschedule(em, now, tz, "Per-firm daily cap reached")
+    dom = domain(em.to_email)
+    # The per-firm cap is about one firm's inbox: gmail.com, outlook.com etc. are different people, never one firm
+    if get_settings().per_firm_limit_on and not direct and em.step == 1 and dom and dom not in FREE_MAIL and db.scalar(
+            select(func.count()).select_from(Email).where(
+                Email.workspace_id == ws.id, Email.sent_at > start, func.lower(Email.to_email).like(f"%@{dom}"))) >= per_domain:
+        _reschedule(em, now, tz, f"Moved to the next send day: already {per_domain} emails to {dom} today (per-firm limit)")
+        notify(db, ws.id, user.id, "cap_reached", f"{who_of(db, em) or em.to_email} moved to the next send day",
+               f"{per_domain} emails already went to {dom} in the last 24 hours. We keep it to {per_domain} a day "
+               "per firm so you don't land in spam.", "/app/outreach")
         return 0
 
     # Threading (MAIL-02): steps 2 and 3 reply in the thread of step 1.
@@ -290,6 +317,11 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
         own = Email.sequence_id == seq.id if seq is not None else (Email.broadcast_id == em.broadcast_id) & (
             Email.card_id == em.card_id)
         first = db.scalar(select(Email).where(own, Email.step == 1, Email.status == "sent"))
+        waiting = None if first else db.scalar(select(Email).where(own, Email.step == 1,
+                                                                   Email.status.in_(("scheduled", "sending"))))
+        if waiting is not None:  # email 1 was held back (e.g. daily allowance): keep the follow-up after it
+            em.scheduled_for = follow_up_slot(max(waiting.scheduled_for or now, now), tz)
+            return 0
         if first is None:
             em.status, em.error = "cancelled", "First email was not sent"
             return 0
@@ -336,12 +368,15 @@ def _send_one(db: Session, em: Email, now: datetime) -> int:
                 later.scheduled_for = due
             prev = later.scheduled_for
     em.gmail_message_id, em.gmail_thread_id, em.rfc_message_id = res.message_id, res.thread_id, res.rfc_message_id
-    n = consume(db, ws, sent_metric(user.id), day, None)
+    n = consume(db, ws, sent_metric(user.id), day, None) if counted else used
     lo, hi = cfg(db, "sending", {}).get("pace_seconds", [45, 180])
+    if not get_settings().is_prod:  # dev/UAT: a short gap so testing a queue of sends doesn't take minutes
+        lo, hi = min(int(lo), 15), min(int(hi), 30)
     acc.next_send_at = now + timedelta(seconds=random.randint(int(lo), int(hi)))
     warn = int(cfg(db, "sending", {}).get("warn_at_pct", 80))
-    if cap and n == max(1, cap * warn // 100) and n < cap:
-        notify(db, ws.id, user.id, "cap_warning", f"{n} of {cap} emails sent today", "", "/app/outreach")
+    if counted and cap and n == max(1, cap * warn // 100) and n < cap:
+        notify(db, ws.id, user.id, "cap_warning", f"{n} of {cap} new investors emailed today",
+               "Follow-ups don't count towards this.", "/app/outreach")
     if card:
         card.last_contacted_at = now
         db.add(CardEvent(workspace_id=ws.id, card_id=card.id, user_id=user.id, kind="email",
@@ -364,13 +399,16 @@ NEGATIVE = re.compile(r"\b(not (a )?fit|pass(ing)?\b|not interested|no thanks|no
                       r"we don'?t invest|not investing|decline)\b", re.I)
 OPT_OUT = re.compile(r"^\s*(no|no thanks|stop|unsubscribe|remove me)[.!]?\s*$|\bunsubscribe\b|\bremove me\b", re.I)
 AUTO = re.compile(r"\b(out of (the )?office|ooo|on vacation|on leave|auto(matic)? reply|away until)\b", re.I)
+BOUNCE = re.compile(r"\b(address not found|delivery status notification \(failure\)|message (was )?not delivered|"
+                    r"undeliverable|recipient address rejected|user unknown|no such user|mailbox unavailable)\b", re.I)
 DECK = re.compile(r"\b(deck|data ?room|materials|one[- ]pager)\b", re.I)
 
 
 def classify(db: Session, ws: Workspace, text: str, headers: dict, sender: str) -> dict:
     """MAIL-03: positive / neutral / negative / auto / bounce / opt_out, plus extracted signals (TRK-03)."""
     low_sender = sender.lower()
-    if "mailer-daemon" in low_sender or "postmaster" in low_sender or "delivery-status" in headers.get("content-type", ""):
+    if ("mailer-daemon" in low_sender or "postmaster" in low_sender or "mail delivery subsystem" in low_sender
+            or "delivery-status" in headers.get("content-type", "") or BOUNCE.search(text)):
         return {"kind": "bounce", "signals": []}
     if headers.get("auto-submitted", "no").lower() not in ("", "no") or AUTO.search(text):
         return {"kind": "auto", "signals": []}
@@ -407,15 +445,31 @@ def handle_reply(db: Session, em: Email, msg, now: datetime) -> None:
     link = f"/app/funnel/{card.id}" if card else "/app/outreach"
     if kind == "bounce":  # MAIL-04
         em.bounced_at = now
-        if not excluded(db, ws.id, primary(em.to_email)):
-            db.add(Exclusion(workspace_id=ws.id, kind="email", value=primary(em.to_email).lower(), reason="bounced"))
+        addr = primary(em.to_email).lower()
+        if not excluded(db, ws.id, addr):
+            db.add(Exclusion(workspace_id=ws.id, kind="email", value=addr, reason="bounced"))
         _stop(db, em)
-        notify(db, ws.id, em.user_id, "bounce", f"Email to {name} bounced", "The address is marked invalid.", link)
+        # Nothing else goes to this address: every scheduled or paused email to it (other follow-ups, updates)
+        why = "Cancelled: address not found (the email bounced)"
+        gone = db.scalars(select(Email).where(Email.workspace_id == ws.id, Email.status.in_(("scheduled", "paused")),
+                                              func.lower(Email.to_email).like(f"%{addr}%"))).all()
+        for other in gone:
+            other.status, other.error = "cancelled", why
+        em.error = "Bounced: address not found"
+        db.add(AuditLog(actor_id=em.user_id, action="email.bounce", target=str(em.id),
+                        after={"to": addr, "reason": "address not found", "snippet": msg.snippet[:200],
+                               "cancelled": [str(o.id) for o in gone]}))
+        notify(db, ws.id, em.user_id, "bounce", f"Email to {name} bounced: address not found",
+               f"We cancelled {len(gone)} scheduled email{'s' if len(gone) != 1 else ''} to this address and won't email it again.",
+               link)
         return
     if kind == "auto":
         return  # out-of-office: keep the sequence going
     em.replied_at, em.reply_kind = now, kind
-    _stop(db, em, "replied")
+    if kind == "opt_out":
+        _stop(db, em, "replied")
+    else:  # any real reply (yes, no or unclear) pauses the follow-ups; the founder resumes, sends or cancels them
+        _pause(db, em)
     if kind == "positive" and card is None:  # an interested reply puts them in the tracker
         card = tracker_link.for_positive_reply(db, em)
         if card is not None:
@@ -438,12 +492,26 @@ def handle_reply(db: Session, em: Email, msg, now: datetime) -> None:
             db.add(CardEvent(workspace_id=ws.id, card_id=card.id, kind="stage", body=f"Moved to stage {target} after a positive reply",
                              meta={"from": card.stage, "to": target, "auto": True}))
             card.stage = target
+        if tracker_link.AUTO_TAG not in (card.tags or []):  # flagged until the founder acts on it
+            card.tags = [*(card.tags or []), tracker_link.AUTO_TAG]
     title = {"positive": f"{name} replied: interested", "negative": f"{name} replied: passing",
-             "neutral": f"{name} replied"}[kind]
-    body = msg.snippet[:200]
+             "neutral": f"{name} replied: needs your review"}[kind]
+    body = msg.snippet[:200] + "\n\nFollow-ups are paused. Resume, send or cancel them in Outreach (filter: Paused)."
+    if kind == "neutral" and em.card_id is None:
+        body += " Add them to your tracker from the Outreach list if it's promising."
     if kind == "negative" and _auto(ws, "rejection_suggestion"):
         body += "\n\nMark as Rejection? Open the card to confirm."
     notify(db, ws.id, em.user_id, "reply", title, body, link)
+
+
+def _pause(db: Session, em: Email) -> None:
+    """A reply holds the rest of the sequence: unsent follow-ups wait as 'paused' until the founder decides."""
+    if em.sequence_id:
+        seq = db.get(Sequence, em.sequence_id)
+        seq.status = "replied"
+        for other in seq.emails:
+            if other.status == "scheduled":
+                other.status, other.error = "paused", "Paused: they replied"
 
 
 def _stop(db: Session, em: Email, status: str = "stopped") -> None:
@@ -492,17 +560,19 @@ def poll_mailbox(db: Session, user_id, now: datetime | None = None) -> int:
                 continue
             ours = {e.gmail_message_id for e in ems}
             latest = max(ems, key=lambda e: e.step)
-            for m in gm.thread(tid):
-                if m.id in ours or acc.email.lower() in m.sender.lower():
-                    continue
-                if db.scalar(select(func.count()).select_from(EmailEvent).where(
-                        EmailEvent.email_id == latest.id, EmailEvent.meta["message_id"].astext == m.id)):
-                    continue
-                handle_reply(db, latest, m, now)
-                db.add(EmailEvent(workspace_id=latest.workspace_id, email_id=latest.id, kind="seen",
-                                  meta={"message_id": m.id}))
+            msgs = gm.thread(tid)  # oldest first
+            # Only what came after our first email in this thread: Gmail can put a new sequence into an
+            # older thread (same subject), and an earlier reply there (e.g. last week's "no") isn't an answer
+            start = next((i for i, m in enumerate(msgs) if m.id in ours), 0)
+            fresh = [m for m in msgs[start:] if m.id not in ours and acc.email.lower() not in m.sender.lower()
+                     and not db.scalar(select(func.count()).select_from(EmailEvent).where(
+                         EmailEvent.email_id == latest.id, EmailEvent.meta["message_id"].astext == m.id))]
+            if fresh:
+                handle_reply(db, latest, fresh[-1], now)  # the newest reply is their answer
+                for m in fresh:
+                    db.add(EmailEvent(workspace_id=latest.workspace_id, email_id=latest.id, kind="seen",
+                                      meta={"message_id": m.id}))
                 found += 1
-                break
     except GmailRevoked:
         acc.status = "revoked"
         notify(db, tracked[0].workspace_id, acc.user_id, "gmail_disconnected", "Gmail disconnected",
