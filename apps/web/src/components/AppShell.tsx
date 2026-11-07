@@ -17,18 +17,18 @@ type NavItem = { href: string; label: string; short?: string; icon: typeof Home;
 
 const NAV: NavItem[] = [
   { href: "/app", label: "Home", icon: Home, exact: true },
-  { href: "/app/tasks", label: "My tasks", short: "Tasks", icon: ListTodo, count: "tasks" },
   { href: "/app/investors", label: "Investors", icon: Search },
   { href: "/app/shortlist", label: "Shortlist", icon: Heart, count: "shortlist" },
   { href: "/app/outreach", label: "Outreach", icon: Mail, count: "outreach" },
   { href: "/app/funnel", label: "Investor tracker", short: "Tracker", icon: KanbanSquare, count: "tracker" },
+  { href: "/app/tasks", label: "My tasks", short: "Tasks", icon: ListTodo, count: "tasks" },
   { href: "/app/updates", label: "Updates", icon: Megaphone },
   { href: "/app/data-room", label: "Data room", icon: Globe },
   { href: "/app/notifications", label: "Alerts", icon: Bell },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
 // Phones: five primary tabs + "More" (the rest live in a sheet)
-const TABS = ["/app", "/app/tasks", "/app/investors", "/app/funnel", "/app/notifications"];
+const TABS = ["/app", "/app/investors", "/app/funnel", "/app/tasks", "/app/notifications"];
 
 export type Me = {
   id: string;
