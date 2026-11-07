@@ -36,6 +36,16 @@ jobs:
         run: alembic upgrade head && python -m app.cli seed
       - run: pytest -q
 
+  seo-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s seo/agent
+      - run: python seo/agent/seo_agent.py --offline --dry-run > /dev/null
+
   web:
     runs-on: ubuntu-latest
     defaults:
