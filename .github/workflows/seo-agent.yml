@@ -1,0 +1,62 @@
+name: SEO agent
+
+# Runs the SEO agent every Monday and opens (or updates) one pull request with the new report, keyword coverage
+# per region and the competitor sitemap snapshots. Nothing is published to the site automatically: changes to
+# pages go through review. Run it by hand from the Actions tab with "Run workflow".
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "Site to audit (default: https://easyfundraise.com)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: seo-agent
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BRANCH: seo-agent/weekly-report
+      EF_SEO_SITE: ${{ inputs.site || vars.EF_SEO_SITE || 'https://easyfundraise.com' }}
+      # Optional: add this secret to get an AI-written action plan in the report.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the Anthropic SDK (only when a key is set)
+        if: env.ANTHROPIC_API_KEY != ''
+        run: pip install "anthropic==2.3.0"
+      - name: Tests
+        run: python -m unittest discover -s seo/agent
+      - name: Run the SEO agent
+        run: python seo/agent/seo_agent.py
+      - name: Report in the job summary
+        run: cat seo/reports/latest.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Open or update the weekly pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "easyfundraise-seo-agent"
+          git config user.email "seo-agent@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add seo/reports seo/state
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "SEO agent report $(date -u +%F)"
+          git push -f origin "$BRANCH"
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --head "$BRANCH" --base "${{ github.event.repository.default_branch }}" \
+              --title "SEO agent: weekly report" \
+              --body "Weekly SEO agent run: regional keyword coverage (US, UK, Europe, Asia, Middle East and more), competitor sitemap changes and technical issues. Read seo/reports/latest.md. The report is also in the workflow run summary." \
+              || echo "Could not open a PR (allow GitHub Actions to create pull requests in Settings > Actions > General). The report is in the run summary."
+          fi

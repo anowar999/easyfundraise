@@ -3,11 +3,15 @@
 > EasyFundraise is an AI-powered fundraising workspace for founders raising angel, pre-seed and seed rounds. It helps founders find the right investors, contact them with short personalised emails, track every conversation in a fundraising-native CRM, and stay on top of follow-ups with a personal AI agent.
 
 ## Features
-- Investor discovery: search and filter investors by sector, stage, geography, check size, firm type and decision-maker role, with researched profiles (thesis, portfolio, recent deals, how to pitch).
+- Investor database: 14,900+ investors in 93 countries (angels, syndicates, pre-seed and seed VCs, corporate VCs, family offices), searchable by sector, stage, cheque size, geography, firm type and who leads rounds, or in plain English.
 - Fit scoring: investors ranked for your company profile with the reasons.
-- Personalised outreach: three-email sequences grounded in each investor's own thesis and deals, sent from the founder's own Gmail.
-- Investor CRM: drag-and-drop funnel from "Not started" to "Payment received", reminders, notes and imports from existing spreadsheets.
-- Notifications and a daily brief of follow-ups due and investors going cold.
+- Personalised outreach: three-email sequences grounded in each investor's own thesis and deals, sent from the founder's own Gmail, one by one or automatically in each investor's morning send window.
+- Safe sending: a spam risk and domain check before scheduling, warm-up and daily limits, follow-ups that stop the moment an investor replies, and bounces that cancel later emails.
+- Investor CRM: a fundraising tracker from "Not started" to "Payment received", with reminders, notes, positive replies added automatically and imports from existing spreadsheets.
+- Personal AI fundraising agent, a daily brief of follow-ups due, and round or progress update emails to investors already contacted.
+- Data room pages that show which investors opened them, what they read and what they downloaded.
+- Free task manager for founders, and fundraising resources: pitch decks by stage, AI perks, Y Combinator applications, accelerators and VCs.
+- Regions covered: United States, United Kingdom, Europe, Asia (including India and Southeast Asia), the Middle East, Africa, Latin America, Canada, Australia and New Zealand.
 
 ## Key pages
 - https://easyfundraise.com/ : product overview
@@ -18,4 +22,5 @@
 - https://easyfundraise.com/investors : investor lists by country (angel, pre-seed, seed, VC) and by sector
 - https://easyfundraise.com/blog : fundraising guides (finding investors, cold email templates, pre-seed vs seed)
 - https://easyfundraise.com/glossary : fundraising glossary
+- https://easyfundraise.com/free-task-manager : free task manager for founders
 - https://easyfundraise.com/legal/cookies : cookie policy

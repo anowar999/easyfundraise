@@ -1,44 +1,180 @@
 {
   "domain": "easyfundraise.com",
-  "environments": { "prod": "https://easyfundraise.com", "uat": "https://uat.easyfundraise.com", "dev": "https://dev.easyfundraise.com" },
+  "environments": {
+    "prod": "https://easyfundraise.com",
+    "uat": "https://uat.easyfundraise.com",
+    "dev": "https://dev.easyfundraise.com"
+  },
   "company_name": "EasyFundraise",
   "business_description": "AI-powered fundraising platform that helps founders find investors, contact them with personalised outreach, manage their investor pipeline and raise capital.",
   "industry": "Startup fundraising software / investor discovery",
   "products": [
-    "Investor directory (12,000+ verified contacts)",
-    "Investor discovery and filtering",
-    "AI-personalised investor emails and 3-step follow-up sequences",
-    "Reply and engagement tracking",
-    "Investor CRM and fundraising pipeline",
-    "Personal AI fundraising agent",
-    "Data room pages",
-    "Investor relations newsletters and updates"
+    "Investor database (14,900+ investors in 93 countries: angels, syndicates, pre-seed and seed VCs, CVCs, family offices)",
+    "Investor discovery: filters by sector, stage, cheque size, geography and who leads rounds; AI search in plain English; fit score with reasons",
+    "Investor lists by country, stage and sector (public /investors pages, aggregates only)",
+    "Personalised three-email outreach sequences sent from the founder's own Gmail",
+    "Auto-send in each investor's morning send window, or one by one with a quick preview and Send now",
+    "Spam risk check and domain check before scheduling; warm-up and daily sending limits",
+    "Follow-ups pause the moment an investor replies; bounces cancel later emails to that address",
+    "Bulk add investors to outreach from a list or shortlist",
+    "Investor CRM / fundraising tracker: nine stages from Not started to Payment received, notes, reminders, spreadsheet import",
+    "Personal AI fundraising agent (Raise Agent / Outreach Agent) and a daily brief of follow-ups due",
+    "Round and progress update emails to every investor already contacted",
+    "Data room pages with per-investor views, reading time and downloads",
+    "Free task manager for founders (To do / In progress / Done, sticky notes, top 3 on home)",
+    "Fundraising resources: pitch decks by stage, AI perks, YC applications, accelerators and VCs"
   ],
   "target_audience": "Founders raising angel, pre-seed and seed rounds; fractional CFOs and fundraising consultants",
-  "geographic_markets": ["US", "UK", "EU", "India", "Southeast Asia", "Global"],
-  "languages": ["en"],
+  "geographic_markets": [
+    "US",
+    "UK",
+    "Europe",
+    "Asia",
+    "Middle East",
+    "Africa",
+    "Latin America",
+    "Canada",
+    "Australia & New Zealand",
+    "Global"
+  ],
+  "languages": [
+    "en"
+  ],
   "brand_voice": "Direct, confident, founder-to-founder, practical, zero fluff; operator who has raised before",
   "primary_keywords": [
-    "find angel investors", "find pre-seed investors", "find seed investors", "investor database for startups",
-    "how to cold email investors", "investor CRM", "fundraising software", "AI fundraising platform",
-    "investor outreach software", "how to raise pre-seed funding", "how to raise seed funding"
+    "find angel investors",
+    "find pre-seed investors",
+    "find seed investors",
+    "investor database for startups",
+    "how to cold email investors",
+    "investor CRM",
+    "fundraising software",
+    "AI fundraising platform",
+    "investor outreach software",
+    "how to raise pre-seed funding",
+    "how to raise seed funding",
+    "investor list",
+    "angel investor network",
+    "free task manager for founders",
+    "investor data room",
+    "fundraising tracker"
   ],
-  "competitors": ["roundfunded.com", "<competitor-2>", "<competitor-3>", "<competitor-4>", "<competitor-5>", "<competitor-6>"],
-  "conversion_objectives": ["registration", "trial_start", "deck_upload", "first_email_sent", "paid_subscription"],
+  "competitors": [
+    {
+      "domain": "angelinvestmentnetwork.co.uk",
+      "url": "https://www.angelinvestmentnetwork.co.uk/",
+      "markets": [
+        "UK",
+        "Europe",
+        "Global"
+      ],
+      "positioning": "Angel investor matching network: founders list a pitch and investors browse it",
+      "watch": [
+        "sitemap",
+        "new_pages",
+        "topic_clusters",
+        "regional_pages"
+      ]
+    },
+    {
+      "domain": "roundfunded.com",
+      "url": "https://www.roundfunded.com/",
+      "markets": [
+        "US",
+        "Global"
+      ],
+      "positioning": "Investor database, data room and investor outreach for founders",
+      "watch": [
+        "sitemap",
+        "new_pages",
+        "topic_clusters",
+        "regional_pages"
+      ]
+    }
+  ],
+  "conversion_objectives": [
+    "registration",
+    "trial_start",
+    "deck_upload",
+    "first_email_sent",
+    "paid_subscription"
+  ],
   "cta_preferences": [
-    "Find investors for your startup", "Explore 12,000+ investor contacts", "Generate your first investor email",
-    "Start managing your fundraising pipeline", "Automate investor follow-ups", "Discover your best-fit investors"
+    "Find investors for your startup",
+    "Explore 12,000+ investor contacts",
+    "Generate your first investor email",
+    "Start managing your fundraising pipeline",
+    "Automate investor follow-ups",
+    "Discover your best-fit investors"
   ],
-  "cms_integration": { "type": "internal", "api": "/api/seo/publish", "render": "nextjs-isr" },
-  "analytics_integrations": { "gsc": true, "ga4": true, "bing_wmt": true, "ahrefs": false, "semrush": false },
+  "cms_integration": {
+    "type": "internal",
+    "api": "/api/seo/publish",
+    "render": "nextjs-isr"
+  },
+  "analytics_integrations": {
+    "gsc": true,
+    "ga4": true,
+    "bing_wmt": true,
+    "ahrefs": false,
+    "semrush": false
+  },
   "publishing_permissions": {
-    "auto_publish": ["educational_article", "internal_link_update", "metadata_update"],
-    "requires_human": ["legal_or_financial_claim", "sensitive_fundraising_advice", "investor_endorsement", "unverified_statistic", "public_investor_data_change", "architecture_change", "redirect_or_indexing_change"]
+    "auto_publish": [
+      "educational_article",
+      "internal_link_update",
+      "metadata_update"
+    ],
+    "requires_human": [
+      "legal_or_financial_claim",
+      "sensitive_fundraising_advice",
+      "investor_endorsement",
+      "unverified_statistic",
+      "public_investor_data_change",
+      "architecture_change",
+      "redirect_or_indexing_change"
+    ]
   },
   "content_quality_rules": {
-    "no_fabricated_statistics": true, "sources_required": true, "ai_tell_linter": true,
-    "min_internal_links": 3, "max_exact_match_anchor_ratio": 0.2, "require_cta": true, "noindex_thin_pages": true
+    "no_fabricated_statistics": true,
+    "sources_required": true,
+    "ai_tell_linter": true,
+    "min_internal_links": 3,
+    "max_exact_match_anchor_ratio": 0.2,
+    "require_cta": true,
+    "noindex_thin_pages": true
   },
-  "technical": { "robots": true, "sitemap": true, "llms_txt": true, "schema": ["Organization", "WebSite", "SoftwareApplication", "Article", "BreadcrumbList"], "core_web_vitals_budget": { "lcp_ms": 2500, "inp_ms": 200, "cls": 0.1 } },
-  "reporting": { "weekly": true, "monthly": true, "notify_channels": ["admin_inbox", "email"] }
+  "technical": {
+    "robots": true,
+    "sitemap": true,
+    "llms_txt": true,
+    "schema": [
+      "Organization",
+      "WebSite",
+      "SoftwareApplication",
+      "Article",
+      "BreadcrumbList"
+    ],
+    "core_web_vitals_budget": {
+      "lcp_ms": 2500,
+      "inp_ms": 200,
+      "cls": 0.1
+    }
+  },
+  "reporting": {
+    "weekly": true,
+    "monthly": true,
+    "notify_channels": [
+      "admin_inbox",
+      "email"
+    ]
+  },
+  "competitor_rules": {
+    "store": "urls_and_slug_topics_only",
+    "never_copy_content": true,
+    "respect_robots_txt": true,
+    "user_agent": "EasyFundraiseSEOAgent/1.0 (+https://easyfundraise.com/llms.txt)",
+    "max_urls_per_site": 5000,
+    "min_seconds_between_requests": 2
+  }
 }

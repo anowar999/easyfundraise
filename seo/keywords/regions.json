@@ -1,0 +1,135 @@
+{
+  "_about": "Target keywords per region for the SEO agent. Each region is tracked separately: coverage, gaps and competitor pages are reported per region. Volumes and difficulty are never stored here unless they come from a connected data source (GSC, Keyword Planner); do not invent them. Countries must match the country names in the investor database so the agent can map them to /investors pages.",
+  "regions": {
+    "us": {
+      "name": "United States",
+      "spelling": "en-US",
+      "currency": "USD",
+      "countries": ["United States"],
+      "cities": ["San Francisco", "New York", "Austin", "Boston", "Los Angeles", "Miami", "Seattle", "Chicago"],
+      "keywords": {
+        "commercial": ["investor database", "startup investor database", "fundraising software for startups", "investor CRM software", "investor outreach software", "AI fundraising platform"],
+        "transactional": ["find angel investors in the US", "find seed investors", "find pre-seed investors", "list of venture capital firms", "angel investors in San Francisco", "angel investors in New York", "seed investors in Austin"],
+        "informational": ["how to raise a pre-seed round", "how to cold email investors", "SAFE vs convertible note", "how much to raise in a seed round", "how to get a VC meeting", "how to follow up with investors"],
+        "long_tail": ["find investors for a pre-revenue startup", "raise your first $500k", "angel investors who invest in pre-revenue startups", "best cold email subject lines for VCs", "how long to wait before following up with an investor"]
+      }
+    },
+    "uk": {
+      "name": "United Kingdom",
+      "spelling": "en-GB",
+      "currency": "GBP",
+      "countries": ["United Kingdom", "Ireland"],
+      "cities": ["London", "Manchester", "Edinburgh", "Cambridge", "Oxford", "Bristol", "Dublin"],
+      "keywords": {
+        "commercial": ["investor database UK", "angel investor network UK", "fundraising platform UK", "investor CRM UK", "UK startup investor list"],
+        "transactional": ["find angel investors UK", "angel investors in London", "seed investors UK", "pre-seed funds UK", "UK venture capital firms list", "angel investors in Manchester", "angel investors in Scotland", "angel investors in Ireland"],
+        "informational": ["SEIS investors", "EIS investors", "how to raise a SEIS round", "SEIS advance assurance", "how to find angel investors in the UK", "how to pitch UK angel investors", "angel investment cheque size UK"],
+        "long_tail": ["SEIS angel investors for pre-revenue startups", "UK angel investors who invest in fintech", "how to cold email UK angel investors", "angel investors for a startup with no traction UK"]
+      }
+    },
+    "europe": {
+      "name": "Europe",
+      "spelling": "en-GB",
+      "currency": "EUR",
+      "countries": ["Germany", "France", "Netherlands", "Spain", "Sweden", "Switzerland", "Italy", "Denmark", "Finland", "Norway", "Belgium", "Portugal", "Poland", "Estonia", "Austria", "Czech Republic"],
+      "cities": ["Berlin", "Paris", "Amsterdam", "Stockholm", "Munich", "Barcelona", "Madrid", "Zurich", "Lisbon", "Copenhagen", "Helsinki", "Tallinn"],
+      "keywords": {
+        "commercial": ["European investor database", "European VC database", "investor list Europe", "fundraising software Europe"],
+        "transactional": ["angel investors in Germany", "angel investors in Berlin", "seed investors France", "business angels Paris", "angel investors Netherlands", "venture capital Nordics", "pre-seed investors Europe", "seed VC funds Europe", "angel investors Spain", "angel investors Switzerland"],
+        "informational": ["how to raise funding in Europe", "European startup funding stages", "business angel networks in Europe", "how to pitch European VCs", "EU startup grants and equity funding"],
+        "long_tail": ["pre-seed funds in Europe for B2B SaaS", "angel investors in Europe for climate tech", "how to raise a seed round in Germany", "how to find business angels in France"]
+      }
+    },
+    "asia": {
+      "name": "Asia",
+      "spelling": "en-GB",
+      "currency": "USD",
+      "countries": ["India", "Singapore", "Japan", "South Korea", "Indonesia", "Hong Kong", "China", "Vietnam", "Malaysia", "Philippines", "Thailand", "Taiwan", "Pakistan", "Bangladesh"],
+      "cities": ["Singapore", "Bangalore", "Mumbai", "Delhi", "Tokyo", "Seoul", "Jakarta", "Hong Kong", "Ho Chi Minh City", "Kuala Lumpur", "Manila", "Dhaka"],
+      "keywords": {
+        "commercial": ["investor database Asia", "Southeast Asia VC list", "India investor database", "angel network India"],
+        "transactional": ["angel investors in India", "angel investors in Bangalore", "seed investors India", "angel investors in Singapore", "seed VC Southeast Asia", "venture capital firms Indonesia", "angel investors in Japan", "angel investors Hong Kong", "angel investors in Bangladesh", "angel investors in Pakistan"],
+        "informational": ["how to raise seed funding in India", "how to raise funding in Southeast Asia", "how to pitch investors in Singapore", "startup funding stages in India"],
+        "long_tail": ["pre-seed investors in India for SaaS", "angel investors in Singapore for fintech", "how to cold email VCs in Southeast Asia"]
+      }
+    },
+    "middle_east": {
+      "name": "Middle East",
+      "spelling": "en-GB",
+      "currency": "USD",
+      "countries": ["United Arab Emirates", "Saudi Arabia", "Israel", "Qatar", "Bahrain", "Kuwait", "Oman", "Egypt", "Jordan", "Turkey"],
+      "cities": ["Dubai", "Abu Dhabi", "Riyadh", "Tel Aviv", "Doha", "Cairo", "Istanbul", "Amman"],
+      "keywords": {
+        "commercial": ["MENA investor database", "Middle East VC list", "GCC investor list", "investor database Dubai"],
+        "transactional": ["angel investors in Dubai", "angel investors UAE", "seed investors Saudi Arabia", "venture capital firms in Riyadh", "angel investors in Israel", "seed funds Tel Aviv", "angel investors Qatar", "VC firms in Egypt", "angel investors Turkey"],
+        "informational": ["how to raise funding in the UAE", "how to raise seed funding in Saudi Arabia", "MENA startup funding stages", "how to pitch GCC investors", "Sharia-compliant startup investment"],
+        "long_tail": ["angel investors in Dubai for fintech", "pre-seed investors in MENA", "how to find angel investors in Saudi Arabia"]
+      }
+    },
+    "africa": {
+      "name": "Africa",
+      "spelling": "en-GB",
+      "currency": "USD",
+      "countries": ["Nigeria", "Kenya", "South Africa", "Ghana", "Morocco", "Rwanda"],
+      "cities": ["Lagos", "Nairobi", "Cape Town", "Johannesburg", "Accra", "Kigali"],
+      "keywords": {
+        "commercial": ["African investor database", "Africa VC list"],
+        "transactional": ["angel investors in Nigeria", "angel investors in Kenya", "seed investors South Africa", "venture capital firms in Lagos", "pre-seed investors Africa"],
+        "informational": ["how to raise funding for an African startup", "how to pitch African VCs"],
+        "long_tail": ["angel investors in Africa for fintech", "pre-seed funds investing in African startups"]
+      }
+    },
+    "latam": {
+      "name": "Latin America",
+      "spelling": "en-US",
+      "currency": "USD",
+      "countries": ["Brazil", "Mexico", "Argentina", "Colombia", "Chile", "Peru"],
+      "cities": ["São Paulo", "Mexico City", "Buenos Aires", "Bogotá", "Santiago"],
+      "keywords": {
+        "commercial": ["Latin America VC list", "LATAM investor database"],
+        "transactional": ["angel investors in Brazil", "angel investors in Mexico", "seed investors Latin America", "venture capital firms in Colombia", "pre-seed investors LATAM"],
+        "informational": ["how to raise funding in Latin America", "how to pitch LATAM VCs"],
+        "long_tail": ["angel investors in Mexico for fintech", "pre-seed funds in Latin America for SaaS"]
+      }
+    },
+    "canada": {
+      "name": "Canada",
+      "spelling": "en-US",
+      "currency": "CAD",
+      "countries": ["Canada"],
+      "cities": ["Toronto", "Vancouver", "Montreal", "Waterloo", "Calgary"],
+      "keywords": {
+        "commercial": ["Canadian investor database", "Canada VC list"],
+        "transactional": ["angel investors in Canada", "angel investors Toronto", "seed investors Vancouver", "angel investors Montreal", "pre-seed funds Canada"],
+        "informational": ["how to raise funding in Canada", "SR&ED and startup funding"],
+        "long_tail": ["angel investors in Toronto for SaaS", "how to find angel investors in Canada"]
+      }
+    },
+    "anz": {
+      "name": "Australia & New Zealand",
+      "spelling": "en-GB",
+      "currency": "AUD",
+      "countries": ["Australia", "New Zealand"],
+      "cities": ["Sydney", "Melbourne", "Brisbane", "Auckland", "Wellington"],
+      "keywords": {
+        "commercial": ["Australian investor database", "Australia VC list"],
+        "transactional": ["angel investors in Australia", "angel investors Sydney", "seed investors Melbourne", "angel investors New Zealand", "pre-seed funds Australia"],
+        "informational": ["how to raise funding in Australia", "ESIC early stage innovation company investors"],
+        "long_tail": ["angel investors in Sydney for fintech", "how to find angel investors in Australia"]
+      }
+    },
+    "global": {
+      "name": "Global (no region)",
+      "spelling": "en-US",
+      "currency": "USD",
+      "countries": [],
+      "cities": [],
+      "keywords": {
+        "commercial": ["investor database", "fundraising CRM", "investor CRM", "fundraising tracker", "investor outreach tool", "investor data room", "free task manager for founders"],
+        "transactional": ["find investors for startup", "angel investor list", "seed VC database", "pre-seed investors list", "cold email investors"],
+        "informational": ["how to cold email investors", "pre-seed vs seed", "investor follow-up email", "pitch deck examples by stage", "how to apply to Y Combinator", "startup accelerators list", "AI perks for startups"],
+        "long_tail": ["how many investors to contact for a seed round", "what to write in an investor update email", "how to track investor conversations"]
+      }
+    }
+  }
+}
