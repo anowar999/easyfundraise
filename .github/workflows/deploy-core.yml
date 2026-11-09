@@ -1,0 +1,128 @@
+name: Deploy core
+
+# Build the api + web images, push them to GHCR, then deploy to the
+# easyfundraise-core EC2 box over SSH. Postgres runs on the separate
+# easyfundraise-db box and is not touched here.
+#
+# Required repository secrets:
+#   CORE_SSH_HOST   Elastic IP / hostname of the core box (terraform output core_public_ip)
+#   CORE_SSH_USER   SSH user (ubuntu)
+#   CORE_SSH_KEY    private key for the EC2 key pair (PEM contents)
+#   CORE_ENV_FILE   full contents of the production .env (see infra/deploy/core.env.example)
+# GITHUB_TOKEN (built in) is used to push images to GHCR.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy
+        required: false
+        default: main
+
+concurrency:
+  group: deploy-core
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_API: ghcr.io/${{ github.repository_owner }}/easyfundraise-api
+  IMAGE_WEB: ghcr.io/${{ github.repository_owner }}/easyfundraise-web
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - id: meta
+        run: echo "tag=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push API
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/api
+          push: true
+          tags: |
+            ${{ env.IMAGE_API }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE_API }}:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build & push web
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/web
+          push: true
+          build-args: |
+            API_URL=http://api:8000
+          tags: |
+            ${{ env.IMAGE_WEB }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE_WEB }}:latest
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Assemble deploy bundle
+        run: |
+          mkdir -p bundle
+          cp infra/deploy/core-compose.yml bundle/core-compose.yml
+          cp infra/deploy/Caddyfile bundle/Caddyfile
+          # Start from the secret .env, then pin the image coordinates for this run.
+          printf '%s\n' "${{ secrets.CORE_ENV_FILE }}" > bundle/.env
+          {
+            echo ""
+            echo "IMAGE_API=${IMAGE_API}"
+            echo "IMAGE_WEB=${IMAGE_WEB}"
+            echo "IMAGE_TAG=${{ needs.build.outputs.tag }}"
+          } >> bundle/.env
+
+      - name: Copy bundle to core box
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.CORE_SSH_HOST }}
+          username: ${{ secrets.CORE_SSH_USER }}
+          key: ${{ secrets.CORE_SSH_KEY }}
+          source: "bundle/*"
+          target: /opt/easyfundraise
+          strip_components: 1
+          overwrite: true
+
+      - name: Pull & restart
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.CORE_SSH_HOST }}
+          username: ${{ secrets.CORE_SSH_USER }}
+          key: ${{ secrets.CORE_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/easyfundraise
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose -f core-compose.yml --env-file .env pull
+            docker compose -f core-compose.yml --env-file .env up -d --remove-orphans
+            docker image prune -f
+            docker compose -f core-compose.yml ps

@@ -1,0 +1,6 @@
+# Caddy terminates TLS (automatic Let's Encrypt) and reverse-proxies to the web
+# container. The Next.js app forwards /api/* to the API container itself.
+{$EF_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:3000
+}

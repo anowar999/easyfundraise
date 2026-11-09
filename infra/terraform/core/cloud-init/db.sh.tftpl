@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Bootstraps the easyfundraise-db box: PostgreSQL 16 + pgvector, DIRECT on the
+# host (no Docker). Idempotent enough to re-run.
+set -euxo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y postgresql-16 postgresql-16-pgvector
+
+PGCONF="/etc/postgresql/16/main"
+
+# Listen on the private interface so the core box can connect.
+sed -i "s/^#\?listen_addresses.*/listen_addresses = '*'/" "$PGCONF/postgresql.conf"
+
+# Allow password auth from the VPC only (SG already restricts to the core SG).
+if ! grep -q "easyfundraise-vpc" "$PGCONF/pg_hba.conf"; then
+  cat >> "$PGCONF/pg_hba.conf" <<EOF
+
+# easyfundraise-vpc: application access from inside the VPC
+host    ${db_name}    ${db_user}    ${vpc_cidr}    scram-sha-256
+EOF
+fi
+
+systemctl enable postgresql
+systemctl restart postgresql
+
+# Create role, database and the pgvector extension. All idempotent.
+sudo -u postgres psql -v ON_ERROR_STOP=1 <<EOF
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${db_user}') THEN
+    CREATE ROLE ${db_user} LOGIN PASSWORD '${db_password}';
+  ELSE
+    ALTER ROLE ${db_user} WITH PASSWORD '${db_password}';
+  END IF;
+END
+\$\$;
+EOF
+
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${db_name}'" | grep -q 1; then
+  sudo -u postgres createdb -O ${db_user} ${db_name}
+fi
+
+sudo -u postgres psql -d ${db_name} -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+echo "db bootstrap complete"

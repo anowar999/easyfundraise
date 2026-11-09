@@ -1,0 +1,59 @@
+# Production stack for the easyfundraise-core box. Unlike infra/docker-compose.yml
+# (local dev) there is NO db service here: Postgres runs on the separate
+# easyfundraise-db box. Images are pulled from GHCR, not built on the box.
+#
+# Deployed by .github/workflows/deploy-core.yml, which uploads this file and a
+# generated .env to /opt/easyfundraise and runs:
+#   docker compose -f core-compose.yml --env-file .env pull
+#   docker compose -f core-compose.yml --env-file .env up -d
+#
+# Required .env keys (see infra/deploy/core.env.example):
+#   IMAGE_TAG, IMAGE_API, IMAGE_WEB, EF_DATABASE_URL, EF_SECRET_KEY, EF_TOKEN_KEY,
+#   EF_WEB_ORIGIN, EF_TRACKING_BASE_URL, plus any app secrets.
+name: easyfundraise
+
+services:
+  api:
+    image: ${IMAGE_API}:${IMAGE_TAG}
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      EF_ENV: ${EF_ENV:-prod}
+    expose: ["8000"]
+    # Migrations + seed run on boot (idempotent); see apps/api/Dockerfile CMD.
+
+  worker:
+    image: ${IMAGE_API}:${IMAGE_TAG}
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file: [.env]
+    environment:
+      EF_ENV: ${EF_ENV:-prod}
+    depends_on: [api]
+
+  web:
+    image: ${IMAGE_WEB}:${IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:8000
+      NEXT_PUBLIC_ENV: ${EF_ENV:-prod}
+    depends_on: [api]
+    expose: ["3000"]
+
+  # TLS + reverse proxy. Caddy fetches/renews a Let's Encrypt cert for the domain
+  # automatically and proxies to the web container (which forwards /api to the API).
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      EF_DOMAIN: ${EF_DOMAIN:-efcore.doctra.ai}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web]
+
+volumes:
+  caddy_data:
+  caddy_config:

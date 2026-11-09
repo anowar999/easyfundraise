@@ -1,0 +1,25 @@
+# Copy to terraform.tfvars and edit. Never commit terraform.tfvars (it is gitignored).
+
+aws_account_id = "059898286291"
+region         = "ap-southeast-1"
+env            = "prod"
+
+# Create this EC2 key pair first:
+#   aws ec2 create-key-pair --key-name easyfundraise --query KeyMaterial --output text > ~/.ssh/easyfundraise.pem
+#   chmod 600 ~/.ssh/easyfundraise.pem
+key_pair_name = "easyfundraise"
+
+# Lock SSH to your own IP(s). Find yours: curl -s https://checkip.amazonaws.com
+ssh_ingress_cidrs = ["0.0.0.0/0"]
+
+# Instance sizes (minimal defaults shown).
+core_instance_type = "t3.small"
+db_instance_type   = "t3.micro"
+
+# DNS (needs a Route53 hosted zone for doctra.ai in this account).
+manage_dns       = true
+domain_name      = "efcore.doctra.ai"
+hosted_zone_name = "doctra.ai."
+
+# DB password: prefer TF_VAR_db_password in your shell over putting it here.
+# db_password = "set-a-strong-password"
