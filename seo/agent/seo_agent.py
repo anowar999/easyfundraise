@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -243,6 +243,9 @@ class Fetcher:
         return rp is None or rp.can_fetch(UA, url)
 
     def get(self, url: str) -> tuple[int, str]:
+        u = urlparse(url)
+        if u.scheme not in ("http", "https") or not u.netloc:
+            return 0, ""  # a malformed URL from someone's sitemap must not stop the run
         if not self.allowed(url):
             return -1, ""
         status, body = self.raw(url)
@@ -273,7 +276,9 @@ def sitemap_urls(f: Fetcher, base: str, cap: int = 5000) -> tuple[list[str], str
         except ElementTree.ParseError:
             note = f"sitemap {sm} is not valid XML"
             continue
-        locs = [e.text.strip() for e in root.iter() if e.tag.endswith("loc") and e.text]
+        # relative or blank <loc> entries are resolved against the sitemap's own URL, anything else is dropped
+        locs = [urljoin(sm, e.text.strip()) for e in root.iter() if e.tag.endswith("loc") and (e.text or "").strip()]
+        locs = [u for u in locs if urlparse(u).scheme in ("http", "https") and urlparse(u).netloc]
         if root.tag.endswith("sitemapindex"):
             queue += locs
         else:

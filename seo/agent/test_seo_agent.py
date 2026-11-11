@@ -91,6 +91,18 @@ class Competitors(unittest.TestCase):
         self.assertEqual(f.calls, [f"{comp}/robots.txt"])
 
 
+    def test_relative_and_bad_sitemap_entries_do_not_crash(self):
+        comp = "https://www.rival.example"
+        index = ("<sitemapindex xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'><sitemap><loc>/pages.xml</loc></sitemap>"
+                 "<sitemap><loc>/</loc></sitemap><sitemap><loc> </loc></sitemap><sitemap><loc>mailto:x</loc></sitemap></sitemapindex>")
+        f = FakeFetcher({f"{comp}/robots.txt": (200, f"Sitemap: {comp}/sitemap.xml\n"),
+                         f"{comp}/sitemap.xml": (200, index),
+                         f"{comp}/pages.xml": (200, urlset("/angel-investors-london", f"{comp}/about"))})
+        urls, _ = sa.sitemap_urls(f, comp)
+        self.assertEqual(urls, [f"{comp}/about", f"{comp}/angel-investors-london"])
+        self.assertEqual(f.get("/no-host"), (0, ""))
+
+
 class FullRun(unittest.TestCase):
     def test_offline_run_writes_report_and_history(self):
         with tempfile.TemporaryDirectory() as d:
